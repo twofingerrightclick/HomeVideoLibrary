@@ -13,16 +13,49 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         Directory.CreateDirectory(Paths.VideosDirectory);
         Directory.CreateDirectory(Paths.CacheDirectory);
         await using var connection = await OpenAsync(cancellationToken);
+        await using (var version = connection.CreateCommand())
+        {
+            version.CommandText = "PRAGMA user_version";
+            if (Convert.ToInt64(await version.ExecuteScalarAsync(cancellationToken)) > 2)
+                throw new InvalidDataException("This library was created by a newer version of Home Video Library.");
+        }
+        await using var transaction = connection.BeginTransaction();
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY, relative_path TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL, duration_ticks INTEGER NOT NULL,
                 imported_at TEXT NOT NULL, recorded_at TEXT NOT NULL
             );
-            PRAGMA user_version = 1;
+            CREATE TABLE IF NOT EXISTS albums (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS album_videos (
+                album_id TEXT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+                video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                PRIMARY KEY (album_id,video_id)
+            );
+            CREATE INDEX IF NOT EXISTS album_videos_video ON album_videos(video_id);
+            CREATE TABLE IF NOT EXISTS search_cache (
+                rowid INTEGER PRIMARY KEY, video_id TEXT NOT NULL UNIQUE REFERENCES videos(id) ON DELETE CASCADE,
+                title TEXT NOT NULL, description TEXT NOT NULL, tags TEXT NOT NULL, chapters TEXT NOT NULL,
+                recorded_at TEXT NOT NULL, file_length INTEGER NOT NULL, modified_ticks INTEGER NOT NULL
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS video_fts USING fts5(title,description,tags,chapters,
+                content='search_cache',content_rowid='rowid',tokenize='unicode61 remove_diacritics 2');
+            CREATE TRIGGER IF NOT EXISTS cache_insert AFTER INSERT ON search_cache BEGIN
+                INSERT INTO video_fts(rowid,title,description,tags,chapters) VALUES(new.rowid,new.title,new.description,new.tags,new.chapters);
+            END;
+            CREATE TRIGGER IF NOT EXISTS cache_delete AFTER DELETE ON search_cache BEGIN
+                INSERT INTO video_fts(video_fts,rowid,title,description,tags,chapters) VALUES('delete',old.rowid,old.title,old.description,old.tags,old.chapters);
+            END;
+            CREATE TRIGGER IF NOT EXISTS cache_update AFTER UPDATE ON search_cache BEGIN
+                INSERT INTO video_fts(video_fts,rowid,title,description,tags,chapters) VALUES('delete',old.rowid,old.title,old.description,old.tags,old.chapters);
+                INSERT INTO video_fts(rowid,title,description,tags,chapters) VALUES(new.rowid,new.title,new.description,new.tags,new.chapters);
+            END;
+            PRAGMA user_version = 2;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public string GetVideoPath(string relativePath)
@@ -70,9 +103,9 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
+    internal async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Paths.DatabasePath, Pooling = false }.ToString());
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Paths.DatabasePath, Pooling = false, ForeignKeys = true }.ToString());
         try
         {
             await connection.OpenAsync(cancellationToken);

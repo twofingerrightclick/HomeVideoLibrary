@@ -24,7 +24,19 @@ Install FFmpeg and ffprobe for import (`brew install ffmpeg` on macOS; use your 
 
 Import probes actual media, remuxes video/audio/subtitle/attachment streams to MKV with metadata and chapters, and falls back to H.264/AAC/SRT conversion when stream copying fails. Bitmap subtitles or other unsupported streams can still cause conversion to fail; the source is preserved and the failed output is removed. Existing Matroska files are copied byte-for-byte to preserve all embedded tags and attachments. Before publication, import checks output duration and stream count, then decodes all video/audio streams and compares the observed playback duration to the source duration. This catches truncated files whose headers still declare their original length, and adds a full playback scan to import time. Conversion and playback validation each have a 24-hour timeout; probe has a 60-second timeout. All stages support cancellation.
 
-The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite stores catalog paths and source-derived recording dates. Albums, search, clip editing, and the final VHS interface are added in subsequent stages.
+The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite owns catalog paths and albums; metadata/search projections are rebuildable from MKV. Clip editing and the final VHS interface are added in subsequent stages.
+
+## Albums and search
+
+Select multiple videos with Command/Ctrl or Shift. Enter an album name and choose **Create album** to create it with the selected videos (or create an empty album without a selection). Use the destination album selector and **Add selected to album**, or drag selected videos onto an album name. Dropping onto the drawer adds them to the current album, falling back to the destination selector. Rename and **Delete album only** affect organization; deleting an album never deletes videos.
+
+Within an album, **Add videos / show album** switches to videos not already in that album. Select videos and choose **Add selected here**. **Remove selected from album** removes membership only.
+
+The drawer searches MKV titles, descriptions, video tags, and chapter titles/descriptions/tags. Search matches Unicode word prefixes; punctuation and words such as OR are treated as ordinary input, without exposing SQL or FTS operators. Results favor relevance and then recording date. Empty search displays the current library/album chronologically. Library labels use embedded descriptions or titles, falling back to the imported filename.
+
+The FTS5 index is a disposable SQLite cache. Opening a library refreshes changed files in the background; imports and metadata saves update their entries. **Refresh search index** detects external edits using catalog identity plus file size/modification time. **Rebuild index from MKVs** rereads every file. Cancellation preserves previously indexed entries and completed updates; another refresh resumes stale entries. Refresh reports unreadable files without removing their source media. Changes that deliberately preserve both file size and modification time require a forced rebuild. Album filtering also applies while searching.
+
+Run only new album/search boundary tests with `dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~AlbumsAndSearchTests`. The native drag/drop handlers compile; manual platform interaction verification remains part of the final UI pass.
 
 ## Play and annotate
 

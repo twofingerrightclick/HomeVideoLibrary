@@ -1,0 +1,100 @@
+using HomeVideoLibrary.Core;
+
+namespace HomeVideoLibrary.Infrastructure;
+
+public sealed class AlbumRepository(LibraryCatalog catalog)
+{
+    public async Task<IReadOnlyList<VideoAlbum>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id,name FROM albums ORDER BY name COLLATE NOCASE,id";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<VideoAlbum>();
+        while (await reader.ReadAsync(cancellationToken)) result.Add(new VideoAlbum(Guid.Parse(reader.GetString(0)), reader.GetString(1)));
+        return result;
+    }
+
+    public Task<VideoAlbum> CreateAsync(string name, CancellationToken cancellationToken = default) => CreateAsync(name, [], cancellationToken);
+
+    public async Task<VideoAlbum> CreateAsync(string name, IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default)
+    {
+        var album = new VideoAlbum(Guid.NewGuid(), NormalizeName(name));
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT INTO albums(id,name) VALUES ($id,$name)";
+        command.Parameters.AddWithValue("$id", album.Id.ToString()); command.Parameters.AddWithValue("$name", album.Name);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        foreach (var videoId in videoIds.Distinct())
+        {
+            await using var membership = connection.CreateCommand(); membership.Transaction = transaction;
+            membership.CommandText = "INSERT INTO album_videos(album_id,video_id) VALUES($album,$video)";
+            membership.Parameters.AddWithValue("$album", album.Id.ToString()); membership.Parameters.AddWithValue("$video", videoId.ToString());
+            await membership.ExecuteNonQueryAsync(cancellationToken);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        await transaction.CommitAsync(cancellationToken);
+        return album;
+    }
+
+    public async Task RenameAsync(Guid albumId, string name, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE albums SET name=$name WHERE id=$id";
+        command.Parameters.AddWithValue("$id", albumId.ToString()); command.Parameters.AddWithValue("$name", NormalizeName(name));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) throw new InvalidOperationException("This album no longer exists.");
+    }
+
+    public async Task DeleteAsync(Guid albumId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM albums WHERE id=$id";
+        command.Parameters.AddWithValue("$id", albumId.ToString());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public Task AddVideosAsync(Guid albumId, IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default) =>
+        ChangeMembershipAsync(albumId, videoIds, true, cancellationToken);
+    public Task RemoveVideosAsync(Guid albumId, IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default) =>
+        ChangeMembershipAsync(albumId, videoIds, false, cancellationToken);
+
+    private async Task ChangeMembershipAsync(Guid albumId, IEnumerable<Guid> videoIds, bool add, CancellationToken cancellationToken)
+    {
+        var ids = videoIds.Distinct().ToArray();
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        foreach (var id in ids)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = add ? "INSERT INTO album_videos(album_id,video_id) VALUES($album,$video) ON CONFLICT DO NOTHING" :
+                "DELETE FROM album_videos WHERE album_id=$album AND video_id=$video";
+            command.Parameters.AddWithValue("$album", albumId.ToString()); command.Parameters.AddWithValue("$video", id.ToString());
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LibraryVideo>> ListNonMembersAsync(Guid albumId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await catalog.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT video_id FROM album_videos WHERE album_id=$album";
+        command.Parameters.AddWithValue("$album", albumId.ToString());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var existing = new HashSet<Guid>();
+        while (await reader.ReadAsync(cancellationToken)) existing.Add(Guid.Parse(reader.GetString(0)));
+        return (await catalog.ListAsync(cancellationToken)).Where(video => !existing.Contains(video.Id)).ToArray();
+    }
+
+    private static string NormalizeName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return name.Trim();
+    }
+}
