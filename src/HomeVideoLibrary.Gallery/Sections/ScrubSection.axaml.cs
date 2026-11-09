@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -27,7 +26,7 @@ public partial class ScrubSection : UserControl, IScreenshotScript
         new(At(37, 50), "Carols by the piano"),
     ];
 
-    private readonly ObservableCollection<IChapterMark> _liveChapters = new(Chapters);
+    private IReadOnlyList<IChapterMark> _liveChapters = Chapters;
     private readonly DispatcherTimer _playTimer;
 
     public ScrubSection()
@@ -61,7 +60,12 @@ public partial class ScrubSection : UserControl, IScreenshotScript
         PlayLatch.IsCheckedChanged += (_, _) => _playTimer.IsEnabled = PlayLatch.IsChecked == true;
         DetachedFromVisualTree += (_, _) => _playTimer.Stop();
 
-        LiveBar.SeekRequested += (_, e) => LiveBar.BufferedPosition = e.Time + TimeSpan.FromSeconds(90);
+        // Stands in for the player: it seeks, then reports its new position back to the display-only bar.
+        LiveBar.SeekRequested += (_, e) =>
+        {
+            LiveBar.Position = e.Time;
+            LiveBar.BufferedPosition = e.Time + TimeSpan.FromSeconds(90);
+        };
         LiveBar.PropertyChanged += (_, e) =>
         {
             if (e.Property == ScrubBar.PositionProperty)
@@ -163,8 +167,10 @@ public partial class ScrubSection : UserControl, IScreenshotScript
             return;
         }
 
+        // Chapter lists are snapshots: publish a new list instead of mutating the one the bar holds.
         var index = ChapterPlacement.PlaceholderIndex(starts, LiveBar.Position);
-        _liveChapters.Insert(index, new ChapterMark(LiveBar.Position, $"Chapter {_liveChapters.Count + 1}"));
+        _liveChapters = [.. _liveChapters.Take(index), new ChapterMark(LiveBar.Position, $"Chapter {_liveChapters.Count + 1}"), .. _liveChapters.Skip(index)];
+        LiveBar.ChapterSegments = _liveChapters;
         LiveBar.PreviewMarkerPosition = null;
         UpdateLiveReadout();
     }

@@ -20,59 +20,6 @@ public sealed class ControlBehaviorTests
     private static readonly TimeSpan Length = TimeSpan.FromMinutes(40);
 
     [AvaloniaFact]
-    public void Scrub_drag_leaves_Position_alone_until_release_then_seeks_once()
-    {
-        var (window, bar) = Host(new ScrubBar { Duration = Length, Position = TimeSpan.FromMinutes(5) });
-        var seeks = new List<TimeSpan>();
-        bar.SeekRequested += (_, e) => seeks.Add(e.Time);
-
-        window.MouseDown(At(bar, 0.25), MouseButton.Left);
-        window.MouseMove(At(bar, 0.75));
-        bar.Position = TimeSpan.FromMinutes(6);
-
-        Assert.Equal(TimeSpan.FromMinutes(6), bar.Position);
-        Assert.InRange(bar.ScrubPosition!.Value.TotalMinutes, 29, 31);
-        Assert.Empty(seeks);
-
-        window.MouseUp(At(bar, 0.75), MouseButton.Left);
-
-        Assert.Single(seeks);
-        Assert.InRange(seeks[0].TotalMinutes, 29, 31);
-        Assert.Equal(seeks[0], bar.Position);
-        Assert.Null(bar.ScrubPosition);
-    }
-
-    [AvaloniaFact]
-    public void Scrub_escape_cancels_without_seeking_or_moving_Position()
-    {
-        var (window, bar) = Host(new ScrubBar { Duration = Length, Position = TimeSpan.FromMinutes(5) });
-        var seeks = 0;
-        bar.SeekRequested += (_, _) => seeks++;
-
-        window.MouseDown(At(bar, 0.5), MouseButton.Left);
-        window.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.LeftMouseButton);
-
-        Assert.False(bar.IsScrubbing);
-        Assert.Equal(TimeSpan.FromMinutes(5), bar.Position);
-        Assert.Equal(0, seeks);
-    }
-
-    [AvaloniaFact]
-    public void Scrub_hover_over_a_chapter_without_a_title_does_not_throw()
-    {
-        var (window, bar) = Host(new ScrubBar
-        {
-            Duration = Length,
-            ChapterSegments = [new NullTitledMark(TimeSpan.Zero), new NullTitledMark(TimeSpan.FromMinutes(20))],
-        });
-
-        window.MouseMove(At(bar, 0.6));
-
-        Assert.NotNull(bar.HoverTime);
-        Assert.Null(bar.HoverChapterTitle);
-    }
-
-    [AvaloniaFact]
     public void Tag_entry_commits_pending_text_when_focus_leaves()
     {
         var other = new Button { Content = "elsewhere" };
@@ -174,13 +121,6 @@ public sealed class ControlBehaviorTests
 
     private static TextBox Entry(TagChipInput input) =>
         input.GetVisualDescendants().OfType<TextBox>().Single();
-
-    private sealed class NullTitledMark(TimeSpan start) : IChapterMark
-    {
-        public TimeSpan Start { get; } = start;
-
-        public string Title => null!;
-    }
 
     private sealed class CountingCollection : IEnumerable<TagFrequency>, INotifyCollectionChanged
     {

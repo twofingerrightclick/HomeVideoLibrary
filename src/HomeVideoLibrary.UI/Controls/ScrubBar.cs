@@ -1,14 +1,11 @@
-using System.Collections.Specialized;
-using System.ComponentModel;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
 using Avalonia.Controls.Primitives;
-using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
-using Avalonia.Threading;
 using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.UI.Controls;
@@ -19,11 +16,13 @@ public sealed class SeekRequestedEventArgs(TimeSpan time) : RoutedEventArgs(Scru
 }
 
 /// <summary>
-/// Chaptered playback timeline. While dragging, the thumb follows <see cref="ScrubPosition"/> and
-/// <see cref="Position"/> is left alone, so a two-way bound player position is neither written per pointer
-/// move nor able to drag the thumb away from the cursor. Releasing writes <see cref="Position"/> once and
-/// raises <see cref="SeekRequested"/>; Escape or losing pointer capture cancels without seeking. Left/Right
-/// (5 s, or 1 s with Shift), Home and End seek immediately.
+/// Chaptered playback timeline. <see cref="Position"/> is display-only, fed by the player; the bar never
+/// writes it. A seek is requested once per gesture, on release of a click or drag and on each Left/Right
+/// (5 s, or 1 s with Shift), Home or End, through <see cref="SeekCommand"/> and the
+/// <see cref="SeekRequested"/> notification (handle one of them). While dragging, the thumb follows
+/// <see cref="ScrubPosition"/>; after a seek it holds the requested time until the player reports a new
+/// <see cref="Position"/>. Escape or losing pointer capture cancels a drag without seeking.
+/// <see cref="ChapterSegments"/> is a snapshot: assign a new list when chapters change.
 /// </summary>
 [TemplatePart("PART_Popup", typeof(Popup))]
 [TemplatePart("PART_HoverTime", typeof(TextBlock))]
@@ -47,11 +46,15 @@ public class ScrubBar : TemplatedControl
     private static readonly TimeSpan LargeStep = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SmallStep = TimeSpan.FromSeconds(1);
 
-    public static readonly StyledProperty<IEnumerable<IChapterMark>?> ChapterSegmentsProperty =
-        AvaloniaProperty.Register<ScrubBar, IEnumerable<IChapterMark>?>(nameof(ChapterSegments));
+    public static readonly StyledProperty<IReadOnlyList<IChapterMark>?> ChapterSegmentsProperty =
+        AvaloniaProperty.Register<ScrubBar, IReadOnlyList<IChapterMark>?>(nameof(ChapterSegments));
 
     public static readonly StyledProperty<TimeSpan> PositionProperty =
-        AvaloniaProperty.Register<ScrubBar, TimeSpan>(nameof(Position), defaultBindingMode: BindingMode.TwoWay);
+        AvaloniaProperty.Register<ScrubBar, TimeSpan>(nameof(Position));
+
+    /// <summary>Executed with the requested <see cref="TimeSpan"/> for every seek gesture.</summary>
+    public static readonly StyledProperty<ICommand?> SeekCommandProperty =
+        AvaloniaProperty.Register<ScrubBar, ICommand?>(nameof(SeekCommand));
 
     public static readonly StyledProperty<TimeSpan> DurationProperty =
         AvaloniaProperty.Register<ScrubBar, TimeSpan>(nameof(Duration));
@@ -127,11 +130,9 @@ public class ScrubBar : TemplatedControl
         RoutedEvent.Register<ScrubBar, SeekRequestedEventArgs>(nameof(SeekRequested), RoutingStrategies.Bubble);
 
     private IReadOnlyList<ChapterSpan> _spans = [];
-    private INotifyCollectionChanged? _observedCollection;
-    private readonly List<INotifyPropertyChanged> _observedItems = [];
-    private bool _isAttached;
     private bool _isScrubbing;
     private TimeSpan? _scrubPosition;
+    private TimeSpan? _pendingSeek;
     private TimeSpan? _hoverTime;
     private string? _hoverChapterTitle;
     private Popup? _popup;
@@ -148,7 +149,7 @@ public class ScrubBar : TemplatedControl
             ThumbShadowProperty, HoverExpansionProperty, BackgroundProperty, BorderBrushProperty);
     }
 
-    public IEnumerable<IChapterMark>? ChapterSegments
+    public IReadOnlyList<IChapterMark>? ChapterSegments
     {
         get => GetValue(ChapterSegmentsProperty);
         set => SetValue(ChapterSegmentsProperty, value);
@@ -158,6 +159,12 @@ public class ScrubBar : TemplatedControl
     {
         get => GetValue(PositionProperty);
         set => SetValue(PositionProperty, value);
+    }
+
+    public ICommand? SeekCommand
+    {
+        get => GetValue(SeekCommandProperty);
+        set => SetValue(SeekCommandProperty, value);
     }
 
     public TimeSpan Duration
@@ -326,33 +333,23 @@ public class ScrubBar : TemplatedControl
         }
     }
 
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        _isAttached = true;
-        Observe(ChapterSegments);
-        RebuildSpans();
-    }
-
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        _isAttached = false;
-        Observe(null);
+        CancelScrub();
         ClearHover();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == ChapterSegmentsProperty)
+        if (change.Property == ChapterSegmentsProperty || change.Property == DurationProperty)
         {
-            Observe(ChapterSegments);
             RebuildSpans();
         }
-        else if (change.Property == DurationProperty)
+        else if (change.Property == PositionProperty)
         {
-            RebuildSpans();
+            _pendingSeek = null;
         }
         else if ((change.Property == IsEffectivelyEnabledProperty && !IsEffectivelyEnabled)
             || (change.Property == IsVisibleProperty && !IsVisible))
@@ -450,10 +447,13 @@ public class ScrubBar : TemplatedControl
         }
 
         var step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? SmallStep : LargeStep;
+
+        // Steps accumulate from an outstanding request so repeated presses are not lost to player latency.
+        var from = _pendingSeek ?? Position;
         TimeSpan? target = e.Key switch
         {
-            Key.Left => Position - step,
-            Key.Right => Position + step,
+            Key.Left => from - step,
+            Key.Right => from + step,
             Key.Home => TimeSpan.Zero,
             Key.End => Duration,
             _ => null,
@@ -464,8 +464,7 @@ public class ScrubBar : TemplatedControl
         }
 
         e.Handled = true;
-        Position = time < TimeSpan.Zero ? TimeSpan.Zero : time > Duration ? Duration : time;
-        RaiseEvent(new SeekRequestedEventArgs(Position));
+        RequestSeek(time < TimeSpan.Zero ? TimeSpan.Zero : time > Duration ? Duration : time);
     }
 
     public override void Render(DrawingContext context)
@@ -486,7 +485,7 @@ public class ScrubBar : TemplatedControl
 
         var inner = groove.Deflate(GrooveInset);
         var trackWidth = TrackWidth;
-        var playX = Snap(TrackLeft + ScrubTimeline.TimeToX(ScrubPosition ?? Position, Duration, trackWidth));
+        var playX = Snap(TrackLeft + ScrubTimeline.TimeToX(ScrubPosition ?? _pendingSeek ?? Position, Duration, trackWidth));
         var bufferedX = Snap(TrackLeft + ScrubTimeline.TimeToX(BufferedPosition, Duration, trackWidth));
         var hoverIndex = HoverTime is { } hover && _spans.Count > 1 ? ScrubTimeline.SpanIndexAt(_spans, hover) : -1;
 
@@ -650,8 +649,7 @@ public class ScrubBar : TemplatedControl
         ScrubPosition = null;
         if (commit && target is { } time)
         {
-            Position = time;
-            RaiseEvent(new SeekRequestedEventArgs(time));
+            RequestSeek(time);
         }
 
         RaiseEvent(new RoutedEventArgs(ScrubCompletedEvent));
@@ -662,67 +660,16 @@ public class ScrubBar : TemplatedControl
         EndScrub(commit: false);
     }
 
-    private void Observe(IEnumerable<IChapterMark>? marks)
+    private void RequestSeek(TimeSpan time)
     {
-        if (_observedCollection is not null)
+        _pendingSeek = time;
+        InvalidateVisual();
+        if (SeekCommand is { } command && command.CanExecute(time))
         {
-            _observedCollection.CollectionChanged -= OnMarksCollectionChanged;
-            _observedCollection = null;
+            command.Execute(time);
         }
 
-        ObserveItems(null);
-        // Subscribing only while attached keeps a long-lived view model collection from rooting this control.
-        if (marks is null || !_isAttached)
-        {
-            return;
-        }
-
-        if (marks is INotifyCollectionChanged collection)
-        {
-            _observedCollection = collection;
-            collection.CollectionChanged += OnMarksCollectionChanged;
-        }
-
-        ObserveItems(marks);
-    }
-
-    private void ObserveItems(IEnumerable<IChapterMark>? marks)
-    {
-        foreach (var item in _observedItems)
-        {
-            item.PropertyChanged -= OnMarkPropertyChanged;
-        }
-
-        _observedItems.Clear();
-        foreach (var item in marks?.OfType<INotifyPropertyChanged>() ?? [])
-        {
-            item.PropertyChanged += OnMarkPropertyChanged;
-            _observedItems.Add(item);
-        }
-    }
-
-    // Chapter collections may change from a background metadata scan; rebuild on the UI thread.
-    private void OnMarksCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(() => OnMarksCollectionChanged(sender, e));
-            return;
-        }
-
-        ObserveItems(ChapterSegments);
-        RebuildSpans();
-    }
-
-    private void OnMarkPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(RebuildSpans);
-            return;
-        }
-
-        RebuildSpans();
+        RaiseEvent(new SeekRequestedEventArgs(time));
     }
 
     private void RebuildSpans()
