@@ -408,7 +408,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         LibraryServices services;
         LibraryLoadResult load;
         IReadOnlyList<string> unavailable;
-        int recoverySnapshots;
+        int recoverySnapshots, orphanedVideos = 0;
         try
         {
             owner = await Task.Run(() => LibraryLock.TryAcquire(paths));
@@ -420,7 +420,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try { await LibraryPublisher.RecoverAsync(catalog, owner); }
+            try { orphanedVideos = await LibraryPublisher.RecoverAsync(catalog, owner); }
             catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
             try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
             catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
@@ -446,6 +446,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         RecoveryNotice = recoverySnapshots == 0 ? "" :
             $"{recoverySnapshots} metadata recovery snapshot(s) are in {MatroskaMetadataService.RecoveryDirectory(paths)}. " +
             "A save could not restore its video's previous metadata; the README explains how to restore it by hand.";
+        if (orphanedVideos > 0)
+            RecoveryNotice = (RecoveryNotice + $" {orphanedVideos} video(s) from an interrupted import or edit are in " +
+                $"{LibraryPublisher.OrphanedDirectory(paths)}; import them again to add them to the library.").Trim();
         LibraryRoot = paths.RootDirectory;
         _tapeIndex.Clear(); _rowIndex.Clear(); _selection.Clear(); _anchorId = null; _shown = LibrarySnapshot.Empty;
         _currentAlbum = null; _targetAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";

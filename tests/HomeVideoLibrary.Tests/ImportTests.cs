@@ -121,22 +121,99 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
-    public async Task RecoveryFinishesPublicationsCommittedBeforeACrashAndDiscardsTheRest()
+    public async Task RecoveryFinishesCommittedPublicationsEvenWithUnreadableRowsAndQuarantinesTheRest()
     {
         var catalog = await CreateCatalogAsync();
         var committed = new LibraryVideo(Guid.NewGuid(), "", "committed", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
         committed = committed with { RelativePath = LibraryPaths.VideoRelativePath(committed.Id) };
         await catalog.AddAsync(committed);
-        var pendingCommitted = Path.Combine(catalog.Paths.VideosDirectory, $".{committed.Id:N}.pending.mkv");
-        var pendingOrphan = Path.Combine(catalog.Paths.VideosDirectory, $".{Guid.NewGuid():N}.pending.mkv");
-        await File.WriteAllTextAsync(pendingCommitted, "video");
-        await File.WriteAllTextAsync(pendingOrphan, "video");
+        await using (var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"UPDATE videos SET imported_at = 'not a date' WHERE id = '{committed.Id}'";
+            await command.ExecuteNonQueryAsync();
+        }
+        var orphan = Guid.NewGuid();
+        await File.WriteAllTextAsync(Path.Combine(catalog.Paths.VideosDirectory, $".{committed.Id:N}.pending.mkv"), "committed video");
+        await File.WriteAllTextAsync(Path.Combine(catalog.Paths.VideosDirectory, $".{orphan:N}.pending.mkv"), "orphaned video");
         using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
 
-        await LibraryPublisher.RecoverAsync(catalog, owner);
+        var quarantined = await LibraryPublisher.RecoverAsync(catalog, owner);
+        var again = await LibraryPublisher.RecoverAsync(catalog, owner);
 
-        Assert.Equal("video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
+        Assert.Equal((1, 0), (quarantined, again));
+        Assert.Equal("committed video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
+        Assert.Equal("orphaned video", await File.ReadAllTextAsync(Path.Combine(LibraryPublisher.OrphanedDirectory(catalog.Paths), $"{orphan:N}.mkv")));
+    }
+
+    [Fact]
+    public async Task ACommittedVideoWhoseFileCannotBePutInPlaceIsReportedAndKeptPending()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var staged = Path.Combine(catalog.Paths.ScratchDirectory, "staged.mkv");
+        Directory.CreateDirectory(catalog.Paths.ScratchDirectory);
+        File.Copy(source, staged);
+        var id = Guid.NewGuid();
+        var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), "blocked", TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        // Something already occupies the final name, as a share violation would keep the rename from happening.
+        await File.WriteAllTextAsync(catalog.GetVideoPath(video.RelativePath), "in the way");
+
+        await Assert.ThrowsAsync<IOException>(() => LibraryPublisher.PublishAsync(catalog, [(video, staged)], CancellationToken.None));
+
+        Assert.True(await catalog.ContainsVideoAsync(id));
+        Assert.True(File.Exists(Path.Combine(catalog.Paths.VideosDirectory, $".{id:N}.pending.mkv")));
+    }
+
+    [Fact]
+    public async Task ASecondRowWithTheSameSourceFingerprintIsRefusedByTheCatalog()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo Video() => new LibraryVideo(Guid.NewGuid(), "", "same source", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            is var video ? video with { RelativePath = LibraryPaths.VideoRelativePath(video.Id), SourceFingerprint = "v2:abc" } : null!;
+        await catalog.AddAsync(Video());
+
+        var failure = await Assert.ThrowsAsync<SqliteException>(() => catalog.AddAsync(Video()));
+
+        Assert.True(LibraryCatalog.IsDuplicateSourceFingerprint(failure));
+    }
+
+    [Fact]
+    public async Task DamagedMatroskaIsImportedWithAWarningAndOneWithoutDurationIsRewritten()
+    {
+        Directory.CreateDirectory(_root);
+        var damaged = Path.Combine(_root, "damaged.mkv");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "6", "-c:v", "mpeg2video", "-g", "12", damaged]);
+        var bytes = await File.ReadAllBytesAsync(damaged);
+        new Random(4).NextBytes(bytes.AsSpan(bytes.Length / 2, 4000));
+        await File.WriteAllBytesAsync(damaged, bytes);
+        var live = Path.Combine(_root, "live.mkv");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-live", "1", live]);
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+
+        var damagedResult = await importer.ImportAsync(damaged);
+        var liveResult = await importer.ImportAsync(live);
+
+        Assert.Contains(damagedResult.Warnings, warning => warning.Contains("damaged", StringComparison.Ordinal));
+        Assert.Contains(liveResult.Warnings, warning => warning.Contains("no duration", StringComparison.Ordinal));
+        Assert.InRange(liveResult.Video.Duration.TotalSeconds, 2.9, 3.1);
+    }
+
+    [Fact]
+    public async Task VariableFrameRateFootageImportsWithoutDamageWarnings()
+    {
+        Directory.CreateDirectory(_root);
+        var source = Path.Combine(_root, "phone.mp4");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=30", "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", "6",
+            "-vf", "select='not(between(n,60,70))'", "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", source]);
+        var catalog = await CreateCatalogAsync();
+
+        var result = await new VideoImporter(catalog, _tools).ImportAsync(source);
+
+        Assert.Empty(result.Warnings);
     }
 
     [Fact]

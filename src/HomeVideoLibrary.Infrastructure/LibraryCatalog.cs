@@ -19,7 +19,7 @@ public sealed record CatalogContents(IReadOnlyList<LibraryVideo> Videos, IReadOn
 /// <param name="isNetworkVolume">Decides the journal mode; defaults to asking the OS about the library's volume.</param>
 public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNetworkVolume = null)
 {
-    public const int SchemaVersion = 4;
+    public const int SchemaVersion = 5;
 
     public LibraryPaths Paths { get; } = paths;
 
@@ -46,6 +46,7 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             if (version < 2) await MigrateAsync(connection, 2, CreateV2Async, cancellationToken);
             if (version < 3) await MigrateAsync(connection, 3, AddSourceFingerprintAsync, cancellationToken);
             if (version < 4) await MigrateAsync(connection, 4, CreateVideoCacheAsync, cancellationToken);
+            if (version < 5) await MigrateAsync(connection, 5, VersionFingerprintsAsync, cancellationToken);
         }
         catch (Exception exception) when (exception is SqliteException or InvalidOperationException or IOException)
         {
@@ -110,6 +111,21 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         await ExecuteAsync(connection, transaction,
             "CREATE INDEX IF NOT EXISTS videos_source_fingerprint ON videos(source_fingerprint)", cancellationToken);
     }
+
+    /// <summary>Marks stored source fingerprints with the format that made them (<c>v1:</c> before content sampling
+    /// replaced the file name), so a fingerprint can only ever match one made the same way, and makes them unique: the
+    /// insert, not a prior lookup, decides that a source is already in the library. Of duplicates from the earlier,
+    /// unenforced format, the oldest row keeps its fingerprint.</summary>
+    private static Task VersionFingerprintsAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, """
+            UPDATE videos SET source_fingerprint = 'v1:' || source_fingerprint
+            WHERE source_fingerprint IS NOT NULL AND source_fingerprint NOT LIKE 'v_:%';
+            UPDATE videos SET source_fingerprint = NULL
+            WHERE source_fingerprint IS NOT NULL AND rowid NOT IN
+                (SELECT MIN(rowid) FROM videos WHERE source_fingerprint IS NOT NULL GROUP BY source_fingerprint);
+            DROP INDEX IF EXISTS videos_source_fingerprint;
+            CREATE UNIQUE INDEX IF NOT EXISTS videos_source_fingerprint_key ON videos(source_fingerprint) WHERE source_fingerprint IS NOT NULL;
+            """, cancellationToken);
 
     /// <summary>Replaces the FTS search cache with <c>video_cache</c>, makes album names unique by
     /// <see cref="AlbumNames.Key"/>, and rewrites Windows-style stored paths.</summary>
@@ -276,6 +292,20 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         }
         await transaction.CommitAsync(cancellationToken);
     }
+
+    /// <summary>Whether a video row with this id exists, without reading the row, so an unreadable row still counts.</summary>
+    public async Task<bool> ContainsVideoAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM videos WHERE id = $id)";
+        command.Parameters.AddWithValue("$id", id.ToString());
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+    }
+
+    /// <summary>True when <paramref name="exception"/> is the insert of a source fingerprint that is already stored.</summary>
+    public static bool IsDuplicateSourceFingerprint(SqliteException exception) =>
+        exception.SqliteErrorCode == 19 && exception.Message.Contains("source_fingerprint", StringComparison.Ordinal);
 
     public async Task<LibraryVideo?> FindBySourceFingerprintAsync(string fingerprint, CancellationToken cancellationToken = default)
     {

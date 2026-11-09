@@ -170,12 +170,14 @@ internal sealed class MediaProbe(MediaTools tools, MediaProcess process)
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan EndScan = TimeSpan.FromSeconds(10);
     private const int IdentityChunk = 64 * 1024;
+    private const int MaxCachedSources = 64;
     private readonly ConcurrentDictionary<string, Task<EditSource>> _sources = new();
 
     public async Task<EditSource> ProbeAsync(string path, CancellationToken cancellationToken)
     {
         var key = await IdentityAsync(path, cancellationToken);
         // Probes take well under a second; letting a cancelled caller's probe finish keeps the shared cache entry usable.
+        if (_sources.Count >= MaxCachedSources) _sources.Clear();
         var task = _sources.GetOrAdd(key, _ => ProbeUncachedAsync(Path.GetFullPath(path), CancellationToken.None));
         try { return await task.WaitAsync(cancellationToken); }
         catch (Exception) when (task.IsFaulted)
