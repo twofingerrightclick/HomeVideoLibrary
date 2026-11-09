@@ -11,12 +11,15 @@
   </LinearGradientBrush>
   <BoxShadows x:Key="Vcr.Shadow.Scrub.Groove">0 1 3 0 #E6000000 inset, 0 1 0 0 #1AFFFFFF</BoxShadows>
   <BoxShadows x:Key="Vcr.Shadow.Scrub.Played">0 0 5 0 #59FF5040</BoxShadows>
+  <SolidColorBrush x:Key="Vcr.Brush.Scrub.RangeFill" Color="{StaticResource Vcr.Color.Yellow}" Opacity="0.22"/>
+  <x:Double x:Key="Vcr.Size.ScrubPreview.Width">176</x:Double>
+  <x:Double x:Key="Vcr.Size.ScrubPreview.Height">99</x:Double>
   <BoxShadows x:Key="Vcr.Shadow.Scrub.Tooltip">0 1 0 0 #1AFFFFFF inset, 0 4 10 0 #A6000000</BoxShadows>
 
   <!--
     The track, segments, thumb, and marker are drawn by ScrubBar.Render from the brush properties below.
-    The template adds only the hover tooltip; the tooltip uses the overlay layer so it
-    can rise above the bar without clipping by the bar's ancestors.
+    The template adds only the hover tooltip. It is a native popup window (not the overlay layer), so it
+    rises above the bar over native child surfaces such as the LibVLC video view, windowed or fullscreen.
   -->
   <ControlTheme x:Key="{x:Type c:ScrubBar}" TargetType="c:ScrubBar">
     <Setter Property="Height" Value="32"/>
@@ -31,6 +34,8 @@
     <Setter Property="PlayedBrush" Value="{DynamicResource Vcr.Brush.Red}"/>
     <Setter Property="SegmentSheenBrush" Value="{DynamicResource Vcr.Brush.Scrub.Sheen}"/>
     <Setter Property="MarkerBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+    <Setter Property="RangeBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+    <Setter Property="RangeFillBrush" Value="{DynamicResource Vcr.Brush.Scrub.RangeFill}"/>
     <Setter Property="ThumbBrush" Value="{DynamicResource Vcr.Brush.Plastic}"/>
     <Setter Property="ThumbIndexBrush" Value="{DynamicResource Vcr.Brush.Red.Led}"/>
     <Setter Property="GrooveShadow" Value="{DynamicResource Vcr.Shadow.Scrub.Groove}"/>
@@ -47,7 +52,7 @@
           <Popup Name="PART_Popup"
                  Placement="Top"
                  VerticalOffset="3"
-                 ShouldUseOverlayLayer="True"
+                 ShouldUseOverlayLayer="False"
                  IsLightDismissEnabled="False">
             <Border Name="PART_Tooltip"
                     IsHitTestVisible="False"
@@ -60,6 +65,14 @@
                     CornerRadius="{DynamicResource Vcr.Radius.Field}"
                     BoxShadow="{DynamicResource Vcr.Shadow.Scrub.Tooltip}">
               <StackPanel Spacing="4" HorizontalAlignment="Center">
+                <Border IsVisible="{TemplateBinding HoverPreview, Converter={x:Static ObjectConverters.IsNotNull}}"
+                        Width="{DynamicResource Vcr.Size.ScrubPreview.Width}"
+                        Height="{DynamicResource Vcr.Size.ScrubPreview.Height}"
+                        Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                        CornerRadius="2"
+                        ClipToBounds="True">
+                  <Image Source="{TemplateBinding HoverPreview}" Stretch="Uniform"/>
+                </Border>
                 <TextBlock Name="PART_HoverTitle"
                            Text="{TemplateBinding HoverChapterTitle}"
                            IsVisible="{TemplateBinding HoverChapterTitle, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"

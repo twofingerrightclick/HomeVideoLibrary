@@ -32,7 +32,7 @@ public partial class ScrubSection : UserControl, IScreenshotScript
     public ScrubSection()
     {
         InitializeComponent();
-        foreach (var bar in new[] { PlayingBar, MarkerBar, HoverBar, PlainBar, DisabledBar, LiveBar })
+        foreach (var bar in new[] { PlayingBar, MarkerBar, RangeBar, HoverBar, PlainBar, DisabledBar, LiveBar })
         {
             bar.Duration = TapeLength;
             bar.ChapterSegments = Chapters;
@@ -46,6 +46,9 @@ public partial class ScrubSection : UserControl, IScreenshotScript
         MarkerBar.Position = At(16, 10);
         MarkerBar.BufferedPosition = At(19, 0);
         MarkerBar.PreviewMarkerPosition = At(26, 30);
+        RangeBar.Position = At(11, 0);
+        RangeBar.RangeStart = At(8, 15);
+        RangeBar.RangeEnd = At(23, 40);
         HoverBar.Position = At(9, 0);
         HoverBar.BufferedPosition = At(12, 30);
         PlainBar.Position = At(30, 0);

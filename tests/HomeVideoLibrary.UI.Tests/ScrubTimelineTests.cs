@@ -22,6 +22,23 @@ public class ScrubTimelineTests
     }
 
     [Fact]
+    public void LayoutRange_MapsBothEndsAndClampsToTheTrack()
+    {
+        Assert.Equal(new SegmentExtent(100, 400), ScrubTimeline.LayoutRange(Sec(120), Sec(480), TenMinutes, 500));
+        Assert.Equal(new SegmentExtent(0, 500), ScrubTimeline.LayoutRange(Sec(-30), Sec(900), TenMinutes, 500));
+    }
+
+    [Fact]
+    public void LayoutRange_IsNullUntilBothEndsAreSetInOrder()
+    {
+        Assert.Null(ScrubTimeline.LayoutRange(Sec(120), null, TenMinutes, 500));
+        Assert.Null(ScrubTimeline.LayoutRange(null, Sec(120), TenMinutes, 500));
+        Assert.Null(ScrubTimeline.LayoutRange(Sec(300), Sec(120), TenMinutes, 500));
+        Assert.Null(ScrubTimeline.LayoutRange(Sec(120), Sec(120), TenMinutes, 500));
+        Assert.Null(ScrubTimeline.LayoutRange(Sec(0), Sec(120), TimeSpan.Zero, 500));
+    }
+
+    [Fact]
     public void BuildSpans_TreatsAMissingTitleAsEmpty()
     {
         var spans = ScrubTimeline.BuildSpans([new UntitledMark(Sec(0)), new ChapterMark(Sec(60), "Cake")], TenMinutes);

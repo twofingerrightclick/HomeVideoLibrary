@@ -164,6 +164,21 @@ public static class ScrubTimeline
         return extents;
     }
 
+    /// <summary>
+    /// Extent of a selected range [<paramref name="start"/>, <paramref name="end"/>] on a track
+    /// <paramref name="width"/> wide, both ends clamped to the track. Null unless both ends are set and
+    /// <paramref name="end"/> is after <paramref name="start"/>.
+    /// </summary>
+    public static SegmentExtent? LayoutRange(TimeSpan? start, TimeSpan? end, TimeSpan duration, double width)
+    {
+        if (start is not { } from || end is not { } to || to <= from || duration <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        return new SegmentExtent(TimeToX(from, duration, width), TimeToX(to, duration, width));
+    }
+
     /// <summary>Formats as <c>m:ss</c>, or <c>h:mm:ss</c> from one hour; negative times format as zero.</summary>
     public static string FormatTimestamp(TimeSpan time)
     {

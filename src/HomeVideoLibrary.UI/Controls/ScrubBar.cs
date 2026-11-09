@@ -23,6 +23,9 @@ public sealed class SeekRequestedEventArgs(TimeSpan time) : RoutedEventArgs(Scru
 /// <see cref="ScrubPosition"/>; after a seek it holds the requested time until the player reports a new
 /// <see cref="Position"/>. Escape or losing pointer capture cancels a drag without seeking.
 /// <see cref="ChapterSegments"/> is a snapshot: assign a new list when chapters change.
+/// The hover tooltip is a native popup window above the bar, so it draws over native child surfaces
+/// such as a video view. The host may feed it a frame for <see cref="HoverTime"/> through
+/// <see cref="HoverPreview"/>.
 /// </summary>
 [TemplatePart("PART_Popup", typeof(Popup))]
 [TemplatePart("PART_HoverTime", typeof(TextBlock))]
@@ -42,6 +45,8 @@ public class ScrubBar : TemplatedControl
     private const double MarkerReach = 13;
     private const double MarkerCapWidth = 11;
     private const double MarkerCapHeight = 6;
+    private const double RangeBracketReach = 11;
+    private const double RangeBracketFoot = 4;
 
     private static readonly TimeSpan LargeStep = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SmallStep = TimeSpan.FromSeconds(1);
@@ -65,6 +70,18 @@ public class ScrubBar : TemplatedControl
     /// <summary>Where a new chapter would be inserted, drawn as a yellow slice marker; null hides it.</summary>
     public static readonly StyledProperty<TimeSpan?> PreviewMarkerPositionProperty =
         AvaloniaProperty.Register<ScrubBar, TimeSpan?>(nameof(PreviewMarkerPosition));
+
+    /// <summary>Start of a selected range (for example trim in/out), drawn as a shaded span with brackets; null hides it.</summary>
+    public static readonly StyledProperty<TimeSpan?> RangeStartProperty =
+        AvaloniaProperty.Register<ScrubBar, TimeSpan?>(nameof(RangeStart));
+
+    /// <summary>End of the selected range; the range shows only when it is after <see cref="RangeStart"/>.</summary>
+    public static readonly StyledProperty<TimeSpan?> RangeEndProperty =
+        AvaloniaProperty.Register<ScrubBar, TimeSpan?>(nameof(RangeEnd));
+
+    /// <summary>A frame for <see cref="HoverTime"/>, shown in the tooltip above the chapter title; null shows none.</summary>
+    public static readonly StyledProperty<IImage?> HoverPreviewProperty =
+        AvaloniaProperty.Register<ScrubBar, IImage?>(nameof(HoverPreview));
 
     /// <summary>Time under the dragged thumb while <see cref="IsScrubbing"/>; null otherwise. Use it for live previews.</summary>
     public static readonly DirectProperty<ScrubBar, TimeSpan?> ScrubPositionProperty =
@@ -95,6 +112,12 @@ public class ScrubBar : TemplatedControl
 
     public static readonly StyledProperty<IBrush?> MarkerBrushProperty =
         AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(MarkerBrush));
+
+    public static readonly StyledProperty<IBrush?> RangeBrushProperty =
+        AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(RangeBrush));
+
+    public static readonly StyledProperty<IBrush?> RangeFillBrushProperty =
+        AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(RangeFillBrush));
 
     public static readonly StyledProperty<IBrush?> ThumbBrushProperty =
         AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(ThumbBrush));
@@ -143,7 +166,8 @@ public class ScrubBar : TemplatedControl
     {
         FocusableProperty.OverrideDefaultValue<ScrubBar>(true);
         AffectsRender<ScrubBar>(
-            PositionProperty, BufferedPositionProperty, PreviewMarkerPositionProperty, TrackBrushProperty,
+            PositionProperty, BufferedPositionProperty, PreviewMarkerPositionProperty, RangeStartProperty,
+            RangeEndProperty, RangeBrushProperty, RangeFillBrushProperty, TrackBrushProperty,
             BufferedBrushProperty, PlayedBrushProperty, SegmentSheenBrushProperty, MarkerBrushProperty,
             ThumbBrushProperty, ThumbIndexBrushProperty, FocusRingBrushProperty, GrooveShadowProperty, PlayedGlowProperty,
             ThumbShadowProperty, HoverExpansionProperty, BackgroundProperty, BorderBrushProperty);
@@ -183,6 +207,24 @@ public class ScrubBar : TemplatedControl
     {
         get => GetValue(PreviewMarkerPositionProperty);
         set => SetValue(PreviewMarkerPositionProperty, value);
+    }
+
+    public TimeSpan? RangeStart
+    {
+        get => GetValue(RangeStartProperty);
+        set => SetValue(RangeStartProperty, value);
+    }
+
+    public TimeSpan? RangeEnd
+    {
+        get => GetValue(RangeEndProperty);
+        set => SetValue(RangeEndProperty, value);
+    }
+
+    public IImage? HoverPreview
+    {
+        get => GetValue(HoverPreviewProperty);
+        set => SetValue(HoverPreviewProperty, value);
     }
 
     public bool IsScrubbing
@@ -250,6 +292,19 @@ public class ScrubBar : TemplatedControl
     {
         get => GetValue(MarkerBrushProperty);
         set => SetValue(MarkerBrushProperty, value);
+    }
+
+    public IBrush? RangeBrush
+    {
+        get => GetValue(RangeBrushProperty);
+        set => SetValue(RangeBrushProperty, value);
+    }
+
+    /// <summary>Wash over the groove between the range brackets.</summary>
+    public IBrush? RangeFillBrush
+    {
+        get => GetValue(RangeFillBrushProperty);
+        set => SetValue(RangeFillBrushProperty, value);
     }
 
     public IBrush? ThumbBrush
@@ -501,6 +556,11 @@ public class ScrubBar : TemplatedControl
             DrawSegment(context, segment, playX, bufferedX);
         }
 
+        if (ScrubTimeline.LayoutRange(RangeStart, RangeEnd, Duration, trackWidth) is { } range)
+        {
+            DrawRange(context, Snap(TrackLeft + range.Left), Snap(TrackLeft + range.Right), groove);
+        }
+
         if (Duration > TimeSpan.Zero)
         {
             DrawThumb(context, playX, centerY, expansion);
@@ -550,6 +610,34 @@ public class ScrubBar : TemplatedControl
 
         var index = new Rect(x - 1, body.Top + 4, 2, body.Height - 8);
         context.FillRectangle(ThumbIndexBrush ?? Brushes.Transparent, index);
+    }
+
+    // A wash over the groove between two square brackets that reach past it, like a deck's A-B repeat marks.
+    private void DrawRange(DrawingContext context, double left, double right, Rect groove)
+    {
+        context.FillRectangle(RangeFillBrush ?? Brushes.Transparent, new Rect(left, groove.Top, right - left, groove.Height));
+        if (RangeBrush is not { } brush)
+        {
+            return;
+        }
+
+        var top = groove.Center.Y - RangeBracketReach;
+        var bottom = groove.Center.Y + RangeBracketReach;
+        var pen = new Pen(brush, 2, lineCap: PenLineCap.Flat, lineJoin: PenLineJoin.Miter);
+        foreach (var (x, foot) in new[] { (left, RangeBracketFoot), (right, -RangeBracketFoot) })
+        {
+            var geometry = new StreamGeometry();
+            using (var g = geometry.Open())
+            {
+                g.BeginFigure(new Point(x + foot, top), false);
+                g.LineTo(new Point(x, top));
+                g.LineTo(new Point(x, bottom));
+                g.LineTo(new Point(x + foot, bottom));
+                g.EndFigure(false);
+            }
+
+            context.DrawGeometry(null, pen, geometry);
+        }
     }
 
     // A slice line through the track with a downward cap, outlined so it reads over red and gray alike.
