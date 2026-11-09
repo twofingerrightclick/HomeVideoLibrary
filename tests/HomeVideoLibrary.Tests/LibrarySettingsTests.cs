@@ -20,5 +20,19 @@ public sealed class LibrarySettingsTests : IDisposable
         Assert.Null(await new LibrarySettings(path).LoadRootAsync());
     }
 
+    [Fact]
+    public async Task SavingOneSettingKeepsTheOther()
+    {
+        var settings = new LibrarySettings(Path.Combine(_root, "settings.json"));
+        await settings.SaveSoundEffectsAsync(true);
+        await settings.SaveRootAsync(_root);
+        Assert.True(await settings.LoadSoundEffectsAsync());
+        Assert.Equal(Path.GetFullPath(_root), await settings.LoadRootAsync());
+
+        await settings.SaveSoundEffectsAsync(false);
+        Assert.Equal(Path.GetFullPath(_root), await settings.LoadRootAsync());
+        Assert.False(await new LibrarySettings(Path.Combine(_root, "settings.json")).LoadSoundEffectsAsync());
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 }

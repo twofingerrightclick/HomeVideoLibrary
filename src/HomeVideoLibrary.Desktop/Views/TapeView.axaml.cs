@@ -2,7 +2,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
+using Avalonia.Animation;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
@@ -12,6 +13,16 @@ namespace HomeVideoLibrary.Desktop.Views;
 public sealed partial class TapeView : UserControl
 {
     private const double PreviewHalfWidth = 104;
+    private static readonly Animation FadeIn = new()
+    {
+        Duration = TimeSpan.FromMilliseconds(160),
+        FillMode = FillMode.Forward,
+        Children =
+        {
+            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 0d) } },
+            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 1d) } },
+        },
+    };
     private readonly List<IDisposable> _visibilitySubscriptions = [];
     private TapePreviewSession? _session;
     private CancellationTokenSource? _request;
@@ -23,8 +34,7 @@ public sealed partial class TapeView : UserControl
     {
         InitializeComponent();
         PointerExited += (_, _) => StopPreview();
-        LabelSurface.PointerExited += (_, _) => StopPreview();
-        LabelSurface.PointerMoved += PreviewMoved;
+        Spine.PointerMoved += PreviewMoved;
         AddHandler(PointerPressedEvent, (_, _) => StopPreview(), Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
         AttachedToVisualTree += (_, _) => WatchAncestorVisibility();
         DetachedFromVisualTree += (_, _) => { StopPreview(); UnwatchAncestorVisibility(); };
@@ -52,12 +62,12 @@ public sealed partial class TapeView : UserControl
         public void OnError(Exception error) { }
     }
 
-    private async void PreviewMoved(object? sender, PointerEventArgs args)
+    private void PreviewMoved(object? sender, PointerEventArgs args)
     {
         if (DataContext is not TapeViewModel tape || args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) { StopPreview(); return; }
-        var width = LabelSurface.Bounds.Width;
-        var x = args.GetPosition(LabelSurface).X;
-        // Center the popup on the pointer but keep it within the label; a label narrower than the popup centers it.
+        var width = Spine.Bounds.Width;
+        var x = args.GetPosition(Spine).X;
+        // Center the popup on the pointer but keep it within the spine; a spine narrower than the popup centers it.
         var limit = Math.Max(0, width / 2 - PreviewHalfWidth);
         PreviewPopup.HorizontalOffset = Math.Clamp(x - width / 2, -limit, limit);
         var bucket = Math.Clamp((int)(x / Math.Max(1, width) * TapePreviewSession.Buckets), 0, TapePreviewSession.Buckets - 1);
@@ -65,7 +75,12 @@ public sealed partial class TapeView : UserControl
         _bucket = bucket;
         _request?.Cancel();
         var cancellation = new CancellationTokenSource(); _request = cancellation;
-        var version = ++_version;
+        _ = ShowFrameAsync(tape, bucket, ++_version, cancellation);
+    }
+
+    /// <summary>Loads, decodes and fades in one preview frame; never throws (failures hide the popup).</summary>
+    private async Task ShowFrameAsync(TapeViewModel tape, int bucket, long version, CancellationTokenSource cancellation)
+    {
         try
         {
             if (_session is null)
@@ -81,10 +96,10 @@ public sealed partial class TapeView : UserControl
             }, cancellation.Token);
             if (version != _version || cancellation.IsCancellationRequested) { bitmap.Dispose(); return; }
             _previous?.Dispose(); _previous = _current; _current = bitmap;
-            PreviousPreview.Source = _previous; CurrentPreview.Opacity = 0; CurrentPreview.Source = _current;
-            PreviewTime.Text = frame.Position.ToString(@"hh\:mm\:ss");
+            PreviousPreview.Source = _previous; CurrentPreview.Source = _current;
+            PreviewTime.Text = HomeVideoLibrary.UI.Logic.ScrubTimeline.FormatTimestamp(frame.Position);
             PreviewPopup.IsOpen = true;
-            Dispatcher.UIThread.Post(() => { if (version == _version) CurrentPreview.Opacity = 1; }, DispatcherPriority.Render);
+            await FadeIn.RunAsync(CurrentPreview, cancellation.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)

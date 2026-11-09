@@ -1,5 +1,7 @@
+using System.Windows.Input;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure;
+using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
@@ -10,17 +12,25 @@ public sealed class TapeViewModel : ViewModelBase
     private readonly Action<TapeViewModel, bool> _selectionToggled;
     private readonly Func<TapeViewModel, TapePreviewSession?> _createPreview;
     private VideoRecord _record;
-    private LibraryVideo _video;
     private bool _isSelected;
     private VideoChapterRecord? _matchedChapter;
+    private string? _monthHeader;
 
-    /// <param name="selectionToggled">Called when the user changes <see cref="IsSelected"/> (for example, its checkbox).</param>
+    /// <param name="selectionToggled">Called when the user changes <see cref="IsSelected"/> (its checkbox).</param>
     /// <param name="createPreview">Starts a hover preview session, or returns null when previews are unavailable.</param>
+    /// <param name="open">Opens the tape, optionally at a position (a matched chapter).</param>
+    /// <param name="selectRange">Selects from the selection anchor to this tape.</param>
     public TapeViewModel(VideoRecord record, Action<TapeViewModel, bool> selectionToggled,
-        Func<TapeViewModel, TapePreviewSession?> createPreview, bool isSelected = false)
+        Func<TapeViewModel, TapePreviewSession?> createPreview, Func<VideoRecord, TimeSpan?, Task> open, Action<TapeViewModel> selectRange,
+        bool isSelected = false)
     {
-        _record = record; _video = record.ToLibraryVideo(); _selectionToggled = selectionToggled; _createPreview = createPreview;
+        _record = record; _selectionToggled = selectionToggled; _createPreview = createPreview;
         _isSelected = isSelected;
+        Spine = SpineStyle.For(record.Id);
+        OpenCommand = new AsyncCommand(_ => open(_record, null), context: "Open video");
+        ToggleSelectionCommand = new RelayCommand(() => IsSelected = !IsSelected);
+        SelectRangeCommand = new RelayCommand(() => selectRange(this));
+        OpenAtMatchCommand = new AsyncCommand(_ => open(_record, _matchedChapter?.Start), () => _matchedChapter is not null, context: "Open video");
     }
 
     /// <summary>A hover preview for this tape's current record; the caller disposes it. Null when previews are off.</summary>
@@ -28,20 +38,42 @@ public sealed class TapeViewModel : ViewModelBase
 
     public Guid Id => _record.Id;
     public VideoRecord Record => _record;
-    public LibraryVideo Video => _video;
+    public LibraryVideo Video => _record.ToLibraryVideo();
+    public SpineStyle Spine { get; }
+    public ICommand OpenCommand { get; }
+    public AsyncCommand OpenAtMatchCommand { get; }
+    public RelayCommand ToggleSelectionCommand { get; }
+    public RelayCommand SelectRangeCommand { get; }
+
     public string Label => _record.Label.Replace('\n', ' ').Replace('\r', ' ');
-    public string DateLabel => _record.RecordedAt.ToLocalTime().ToString("MMM yyyy");
     public string MonthLabel => _record.RecordedAt.ToLocalTime().ToString("MMMM yyyy");
-    public string DurationLabel => _record.Duration.TotalHours >= 1 ? _record.Duration.ToString(@"h\:mm\:ss") : _record.Duration.ToString(@"m\:ss");
-    public string Accent => new[] { "#947055", "#526F7B", "#7A5559", "#607563" }[_record.Id.ToByteArray()[0] % 4];
+
+    /// <summary>The molded text on the cassette shell: the running time, or the problem when the file can't play.</summary>
+    public string ShellText => _record.IsMissing ? "MISSING" : _record.State == VideoRecordState.Unreadable ? "UNREADABLE" : FormatRunningTime(_record.Duration);
+    public bool HasProblem => _record.IsMissing || _record.State == VideoRecordState.Unreadable;
+    public string? ProblemDetail => HasProblem ? _record.Error : null;
     public bool IsMissing => _record.IsMissing;
-    public string StateLabel => _record.IsMissing ? "File missing" : _record.State == VideoRecordState.Unreadable ? "Unreadable" : "";
-    public bool HasStateLabel => StateLabel.Length > 0;
-    public string? StateDetail => _record.Error;
+
+    /// <summary>The month divider shown above this tape: set when its month differs from the previous visible tape's.</summary>
+    public string? MonthHeader { get => _monthHeader; internal set { if (SetProperty(ref _monthHeader, value)) OnPropertyChanged(nameof(HasMonthHeader)); } }
+    public bool HasMonthHeader => MonthHeader is not null;
 
     /// <summary>The first chapter matching the current search, if any.</summary>
-    public VideoChapterRecord? MatchedChapter { get => _matchedChapter; internal set => SetProperty(ref _matchedChapter, value); }
+    public VideoChapterRecord? MatchedChapter
+    {
+        get => _matchedChapter;
+        internal set
+        {
+            if (!SetProperty(ref _matchedChapter, value)) return;
+            OnPropertyChanged(nameof(MatchedChapterLabel)); OnPropertyChanged(nameof(HasMatchedChapter));
+            OpenAtMatchCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public bool HasMatchedChapter => MatchedChapter is not null;
+    public string MatchedChapterLabel => MatchedChapter is { } chapter
+        ? $"▸ {ScrubTimeline.FormatTimestamp(chapter.Start)} · {(chapter.Title.Length > 0 ? chapter.Title : "Untitled chapter")}" : "";
 
+    /// <summary>User-edited through the tape's checkbox.</summary>
     public bool IsSelected
     {
         get => _isSelected;
@@ -53,18 +85,14 @@ public sealed class TapeViewModel : ViewModelBase
     internal void Update(VideoRecord record)
     {
         if (ReferenceEquals(record, _record)) return;
-        _record = record; _video = record.ToLibraryVideo();
-        foreach (var name in new[] { nameof(Record), nameof(Video), nameof(Label), nameof(DateLabel), nameof(MonthLabel), nameof(DurationLabel),
-                     nameof(IsMissing), nameof(StateLabel), nameof(HasStateLabel), nameof(StateDetail) })
+        _record = record;
+        foreach (var name in new[] { nameof(Record), nameof(Video), nameof(Label), nameof(MonthLabel), nameof(ShellText), nameof(HasProblem),
+                     nameof(ProblemDetail), nameof(IsMissing) })
             OnPropertyChanged(name);
     }
-}
 
-/// <summary>A shelf row of one or two tapes, keyed by its left tape.</summary>
-public sealed class TapeRow(TapeViewModel left) : ViewModelBase
-{
-    private TapeViewModel? _right;
-    public TapeViewModel Left { get; } = left;
-    public TapeViewModel? Right { get => _right; internal set { if (SetProperty(ref _right, value)) OnPropertyChanged(nameof(HasRight)); } }
-    public bool HasRight => Right is not null;
+    /// <summary>"42 MIN" under an hour, "1H 02M" from one hour.</summary>
+    public static string FormatRunningTime(TimeSpan duration) => duration.TotalHours >= 1
+        ? $"{(int)duration.TotalHours}H {duration.Minutes:00}M"
+        : $"{Math.Max(1, (int)Math.Round(duration.TotalMinutes))} MIN";
 }

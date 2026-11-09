@@ -36,14 +36,14 @@ public sealed class EditorNavigationTests : IDisposable
         var viewModel = NewViewModel();
         await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
         Assert.True(viewModel.HasLibrary);
-        await viewModel.RefreshIndexAsync(); // Waits for the refresh the open started.
+        await viewModel.Settings.RefreshIndexAsync(); // Waits for the refresh the open started.
         return (viewModel, video);
     }
 
     private async Task<MainWindowViewModel> OpenEditorAsync()
     {
         var (viewModel, video) = await OpenLibraryAsync();
-        await viewModel.OpenVideoAsync(video);
+        await viewModel.OpenVideoAsync(viewModel.Model!.Snapshot.Find(video.Id)!);
         Assert.IsType<VideoEditorPage>(viewModel.Page);
         return viewModel;
     }
@@ -61,7 +61,7 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.True(await first.RequestCloseAsync());
         await second.OpenLibraryAsync(Library.RootDirectory);
         Assert.True(second.HasLibrary);
-        await second.RefreshIndexAsync();
+        await second.Settings.RefreshIndexAsync();
     }
 
     [Fact]
@@ -77,12 +77,12 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task ClosingTheWindowCancelsARunningClipEditThenReleasesTheLibrary()
     {
         var (viewModel, _) = await OpenLibraryAsync();
-        viewModel.ToggleTapeSelection(viewModel.Tapes.Single());
+        viewModel.Shelf.Tapes.Single().IsSelected = true;
         await viewModel.OpenClipEditorAsync();
         var clips = Assert.IsType<ClipEditorPage>(viewModel.Page).Editor;
         var trim = clips.TrimAsync();
         Assert.True(clips.IsBusy);
-        Assert.False(await viewModel.CloseEditorAsync()); // Back keeps a running edit.
+        Assert.False(await viewModel.NavigateAsync(() => null)); // Back keeps a running edit.
 
         Assert.True(await viewModel.RequestCloseAsync());
         await trim;
@@ -95,7 +95,7 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task CleanEditorClosesWithoutAsking()
     {
         var viewModel = await OpenEditorAsync();
-        Assert.True(await viewModel.CloseEditorAsync());
+        Assert.True(await viewModel.NavigateAsync(() => null));
         Assert.Null(viewModel.Page);
         Assert.Equal(0, _interaction.Asked);
     }
@@ -108,11 +108,11 @@ public sealed class EditorNavigationTests : IDisposable
         Editor(viewModel).Title = "unsaved";
 
         _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
-        Assert.False(await viewModel.CloseEditorAsync());
+        Assert.False(await viewModel.NavigateAsync(() => null));
         Assert.Same(page, viewModel.Page);
 
         _interaction.Answers.Enqueue(LeaveChoice.Discard);
-        Assert.True(await viewModel.CloseEditorAsync());
+        Assert.True(await viewModel.NavigateAsync(() => null));
         Assert.Null(viewModel.Page);
         Assert.Equal(0, _metadata.Saves);
     }
@@ -124,7 +124,7 @@ public sealed class EditorNavigationTests : IDisposable
         Editor(viewModel).Title = "unsaved";
         var answer = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
 
-        var back = viewModel.CloseEditorAsync();
+        var back = viewModel.NavigateAsync(() => null);
         var close = viewModel.RequestCloseAsync();
         Assert.False(back.IsCompleted);
         Assert.Equal(1, _interaction.Asked);
@@ -142,24 +142,12 @@ public sealed class EditorNavigationTests : IDisposable
         Editor(viewModel).Title = "saved title";
 
         _interaction.Answers.Enqueue(LeaveChoice.Save);
-        Assert.True(await viewModel.CloseEditorAsync());
+        Assert.True(await viewModel.NavigateAsync(() => null));
         Assert.Equal(1, _metadata.Saves);
         Assert.Null(viewModel.Page);
     }
 
     private static VideoEditorViewModel Editor(MainWindowViewModel viewModel) => Assert.IsType<VideoEditorPage>(viewModel.Page).Editor;
-
-    [Fact]
-    public void VisibleOpenActionRequiresASelectionAndClearsWithIt()
-    {
-        var viewModel = NewViewModel();
-        Assert.False(viewModel.CanOpenSelected);
-        viewModel.SelectedVideo = new LibraryVideo(Guid.NewGuid(), "Videos/test.mkv", "Test", TimeSpan.FromSeconds(10), DateTimeOffset.Now, DateTimeOffset.Now);
-        Assert.True(viewModel.CanOpenSelected);
-        Assert.False(viewModel.HasEditor);
-        viewModel.SelectedVideo = null;
-        Assert.False(viewModel.CanOpenSelected);
-    }
 
     private sealed class BlockingClipEditing : IClipEditingService
     {
