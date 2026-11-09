@@ -12,7 +12,7 @@ public sealed partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        AppErrors.Install();
+        AppErrors.InstallDispatcherHandler();
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var viewModel = new MainWindowViewModel();

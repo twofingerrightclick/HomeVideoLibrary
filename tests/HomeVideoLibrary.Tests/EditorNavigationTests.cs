@@ -14,23 +14,79 @@ public sealed class EditorNavigationTests : IDisposable
     private readonly FakeMatroska _files = new();
     private readonly Metadata _metadata = new();
 
+    private LibraryPaths Library => new(Path.Combine(_root, "library"));
+
+    private MainWindowViewModel NewViewModel() => new(new MainWindowDependencies
+    {
+        Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
+        CreateServices = _ => new LibraryServices(_files, _metadata),
+        CreateClipEditing = _ => new BlockingClipEditing(),
+        FindUnavailableTools = _ => Task.FromResult<IReadOnlyList<string>>([]),
+        SweepScratch = (_, _) => Task.CompletedTask,
+        CreatePlayback = () => new Playback(),
+        Post = action => action(),
+    });
+
+    private async Task<(MainWindowViewModel ViewModel, LibraryVideo Video)> OpenLibraryAsync()
+    {
+        var catalog = await CreateCatalogAsync(Library.RootDirectory);
+        var video = await AddVideoAsync(catalog, "video");
+        var viewModel = NewViewModel();
+        await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
+        Assert.True(viewModel.HasLibrary);
+        await viewModel.RefreshIndexAsync(); // Waits for the refresh the open started.
+        return (viewModel, video);
+    }
+
     private async Task<MainWindowViewModel> OpenEditorAsync()
     {
-        var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
-        var video = await AddVideoAsync(catalog, "video");
-        var viewModel = new MainWindowViewModel(new MainWindowDependencies
-        {
-            Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
-            CreateServices = _ => new LibraryServices(_files, _metadata),
-            FindUnavailableTools = _ => Task.FromResult<IReadOnlyList<string>>([]),
-            SweepScratch = (_, _) => Task.CompletedTask,
-            CreatePlayback = () => new Playback(),
-            Post = action => action(),
-        });
-        await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
+        var (viewModel, video) = await OpenLibraryAsync();
         await viewModel.OpenVideoAsync(video);
         Assert.NotNull(viewModel.Editor);
         return viewModel;
+    }
+
+    [Fact]
+    public async Task ALibraryOpenInAnotherInstanceIsNotOpenedUntilThatOneCloses()
+    {
+        var (first, _) = await OpenLibraryAsync();
+        var second = NewViewModel();
+
+        await second.OpenLibraryAsync(Library.RootDirectory);
+        Assert.False(second.HasLibrary);
+        Assert.Contains("open in another", second.Status);
+
+        Assert.True(await first.RequestCloseAsync());
+        await second.OpenLibraryAsync(Library.RootDirectory);
+        Assert.True(second.HasLibrary);
+        await second.RefreshIndexAsync();
+    }
+
+    [Fact]
+    public async Task RecoverySnapshotsAreReportedWhenTheLibraryOpens()
+    {
+        Directory.CreateDirectory(Path.Combine(MatroskaMetadataService.RecoveryDirectory(Library), "video-20260101T000000Z"));
+        var (viewModel, _) = await OpenLibraryAsync();
+        Assert.True(viewModel.HasRecoveryNotice);
+        Assert.Contains("1 metadata recovery snapshot", viewModel.RecoveryNotice);
+    }
+
+    [Fact]
+    public async Task ClosingTheWindowCancelsARunningClipEditThenReleasesTheLibrary()
+    {
+        var (viewModel, _) = await OpenLibraryAsync();
+        viewModel.ToggleTapeSelection(viewModel.Tapes.Single());
+        await viewModel.OpenClipEditorAsync();
+        var clips = viewModel.ClipEditor!;
+        var trim = clips.TrimAsync();
+        Assert.True(clips.IsBusy);
+        Assert.False(await viewModel.CloseEditorAsync()); // Back keeps a running edit.
+
+        Assert.True(await viewModel.RequestCloseAsync());
+        await trim;
+        Assert.Null(viewModel.ClipEditor);
+        using var released = LibraryLock.TryAcquire(Library);
+        Assert.NotNull(released);
     }
 
     [Fact]
@@ -101,6 +157,29 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.False(viewModel.HasEditor);
         viewModel.SelectedVideo = null;
         Assert.False(viewModel.CanOpenSelected);
+    }
+
+    private sealed class BlockingClipEditing : IClipEditingService
+    {
+        private static readonly ClipCutPlan Plan = new(TimeSpan.Zero, TimeSpan.FromSeconds(10), true, "");
+        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ClipOutputFormat(160, 120, "10", "1:1"));
+        public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
+            CancellationToken cancellationToken = default) => Task.FromResult(Plan);
+        public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Plan);
+        public Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ClipMergePlan(true, 0, ""));
+        public async Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default, ClipCutMode mode = ClipCutMode.Precise)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return [];
+        }
+        public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class Metadata : IVideoMetadataService

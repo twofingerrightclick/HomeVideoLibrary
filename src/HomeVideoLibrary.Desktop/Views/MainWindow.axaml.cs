@@ -20,7 +20,6 @@ public sealed partial class MainWindow : Window
         MimeTypes = ["video/*"],
         AppleUniformTypeIdentifiers = ["public.movie"],
     };
-    private bool _allowClose, _closing;
     private TapeViewModel? _pressedTape;
     private Point _pressPoint;
     private bool _dragging;
@@ -39,38 +38,27 @@ public sealed partial class MainWindow : Window
             ViewModel.SetTapeColumns(args.NewSize.Width >= 1000 ? 2 : 1); UpdateScrollDate();
         };
         VideoList.AddHandler(ScrollViewer.ScrollChangedEvent, (_, _) => UpdateScrollDate());
-        VideoList.AddHandler(PointerPressedEvent, TapePressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        // A press anywhere starts a new gesture, and a release anywhere ends it (after the list has acted on it), so a
+        // press whose release the list never saw cannot leak into a later drag or click.
+        AddHandler(PointerPressedEvent, TapePressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         VideoList.AddHandler(PointerMovedEvent, TapePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
         VideoList.AddHandler(PointerReleasedEvent, TapeReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+        AddHandler(PointerReleasedEvent, (_, _) => { if (!_dragging) _pressedTape = null; }, RoutingStrategies.Bubble, handledEventsToo: true);
         Closing += WindowClosing;
-        Closed += (_, _) => ViewModel.CancelIndex();
         DataContextChanged += (_, _) => { if (DataContext is MainWindowViewModel vm) vm.TapeRows.CollectionChanged += (_, _) => UpdateScrollDate(); };
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
+    /// <summary>Every close goes through the view model's awaited close flow (import, unsaved changes, running edits);
+    /// once it agrees, this handler steps aside and the window closes for real.</summary>
     private void WindowClosing(object? sender, WindowClosingEventArgs args)
     {
-        if (_allowClose) return;
-        if (ViewModel.IsImporting)
-        {
-            args.Cancel = true;
-            if (_closing) return;
-            _closing = true;
-            AppErrors.Run(async () =>
-            {
-                await ViewModel.CancelImportAndWaitAsync();
-                _allowClose = true;
-                Close();
-            }, "Close window");
-            return;
-        }
-        if (!ViewModel.HasEditor) return;
         args.Cancel = true;
         AppErrors.Run(async () =>
         {
-            if (!await ViewModel.CloseEditorAsync()) return;
-            _allowClose = true;
+            if (!await ViewModel.RequestCloseAsync()) return;
+            Closing -= WindowClosing;
             Close();
         }, "Close window");
     }
@@ -233,7 +221,7 @@ public sealed partial class MainWindow : Window
 
     private void OpenSelectedClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenSelectedAsync, "Open video");
     private void EditClipsClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenClipEditorAsync, "Edit clips");
-    private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.CloseEditorAsync, "Back to library");
+    private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(() => ViewModel.CloseEditorAsync(), "Back to library");
     private void SaveAndLeaveClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Save);
     private void DiscardClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Discard);
     private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.KeepEditing);

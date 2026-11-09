@@ -59,6 +59,9 @@
     <Border IsVisible="{Binding HasToolWarning}" Padding="12" Background="#3A2A26" CornerRadius="4">
      <TextBlock Text="{Binding ToolWarning}" TextWrapping="Wrap"/>
     </Border>
+    <Border IsVisible="{Binding HasRecoveryNotice}" Padding="12" Background="#3A2A26" CornerRadius="4">
+     <TextBlock Text="{Binding RecoveryNotice}" TextWrapping="Wrap"/>
+    </Border>
     <WrapPanel IsVisible="{Binding !HasEditor}">
      <Button Content="Play" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" Margin="0,0,8,8"/>
      <Button Content="Edit clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" Margin="0,0,16,8"/>

@@ -20,6 +20,7 @@ public sealed record MainWindowDependencies
         return new LibraryServices(service, service);
     };
     public Func<LibraryCatalog, IVideoImporter> CreateImporter { get; init; } = catalog => new VideoImporter(catalog, MediaTools.Discover());
+    public Func<LibraryCatalog, IClipEditingService> CreateClipEditing { get; init; } = catalog => new ClipEditingService(catalog, MediaTools.Discover());
     public Func<CancellationToken, Task<IReadOnlyList<string>>> FindUnavailableTools { get; init; } =
         cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
     public Func<LibraryLock, CancellationToken, Task> SweepScratch { get; init; } = ScratchSweeper.SweepAsync;
@@ -46,6 +47,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<Guid, TapeViewModel> _tapeIndex = [];
     private readonly Dictionary<Guid, TapeRow> _rowIndex = [];
     private readonly HashSet<Guid> _selection = [];
+    private readonly HashSet<Guid> _visibleIds = [];
+    private LibraryLock? _lock;
     private LibraryModel? _model;
     private LibraryServices? _services;
     private PreviewCache? _previews;
@@ -54,12 +57,13 @@ public sealed class MainWindowViewModel : ViewModelBase
     private CancellationTokenSource? _importCancellation, _indexCancellation;
     private TaskCompletionSource? _importFinished;
     private Task? _indexRun;
+    private Task<bool>? _closing;
     private DateTime _lastActivationStat;
     private IReadOnlyList<string> _unavailableTools = [];
     private IReadOnlyList<string> _importResults = [], _indexErrors = [];
     private string _libraryRoot = "Choose a library folder to begin";
     private string _status = "Your original files stay untouched.";
-    private string _searchText = "", _albumName = "", _indexStatus = "", _toolWarning = "", _toast = "";
+    private string _searchText = "", _albumName = "", _indexStatus = "", _toolWarning = "", _recoveryNotice = "", _toast = "";
     private bool _isBusy, _isImporting, _isProgressIndeterminate, _isIndexing, _isChoosingAlbumVideos;
     private bool _isDrawerOpen = true, _isDraggingTapes;
     private double _progress;
@@ -105,6 +109,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string ToolWarning { get => _toolWarning; private set { if (SetProperty(ref _toolWarning, value)) { OnPropertyChanged(nameof(HasToolWarning)); NotifyCommandState(); } } }
     public bool HasToolWarning => ToolWarning.Length > 0;
     private bool ToolsReady => _unavailableTools.Count == 0;
+    /// <summary>Set when <c>.cache/recovery</c> holds snapshots from a save that could not be rolled back; they are
+    /// never deleted automatically.</summary>
+    public string RecoveryNotice { get => _recoveryNotice; private set { if (SetProperty(ref _recoveryNotice, value)) OnPropertyChanged(nameof(HasRecoveryNotice)); } }
+    public bool HasRecoveryNotice => RecoveryNotice.Length > 0;
     /// <summary>A short confirmation, such as an album drop; clears itself.</summary>
     public string Toast { get => _toast; private set { if (SetProperty(ref _toast, value)) OnPropertyChanged(nameof(HasToast)); } }
     public bool HasToast => Toast.Length > 0;
@@ -144,7 +152,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get
         {
-            var hidden = _selection.Count(id => !_tapeIndex.TryGetValue(id, out var tape) || !Tapes.Contains(tape));
+            var hidden = _selection.Count(id => !_visibleIds.Contains(id));
             return hidden == 0 ? $"{_selection.Count} selected" : $"{_selection.Count} selected · {hidden} hidden by this view";
         }
     }
@@ -265,7 +273,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public async Task OpenClipEditorAsync()
     {
         if (!CanEditClips || _model is not { } model) return;
-        ClipEditor = new ClipEditorViewModel(SelectedVideos, new ClipEditingService(model.Catalog, MediaTools.Discover()),
+        ClipEditor = new ClipEditorViewModel(SelectedVideos, _dependencies.CreateClipEditing(model.Catalog),
             outputs => PublishOutputsAsync(model, outputs));
         await ClipEditor.LoadFormatAsync();
     }
@@ -283,16 +291,30 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     /// <summary>Closes the open editor, asking first when it has unsaved changes. Returns false when it stays open (busy,
     /// Keep editing, a failed save, or a newer close request superseding this one).</summary>
-    public async Task<bool> CloseEditorAsync()
+    /// <param name="finishRunningWork">When true (closing the window), a running clip edit is cancelled and a running
+    /// save is waited for, instead of keeping the editor open.</param>
+    public async Task<bool> CloseEditorAsync(bool finishRunningWork = false)
     {
         if (ClipEditor is { } clips)
         {
-            if (clips.IsBusy) return false;
+            if (clips.IsBusy)
+            {
+                if (!finishRunningWork) return false;
+                Status = "Cancelling the clip edit, then closing…";
+                clips.Cancel();
+                await WhenIdleAsync(clips, () => clips.IsBusy);
+            }
+            if (ClipEditor != clips) return ClipEditor is null;
             ClipEditor = null; clips.Dispose();
             return true;
         }
         if (Editor is not { } editor) return true;
-        if (editor.IsBusy) return false;
+        if (editor.IsBusy)
+        {
+            if (!finishRunningWork) return false;
+            Status = "Finishing the current operation, then closing…";
+            await WhenIdleAsync(editor, () => editor.IsBusy);
+        }
         if (editor.IsDirty)
         {
             switch (await AskToLeaveAsync())
@@ -308,6 +330,37 @@ public sealed class MainWindowViewModel : ViewModelBase
         Editor = null;
         await editor.DisposeAsync();
         return true;
+    }
+
+    private static async Task WhenIdleAsync(ViewModelBase viewModel, Func<bool> isBusy)
+    {
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs args) { if (!isBusy()) idle.TrySetResult(); }
+        viewModel.PropertyChanged += Changed;
+        try { if (isBusy()) await idle.Task; }
+        finally { viewModel.PropertyChanged -= Changed; }
+    }
+
+    /// <summary>Everything that must happen before the window closes: cancels an import, closes the editor (asking about
+    /// unsaved changes, finishing a save, cancelling a clip edit), stops the library refresh and releases the library.
+    /// Returns false when the user chose to keep editing. Repeated calls while one is running share it.</summary>
+    public Task<bool> RequestCloseAsync() => _closing is { IsCompleted: false } running ? running : _closing = CloseAsync();
+
+    private async Task<bool> CloseAsync()
+    {
+        await CancelImportAndWaitAsync();
+        if (!await CloseEditorAsync(finishRunningWork: true)) return false;
+        await ReleaseLibraryAsync();
+        return true;
+    }
+
+    /// <summary>Stops work on the open library and gives up its lock.</summary>
+    private async Task ReleaseLibraryAsync()
+    {
+        CancelIndex();
+        if (_indexRun is { } run) await run;
+        if (_model is { } model) model.Changed -= OnModelChanged;
+        _lock?.Dispose(); _lock = null;
     }
 
     /// <summary>Asks the unsaved-changes question. A newer request supersedes an unanswered one as Keep editing, so only
@@ -337,41 +390,61 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>Opens (and if needed migrates) a library. Nothing about the current library changes unless the new one
-    /// initializes and loads; the background refresh starts only after that.</summary>
+    /// is free (not open in another instance), initializes and loads; only then is the old one released and the
+    /// background refresh started. Reopening the open library just refreshes it.</summary>
     public async Task OpenLibraryAsync(string root)
     {
         if (IsBusy || HasEditor) return;
+        var paths = new LibraryPaths(root);
+        if (_lock is { } held && string.Equals(held.Paths.RootDirectory, paths.RootDirectory,
+                OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase))
+        {
+            await RefreshIndexAsync();
+            return;
+        }
         IsBusy = true;
+        LibraryLock? owner = null;
         LibraryModel model;
         LibraryServices services;
         LibraryLoadResult load;
         IReadOnlyList<string> unavailable;
+        int recoverySnapshots;
         try
         {
-            var catalog = new LibraryCatalog(new LibraryPaths(root));
+            owner = await Task.Run(() => LibraryLock.TryAcquire(paths));
+            if (owner is null)
+            {
+                Status = "This library is open in another Home Video Library window. Close it there, then open it here.";
+                return;
+            }
+            var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try
-            {
-                using var owner = LibraryLock.TryAcquire(catalog.Paths);
-                if (owner is not null) await _dependencies.SweepScratch(owner, CancellationToken.None);
-            }
+            try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
             catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
             services = _dependencies.CreateServices(catalog);
             model = new LibraryModel(catalog, services.Files);
             load = await Task.Run(() => model.LoadAsync());
+            recoverySnapshots = CountRecoverySnapshots(paths);
             unavailable = await tools;
             await _dependencies.Settings.SaveRootAsync(root);
         }
-        catch (Exception exception) { Status = exception.Message; return; }
+        catch (Exception exception)
+        {
+            owner?.Dispose();
+            Status = exception.Message;
+            return;
+        }
         finally { IsBusy = false; }
 
-        CancelIndex(); _indexCancellation = null; IsIndexing = false;
-        if (_model is { } previous) previous.Changed -= OnModelChanged;
-        _model = model; _services = services; _previews = new PreviewCache(model.Catalog.Paths, services.Files);
+        await ReleaseLibraryAsync();
+        _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);
-        LibraryRoot = model.Catalog.Paths.RootDirectory;
+        RecoveryNotice = recoverySnapshots == 0 ? "" :
+            $"{recoverySnapshots} metadata recovery snapshot(s) are in {MatroskaMetadataService.RecoveryDirectory(paths)}. " +
+            "A save could not restore its video's previous metadata; the README explains how to restore it by hand.";
+        LibraryRoot = paths.RootDirectory;
         _tapeIndex.Clear(); _rowIndex.Clear(); _selection.Clear(); _anchorId = null; _shown = LibrarySnapshot.Empty;
         _currentAlbum = null; _targetAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";
         foreach (var name in new[] { nameof(CurrentAlbum), nameof(TargetAlbum), nameof(HasAlbum), nameof(CurrentViewTitle), nameof(IsChoosingAlbumVideos),
@@ -383,6 +456,13 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = RefreshIndexAsync();
+    }
+
+    private static int CountRecoverySnapshots(LibraryPaths paths)
+    {
+        var directory = MatroskaMetadataService.RecoveryDirectory(paths);
+        try { return Directory.Exists(directory) ? Directory.EnumerateFileSystemEntries(directory).Count() : 0; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return 0; }
     }
 
     private async Task<IReadOnlyList<string>> FindUnavailableToolsAsync()
@@ -562,6 +642,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         _selection.RemoveWhere(id => !snapshot.Videos.ContainsKey(id));
         foreach (var (id, tape) in _tapeIndex) if (snapshot.Find(id) is { } record) tape.Update(record);
         Tapes.Patch(desired);
+        _visibleIds.Clear(); _visibleIds.UnionWith(desired.Select(tape => tape.Id));
         _shown = snapshot;
         RebuildRows();
         if (SelectedVideo is { } focused && !snapshot.Videos.ContainsKey(focused.Id)) SelectedVideo = null;
@@ -689,9 +770,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         catch (Exception exception) { Status = exception.Message; }
     }
 
-    private async void ShowToast(string message)
+    private void ShowToast(string message)
     {
         Toast = message; Status = message;
+        _ = HideToastAsync(message);
+    }
+
+    private async Task HideToastAsync(string message)
+    {
         await Task.Delay(TimeSpan.FromSeconds(3));
         if (Toast == message) Toast = "";
     }
