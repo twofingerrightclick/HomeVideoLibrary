@@ -14,6 +14,7 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
     private const int SourceCount = 6;
 
     private readonly Lock _gate = new();
+    private readonly Lock _startGate = new();
     private readonly uint[] _sources = new uint[SourceCount];
     private readonly Dictionary<ClickSoundKind, uint> _buffers = [];
     private AL? _al;
@@ -38,7 +39,7 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
             _isEnabled = value;
             if (value)
             {
-                _startup ??= Task.Run(Start);
+                EnsureStarted();
             }
         }
     }
@@ -49,12 +50,11 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
         set => _volume = Math.Clamp(value, 0f, 1f);
     }
 
-    /// <summary>Completes once the device is open (or has failed), for callers that want to pre-warm.</summary>
-    public Task WarmUpAsync()
-    {
-        _startup ??= Task.Run(Start);
-        return _startup;
-    }
+    /// <summary>
+    /// Completes once the device is open or has failed (see <see cref="FailureReason"/>); never faults.
+    /// For callers that want to pre-warm at startup.
+    /// </summary>
+    public Task WarmUpAsync() => EnsureStarted();
 
     public void Play(ClickSoundKind kind)
     {
@@ -81,6 +81,7 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
 
     public void Dispose()
     {
+        // Start never faults, so this only bounds how long shutdown waits for a device still opening.
         _startup?.Wait(TimeSpan.FromSeconds(2));
         lock (_gate)
         {
@@ -120,6 +121,14 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
 
             _al?.Dispose();
             _alc?.Dispose();
+        }
+    }
+
+    private Task EnsureStarted()
+    {
+        lock (_startGate)
+        {
+            return _startup ??= Task.Run(Start);
         }
     }
 
@@ -172,9 +181,11 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
                 _ready = true;
             }
         }
-        catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException or InvalidOperationException or EntryPointNotFoundException)
+        // Native loading fails in many shapes (DllNotFound, FileNotFound, BadImageFormat, Silk's symbol
+        // loader exceptions); click feedback is optional, so every failure degrades to silence.
+        catch (Exception exception)
         {
-            FailureReason = exception.Message;
+            FailureReason = $"{exception.GetType().Name}: {exception.Message}";
         }
     }
 }

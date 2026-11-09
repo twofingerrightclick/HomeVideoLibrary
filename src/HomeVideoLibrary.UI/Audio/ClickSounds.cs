@@ -10,7 +10,14 @@ public static class ClickSounds
 
     public static IClickSoundService Service
     {
-        get => _service ??= new OpenAlClickSoundService();
+        get => LazyInitializer.EnsureInitialized(ref _service, CreateDefault);
         set => _service = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    private static IClickSoundService CreateDefault()
+    {
+        var service = new OpenAlClickSoundService();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => service.Dispose();
+        return service;
     }
 }
