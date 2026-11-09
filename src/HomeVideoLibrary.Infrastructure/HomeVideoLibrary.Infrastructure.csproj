@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <ProjectReference Include="../HomeVideoLibrary.Core/HomeVideoLibrary.Core.csproj" />
   </ItemGroup>
 </Project>

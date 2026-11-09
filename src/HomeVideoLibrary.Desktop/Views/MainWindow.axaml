@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
+        xmlns:core="using:HomeVideoLibrary.Core"
         x:Class="HomeVideoLibrary.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding Title}"
@@ -11,12 +12,35 @@
       <StackPanel Spacing="24">
         <TextBlock Text="HOME VIDEO LIBRARY" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock Text="Library" FontSize="16" Foreground="#D8DCE3" />
-        <TextBlock Text="Albums" Foreground="#9299A5" />
+        <Button Content="Choose library folder" Click="ChooseLibraryClicked" IsEnabled="{Binding !IsBusy}" />
+        <TextBlock Text="{Binding LibraryRoot}" TextWrapping="Wrap" Foreground="#9299A5" FontSize="12" />
       </StackPanel>
     </Border>
-    <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
-      <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
-      <TextBlock Text="{Binding WelcomeMessage}" Foreground="#A3AAB5" />
-    </StackPanel>
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="32">
+      <StackPanel Spacing="14" Margin="0,0,0,24">
+        <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" />
+          <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}" />
+        </StackPanel>
+      </StackPanel>
+      <ListBox Grid.Row="1" ItemsSource="{Binding Videos}" Background="Transparent">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="core:LibraryVideo">
+            <Border Padding="16" Margin="0,0,0,8" Background="#25282D" CornerRadius="6">
+              <StackPanel Spacing="5">
+                <TextBlock Text="{Binding DisplayName}" FontSize="18" />
+                <TextBlock Text="{Binding Duration}" Foreground="#A3AAB5" />
+                <TextBlock Text="{Binding RelativePath}" FontSize="11" Foreground="#9299A5" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <StackPanel Grid.Row="2" Spacing="12" Margin="0,20,0,0">
+        <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" IsVisible="{Binding IsBusy}" />
+        <ScrollViewer MaxHeight="140"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#A3AAB5" /></ScrollViewer>
+      </StackPanel>
+    </Grid>
   </Grid>
 </Window>

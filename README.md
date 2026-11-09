@@ -12,13 +12,19 @@ dotnet build HomeVideoLibrary.sln --no-restore
 dotnet run --project src/HomeVideoLibrary.Desktop
 ```
 
-Run the changed foundation behavior tests:
+Run focused import behavior tests (requires FFmpeg and ffprobe on PATH, or in a standard Homebrew bin directory on macOS):
 
 ```sh
-dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~LibraryPathsTests
+dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~ImportTests
 ```
 
-The foundation currently opens a dark starter window. Library import, playback, and metadata editing are added in subsequent stages. Planned media dependencies are FFmpeg/ffprobe, MKVToolNix, and native libVLC; the bootstrap itself does not require these tools.
+Choose a library folder in the left sidebar, then use **Import videos…** to copy media into it. The selected library reopens on the next launch. Sources remain untouched. Cancel stops the active import and keeps only previously completed files. To close during an import, cancel first and close after cleanup completes.
+
+Install FFmpeg and ffprobe for import (`brew install ffmpeg` on macOS; use your Linux package manager or Windows FFmpeg distribution elsewhere). MKVToolNix and native libVLC are planned dependencies for later metadata and playback stages.
+
+Import probes actual media, remuxes video/audio/subtitle/attachment streams to MKV with metadata and chapters, and falls back to H.264/AAC/SRT conversion when stream copying fails. Bitmap subtitles or other unsupported streams can still cause conversion to fail; the source is preserved and the failed output is removed. Existing Matroska files are copied byte-for-byte to preserve all embedded tags and attachments. Output duration and video stream count are checked before publication. Conversion has a 24-hour timeout; probe has a 60-second timeout.
+
+The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite currently stores catalog paths and source-derived recording dates. Playback, metadata editing, albums, search, and the final VHS interface are added in subsequent stages.
 
 ## Structure
 
