@@ -22,6 +22,22 @@ public class ScrubTimelineTests
     }
 
     [Fact]
+    public void BuildSpans_TreatsAMissingTitleAsEmpty()
+    {
+        var spans = ScrubTimeline.BuildSpans([new UntitledMark(Sec(0)), new ChapterMark(Sec(60), "Cake")], TenMinutes);
+
+        Assert.Equal([Span(0, 60, string.Empty), Span(60, 600, "Cake")], spans);
+    }
+
+    private sealed class UntitledMark(TimeSpan start) : IChapterMark
+    {
+        public TimeSpan Start { get; } = start;
+
+        // MKV chapters without a display string surface as null despite the non-nullable contract.
+        public string Title => null!;
+    }
+
+    [Fact]
     public void BuildSpans_KeepsTheFirstMarkAtARepeatedStart()
     {
         var spans = ScrubTimeline.BuildSpans(

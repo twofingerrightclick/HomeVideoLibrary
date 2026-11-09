@@ -108,11 +108,13 @@ public partial class ScrubSection : UserControl, IScreenshotScript
         EventHandler<SeekRequestedEventArgs> record = (_, e) => seeks.Add(e.Time);
         LiveBar.SeekRequested += record;
 
+        var before = LiveBar.Position;
         window.MouseDown(PointOn(LiveBar, 0.25, window), MouseButton.Left);
         window.MouseMove(PointOn(LiveBar, 0.75, window));
-        Check(seeks.Count == 0 && NearPixel(LiveBar.Position, TapeLength * 0.75), "Position follows the drag before any seek");
+        Check(seeks.Count == 0 && LiveBar.ScrubPosition is { } dragged && NearPixel(dragged, TapeLength * 0.75), "the thumb follows the drag before any seek");
+        Check(LiveBar.Position == before, "Position is not written while dragging");
         window.MouseMove(PointOn(LiveBar, 0.75, window) + new Point(0, 200));
-        Check(NearPixel(LiveBar.Position, TapeLength * 0.75), "dragging below the bar keeps the horizontal position");
+        Check(LiveBar.ScrubPosition is { } below && NearPixel(below, TapeLength * 0.75), "dragging below the bar keeps the horizontal position");
         window.MouseUp(PointOn(LiveBar, 0.75, window), MouseButton.Left);
         Check(seeks.Count == 1 && NearPixel(seeks[0], TapeLength * 0.75), "releasing a drag seeks once to the release point");
 

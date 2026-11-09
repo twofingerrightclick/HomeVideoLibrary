@@ -8,6 +8,7 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Threading;
 using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.UI.Controls;
@@ -18,11 +19,11 @@ public sealed class SeekRequestedEventArgs(TimeSpan time) : RoutedEventArgs(Scru
 }
 
 /// <summary>
-/// Chaptered playback timeline. Dragging moves <see cref="Position"/> live and raises
-/// <see cref="SeekRequested"/> once on release (Escape cancels and restores the old position); Left/Right
-/// (5 s, or 1 s with Shift), Home and End seek immediately. While <see cref="IsScrubbing"/> is true the bar
-/// owns <see cref="Position"/>, so the player should stop pushing its own position until
-/// <see cref="ScrubCompleted"/>.
+/// Chaptered playback timeline. While dragging, the thumb follows <see cref="ScrubPosition"/> and
+/// <see cref="Position"/> is left alone, so a two-way bound player position is neither written per pointer
+/// move nor able to drag the thumb away from the cursor. Releasing writes <see cref="Position"/> once and
+/// raises <see cref="SeekRequested"/>; Escape or losing pointer capture cancels without seeking. Left/Right
+/// (5 s, or 1 s with Shift), Home and End seek immediately.
 /// </summary>
 [TemplatePart("PART_Popup", typeof(Popup))]
 [TemplatePart("PART_HoverTime", typeof(TextBlock))]
@@ -61,6 +62,10 @@ public class ScrubBar : TemplatedControl
     /// <summary>Where a new chapter would be inserted, drawn as a yellow slice marker; null hides it.</summary>
     public static readonly StyledProperty<TimeSpan?> PreviewMarkerPositionProperty =
         AvaloniaProperty.Register<ScrubBar, TimeSpan?>(nameof(PreviewMarkerPosition));
+
+    /// <summary>Time under the dragged thumb while <see cref="IsScrubbing"/>; null otherwise. Use it for live previews.</summary>
+    public static readonly DirectProperty<ScrubBar, TimeSpan?> ScrubPositionProperty =
+        AvaloniaProperty.RegisterDirect<ScrubBar, TimeSpan?>(nameof(ScrubPosition), o => o.ScrubPosition);
 
     public static readonly DirectProperty<ScrubBar, bool> IsScrubbingProperty =
         AvaloniaProperty.RegisterDirect<ScrubBar, bool>(nameof(IsScrubbing), o => o.IsScrubbing);
@@ -126,7 +131,7 @@ public class ScrubBar : TemplatedControl
     private readonly List<INotifyPropertyChanged> _observedItems = [];
     private bool _isAttached;
     private bool _isScrubbing;
-    private TimeSpan _positionBeforeScrub;
+    private TimeSpan? _scrubPosition;
     private TimeSpan? _hoverTime;
     private string? _hoverChapterTitle;
     private Popup? _popup;
@@ -181,6 +186,18 @@ public class ScrubBar : TemplatedControl
             if (SetAndRaise(IsScrubbingProperty, ref _isScrubbing, value))
             {
                 PseudoClasses.Set(":scrubbing", value);
+            }
+        }
+    }
+
+    public TimeSpan? ScrubPosition
+    {
+        get => _scrubPosition;
+        private set
+        {
+            if (SetAndRaise(ScrubPositionProperty, ref _scrubPosition, value))
+            {
+                InvalidateVisual();
             }
         }
     }
@@ -337,7 +354,8 @@ public class ScrubBar : TemplatedControl
         {
             RebuildSpans();
         }
-        else if (change.Property == IsEffectivelyEnabledProperty && !IsEffectivelyEnabled)
+        else if ((change.Property == IsEffectivelyEnabledProperty && !IsEffectivelyEnabled)
+            || (change.Property == IsVisibleProperty && !IsVisible))
         {
             CancelScrub();
             ClearHover();
@@ -350,7 +368,7 @@ public class ScrubBar : TemplatedControl
         var x = e.GetPosition(this).X;
         if (IsScrubbing)
         {
-            Position = TimeAt(x);
+            ScrubPosition = TimeAt(x);
         }
 
         UpdateHover(x);
@@ -368,7 +386,10 @@ public class ScrubBar : TemplatedControl
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (e.Handled || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || Duration <= TimeSpan.Zero)
+        if (e.Handled
+            || IsScrubbing
+            || e.GetCurrentPoint(this).Properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed
+            || Duration <= TimeSpan.Zero)
         {
             return;
         }
@@ -376,24 +397,23 @@ public class ScrubBar : TemplatedControl
         e.Handled = true;
         Focus(NavigationMethod.Pointer);
         e.Pointer.Capture(this);
-        _positionBeforeScrub = Position;
+        var x = e.GetPosition(this).X;
+        ScrubPosition = TimeAt(x);
         IsScrubbing = true;
         RaiseEvent(new RoutedEventArgs(ScrubStartedEvent));
-        var x = e.GetPosition(this).X;
-        Position = TimeAt(x);
         UpdateHover(x);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (!IsScrubbing)
+        if (!IsScrubbing || e.InitialPressMouseButton != MouseButton.Left)
         {
             return;
         }
 
         e.Handled = true;
-        Position = TimeAt(e.GetPosition(this).X);
+        ScrubPosition = TimeAt(e.GetPosition(this).X);
         EndScrub(commit: true);
         e.Pointer.Capture(null);
         if (!new Rect(Bounds.Size).Contains(e.GetPosition(this)))
@@ -402,10 +422,12 @@ public class ScrubBar : TemplatedControl
         }
     }
 
+    // Capture is lost without a release when the window deactivates or a popup grabs the pointer; the
+    // user never let go on a target, so that ends the drag without seeking.
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
-        EndScrub(commit: true);
+        CancelScrub();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -464,7 +486,7 @@ public class ScrubBar : TemplatedControl
 
         var inner = groove.Deflate(GrooveInset);
         var trackWidth = TrackWidth;
-        var playX = Snap(TrackLeft + ScrubTimeline.TimeToX(Position, Duration, trackWidth));
+        var playX = Snap(TrackLeft + ScrubTimeline.TimeToX(ScrubPosition ?? Position, Duration, trackWidth));
         var bufferedX = Snap(TrackLeft + ScrubTimeline.TimeToX(BufferedPosition, Duration, trackWidth));
         var hoverIndex = HoverTime is { } hover && _spans.Count > 1 ? ScrubTimeline.SpanIndexAt(_spans, hover) : -1;
 
@@ -570,7 +592,7 @@ public class ScrubBar : TemplatedControl
         var time = TimeAt(x);
         var index = ScrubTimeline.SpanIndexAt(_spans, time);
         HoverTime = time;
-        HoverChapterTitle = index >= 0 && _spans[index].Title.Length > 0 ? _spans[index].Title : null;
+        HoverChapterTitle = index >= 0 && !string.IsNullOrEmpty(_spans[index].Title) ? _spans[index].Title : null;
         var text = ScrubTimeline.FormatTimestamp(time);
         if (_hoverTimeText is not null)
         {
@@ -598,7 +620,10 @@ public class ScrubBar : TemplatedControl
         var half = tip.DesiredSize.Width / 2;
         var center = half * 2 >= width ? width / 2 : Math.Clamp(x, half, width - half);
         _popup.HorizontalOffset = Math.Round(center - width / 2);
-        _popup.IsOpen = true;
+        if (!_popup.IsOpen)
+        {
+            _popup.IsOpen = true;
+        }
     }
 
     private void ClearHover()
@@ -620,10 +645,13 @@ public class ScrubBar : TemplatedControl
             return;
         }
 
+        var target = ScrubPosition;
         IsScrubbing = false;
-        if (commit)
+        ScrubPosition = null;
+        if (commit && target is { } time)
         {
-            RaiseEvent(new SeekRequestedEventArgs(Position));
+            Position = time;
+            RaiseEvent(new SeekRequestedEventArgs(time));
         }
 
         RaiseEvent(new RoutedEventArgs(ScrubCompletedEvent));
@@ -631,12 +659,6 @@ public class ScrubBar : TemplatedControl
 
     private void CancelScrub()
     {
-        if (!IsScrubbing)
-        {
-            return;
-        }
-
-        Position = _positionBeforeScrub;
         EndScrub(commit: false);
     }
 
@@ -679,13 +701,29 @@ public class ScrubBar : TemplatedControl
         }
     }
 
+    // Chapter collections may change from a background metadata scan; rebuild on the UI thread.
     private void OnMarksCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnMarksCollectionChanged(sender, e));
+            return;
+        }
+
         ObserveItems(ChapterSegments);
         RebuildSpans();
     }
 
-    private void OnMarkPropertyChanged(object? sender, PropertyChangedEventArgs e) => RebuildSpans();
+    private void OnMarkPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(RebuildSpans);
+            return;
+        }
+
+        RebuildSpans();
+    }
 
     private void RebuildSpans()
     {

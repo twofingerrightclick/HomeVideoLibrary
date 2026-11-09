@@ -29,7 +29,7 @@ public static class ScrubTimeline
 
         var starts = new List<(TimeSpan Start, string Title)>();
         foreach (var mark in marks
-            .Select(m => (Start: m.Start < TimeSpan.Zero ? TimeSpan.Zero : m.Start, m.Title))
+            .Select(m => (Start: m.Start < TimeSpan.Zero ? TimeSpan.Zero : m.Start, Title: m.Title ?? string.Empty))
             .Where(m => m.Start < duration)
             .OrderBy(m => m.Start))
         {
