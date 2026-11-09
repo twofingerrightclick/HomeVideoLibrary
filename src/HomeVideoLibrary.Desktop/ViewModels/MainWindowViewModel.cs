@@ -52,8 +52,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
     private void RebuildTapes()
     {
+        var selectedIds = SelectedVideos.Select(video => video.Id).ToHashSet();
+        var focusedId = SelectedVideo?.Id;
         Tapes = Videos.OrderByDescending(video => video.RecordedAt).ThenBy(video => video.Id)
-            .Select(video => new TapeViewModel(video, UpdateTapeSelection)).ToArray();
+            .Select(video => new TapeViewModel(video, UpdateTapeSelection, selectedIds.Contains(video.Id))).ToArray();
+        SetSelectedVideos(Tapes.Where(tape => tape.IsSelected).Select(tape => tape.Video));
+        SelectedVideo = Videos.FirstOrDefault(video => video.Id == focusedId) ?? SelectedVideos.FirstOrDefault();
         RebuildRows(); OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(LibraryCount));
         OnPropertyChanged(nameof(HasLibrary)); OnPropertyChanged(nameof(EmptyTitle)); OnPropertyChanged(nameof(EmptyMessage));
     }
@@ -193,7 +197,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             _currentAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";
             OnPropertyChanged(nameof(CurrentAlbum)); OnPropertyChanged(nameof(HasAlbum)); OnPropertyChanged(nameof(CurrentViewTitle)); OnPropertyChanged(nameof(SearchText));
             Videos.Clear();
-            SelectedVideo = null;
+            SelectedVideo = null; SetSelectedVideos([]);
             await ReloadAlbumsAsync();
             await RefreshVideosAsync();
             if (generation == _libraryGeneration) Status = $"{Videos.Count} videos in your library";
@@ -259,7 +263,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (debounce) await Task.Delay(160, cancellation.Token);
             var videos = await Task.Run(() => index.SearchAsync(query, album, exclude, cancellation.Token));
             if (version != _queryVersion || generation != _libraryGeneration) return;
-            Videos.Clear(); SelectedVideo = null; SetSelectedVideos([]);
+            Videos.Clear();
             foreach (var video in videos) Videos.Add(video);
             RebuildTapes();
         }

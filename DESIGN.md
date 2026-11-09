@@ -92,11 +92,11 @@ Each spine has an always-visible, bounded checkbox beside its paper label. A pla
 
 ### Pointer preview
 
-Only the hovered label requests frames. Ten quantized positions, a 160ms debounce, cancellation, and stale-result checks bound the work. Chosen embedded thumbnails are sorted by position; otherwise a cache-only capture is requested. The view holds at most two decoded 416px-wide bitmaps for crossfade and disposes them on exit. The popup does not receive pointer input.
+Only the hovered label requests frames. Ten quantized positions, a 160ms debounce, cancellation, and stale-result checks bound the work. Chosen embedded thumbnails are sorted by position; otherwise a cache-only capture is requested. The view holds at most two decoded 416px-wide bitmaps for crossfade and disposes them on exit. The hover session deletes only its own generated capture files on exit, including late cancelled results; shared chosen-thumbnail files remain untouched. The popup does not receive pointer input.
 
 ### Editors
 
-The right inspector keeps description, tags, chapters, and chosen thumbnail capture together. Dirty navigation preserves Save, Discard, and Keep editing choices. The clip editor exposes output order and range fields; its inclusion disclosure explains the primary-picture/audio limitation.
+The right inspector keeps description, tags, chapters, and chosen thumbnail capture together. Chapter fields have persistent visible labels, and an 18px right gutter separates the form from its scrollbar. Dirty navigation preserves Save, Discard, and Keep editing choices. The clip editor exposes output order and range fields; its inclusion disclosure explains the primary-picture/audio limitation.
 
 ## Do's and Don'ts
 

@@ -2,9 +2,9 @@ using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-public sealed class TapeViewModel(LibraryVideo video, Action selectionChanged) : ViewModelBase
+public sealed class TapeViewModel(LibraryVideo video, Action selectionChanged, bool isSelected = false) : ViewModelBase
 {
-    private bool _isSelected;
+    private bool _isSelected = isSelected;
     public LibraryVideo Video { get; } = video;
     public string Label => Video.Label.Replace('\n', ' ').Replace('\r', ' ');
     public string DateLabel => Video.RecordedAt.ToString("MMM yyyy");

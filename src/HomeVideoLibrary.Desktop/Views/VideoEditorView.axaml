@@ -29,7 +29,7 @@
       </StackPanel>
     </Grid>
     <ScrollViewer Grid.Column="1" Width="300" IsVisible="{Binding IsInspectorOpen}">
-      <StackPanel Spacing="10" IsEnabled="{Binding CanEdit}">
+      <StackPanel Spacing="10" Margin="0,0,18,0" IsEnabled="{Binding CanEdit}">
         <Grid ColumnDefinitions="*,Auto">
           <TextBlock Text="Video details" FontSize="21" FontWeight="SemiBold" />
           <TextBlock Grid.Column="1" Text="Unsaved" IsVisible="{Binding IsDirty}" Foreground="#F0CE8B" VerticalAlignment="Center" />
@@ -45,9 +45,13 @@
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:ChapterEditorViewModel">
               <StackPanel Spacing="8" Margin="0,0,0,20">
+                <TextBlock Text="Chapter start · hh:mm:ss"/>
                 <TextBox Text="{Binding Position, Mode=TwoWay}" Watermark="00:00:00" AutomationProperties.Name="Chapter start time" />
+                <TextBlock Text="Chapter title"/>
                 <TextBox Text="{Binding Title, Mode=TwoWay}" AutomationProperties.Name="Chapter title" />
+                <TextBlock Text="Chapter description"/>
                 <TextBox Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" AutomationProperties.Name="Chapter description" />
+                <TextBlock Text="Chapter tags · one per line"/>
                 <TextBox Text="{Binding Tags, Mode=TwoWay}" AcceptsReturn="True" Watermark="Tags, one per line" AutomationProperties.Name="Chapter tags, one per line" />
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <Button Content="Go to chapter" Click="ChapterSeekClicked" />
