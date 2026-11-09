@@ -5,6 +5,9 @@ namespace HomeVideoLibrary.Infrastructure;
 
 public sealed record MediaProcessResult(int ExitCode, string StandardOutput, string StandardError);
 
+/// <summary>The tool's process never started, so it cannot have touched any file.</summary>
+public sealed class MediaToolStartException(string message, Exception innerException) : InvalidOperationException(message, innerException);
+
 /// <summary>Runs media tools without a shell, with bounded output and whole-tree cancellation.</summary>
 public sealed class MediaProcess
 {
@@ -32,7 +35,7 @@ public sealed class MediaProcess
         }
         catch (System.ComponentModel.Win32Exception exception)
         {
-            throw new InvalidOperationException($"Cannot start {executable}. Install the required media tools or configure their executable paths.", exception);
+            throw new MediaToolStartException($"Cannot start {executable}. Install the required media tools or configure their executable paths.", exception);
         }
         using var registration = linked.Token.Register(() =>
         {

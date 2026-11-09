@@ -287,6 +287,121 @@ public sealed class MetadataTests : IDisposable
         Assert.Equal(thumbnail.Id, Assert.Single(after.Thumbnails).Id);
         Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(thumbnail.ImagePath)), SHA256.HashData(await File.ReadAllBytesAsync(after.Thumbnails[0].ImagePath)));
         Assert.Empty(Directory.GetFileSystemEntries(catalog.Paths.ScratchDirectory));
+        Assert.Empty(Directory.GetFileSystemEntries(MatroskaMetadataService.RecoveryDirectory(catalog.Paths)));
+    }
+
+    [Fact]
+    public async Task RollbackRemovesThumbnailsTheFailedWriteAdded()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        await service.SaveAsync(video, VideoMetadata.Empty with { Title = "Before" });
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        service.AfterWriteForTesting = _ => throw new IOException("Simulated verification failure");
+
+        await Assert.ThrowsAsync<IOException>(() => service.SaveAsync(video, VideoMetadata.Empty with { Title = "New", Thumbnails = [thumbnail] }));
+
+        var after = await service.ReadTextAsync(path);
+        Assert.Equal("Before", after.Metadata.Title);
+        Assert.Empty(after.Thumbnails);
+        Assert.DoesNotContain("hvl-thumbnail", (await ToolAsync(_tools.MkvMerge, ["-J", path])).StandardOutput);
+    }
+
+    [Fact]
+    public async Task FailedRollbackKeepsTheSnapshotAndNamesIt()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        await service.SaveAsync(video, VideoMetadata.Empty with { Description = "Original" });
+        service.AfterWriteForTesting = written =>
+        {
+            File.SetAttributes(written, FileAttributes.ReadOnly);
+            throw new IOException("Simulated verification failure");
+        };
+        try
+        {
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => service.SaveAsync(video, VideoMetadata.Empty with { Description = "Lost" }));
+
+            var snapshot = Assert.Single(Directory.GetDirectories(MatroskaMetadataService.RecoveryDirectory(catalog.Paths)));
+            Assert.Contains(snapshot, error.Message);
+            Assert.Contains("Original", await File.ReadAllTextAsync(Path.Combine(snapshot, "tags.xml")));
+            Assert.Contains(path, await File.ReadAllTextAsync(Path.Combine(snapshot, "snapshot.json")));
+        }
+        finally { File.SetAttributes(path, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task RefusedWriteLeavesTheFileUntouchedWithoutRollingBack()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var before = SHA256.HashData(await File.ReadAllBytesAsync(path));
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                new MatroskaMetadataService(catalog, _tools).SaveAsync(video, VideoMetadata.Empty with { Description = "Refused" }));
+
+            Assert.StartsWith("mkvpropedit failed", error.Message);
+            Assert.Equal(before, SHA256.HashData(await File.ReadAllBytesAsync(path)));
+            Assert.Empty(Directory.GetFileSystemEntries(MatroskaMetadataService.RecoveryDirectory(catalog.Paths)));
+        }
+        finally { File.SetAttributes(path, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task WhitespaceOnlyTextSavesAsEmpty()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        await service.SaveAsync(video, VideoMetadata.Empty with
+        {
+            Description = " \n ", Chapters = [new VideoChapter(3, TimeSpan.Zero, "t", "  ", [])],
+        });
+        var read = await service.ReadAsync(video);
+        Assert.Equal("", read.Description);
+        Assert.Equal("", Assert.Single(read.Chapters).Description);
+    }
+
+    [Fact]
+    public async Task ContainerMuxDateIsNotARecordedDate()
+    {
+        Directory.CreateDirectory(_root);
+        var source = Path.Combine(_root, "dated.mkv");
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1",
+            "-metadata", "creation_time=2001-02-03T04:05:06Z", "-c:v", "libx264", source]);
+        Assert.Contains("date_utc", (await ToolAsync(_tools.MkvMerge, ["-J", source])).StandardOutput);
+        var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));
+
+        var text = await new MatroskaMetadataService(catalog, _tools).ReadTextAsync(source);
+
+        Assert.Null(text.Metadata.RecordedAt);
+    }
+
+    [Fact]
+    public async Task OrderedChaptersSurviveUnrelatedSavesAndRefuseEdits()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var chaptersPath = Path.Combine(_root, "ordered.xml");
+        await File.WriteAllTextAsync(chaptersPath, """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Chapters><EditionEntry><EditionFlagOrdered>1</EditionFlagOrdered><EditionFlagDefault>1</EditionFlagDefault>
+            <ChapterAtom><ChapterUID>11</ChapterUID><ChapterTimeStart>00:00:00.000000000</ChapterTimeStart><ChapterTimeEnd>00:00:01.000000000</ChapterTimeEnd><ChapterDisplay><ChapterString>Part</ChapterString><ChapterLanguage>eng</ChapterLanguage></ChapterDisplay></ChapterAtom>
+            </EditionEntry></Chapters>
+            """);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--chapters", chaptersPath]);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var read = await service.ReadAsync(video);
+
+        await service.SaveAsync(video, read with { Description = "Unrelated" });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(video, read with { Chapters = [] }));
+
+        var extracted = Path.Combine(_root, "ordered-after.xml");
+        await ToolAsync(_tools.MkvExtract, [path, "chapters", extracted]);
+        Assert.Contains("<ChapterTimeEnd>00:00:01.000000000</ChapterTimeEnd>", await File.ReadAllTextAsync(extracted));
     }
 
     [Fact]

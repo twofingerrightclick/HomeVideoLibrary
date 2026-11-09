@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Xml.Linq;
 using HomeVideoLibrary.Core;
@@ -77,12 +78,20 @@ internal static class MatroskaMetadataXml
             edition = new XElement("EditionEntry", new XElement("EditionFlagDefault", "1"));
             chapters.Root!.Add(edition);
         }
+        if (edition.Element("EditionFlagOrdered")?.Value == "1")
+        {
+            // Ordered chapters define playback order through mandatory ends; rewriting them would change what plays.
+            if (SameChapters(MetadataText.Normalize(Read(tags, chapters)).Chapters, desiredChapters)) return;
+            throw new InvalidOperationException("This video uses ordered chapters from another program, which cannot be edited here.");
+        }
         var existing = new Dictionary<ulong, XElement>();
         foreach (var atom in edition.Elements("ChapterAtom").ToArray())
         {
             if (TryGetUid(atom) is not { } uid || !TryParseTime(atom.Element("ChapterTimeStart")?.Value, out _)) continue;
             // Read showed only the first atom with this UID; stale duplicates would shadow the edit on the next read.
-            if (!existing.TryAdd(uid, atom)) atom.Remove();
+            if (existing.TryAdd(uid, atom)) continue;
+            Trace.TraceWarning($"Removed a duplicate of chapter {uid} (\"{ChapterTitle(atom)}\") that readers ignore.");
+            atom.Remove();
         }
         var reservedUids = chapters.Descendants("ChapterUID")
             .Select(element => ulong.TryParse(element.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var uid) ? uid : 0)
@@ -127,6 +136,11 @@ internal static class MatroskaMetadataXml
             Replace(chapterTags, chapterTarget, "KEYWORDS", chapter.Tags);
         }
     }
+
+    private static bool SameChapters(IReadOnlyList<VideoChapter> left, IReadOnlyList<VideoChapter> right) =>
+        left.Count == right.Count && left.OrderBy(chapter => chapter.Uid).Zip(right.OrderBy(chapter => chapter.Uid)).All(pair =>
+            pair.First.Uid == pair.Second.Uid && pair.First.Position == pair.Second.Position && pair.First.Title == pair.Second.Title &&
+            pair.First.Description == pair.Second.Description && pair.First.Tags.SequenceEqual(pair.Second.Tags));
 
     private static XElement? PrimaryEdition(XDocument chapters) => chapters.Root?.Elements("EditionEntry")
         .OrderByDescending(edition => edition.Element("EditionFlagDefault")?.Value == "1").FirstOrDefault();

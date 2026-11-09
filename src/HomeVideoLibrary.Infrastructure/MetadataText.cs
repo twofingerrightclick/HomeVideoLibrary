@@ -8,10 +8,11 @@ namespace HomeVideoLibrary.Infrastructure;
 /// write with its read-back, because mkvtoolnix turns CRLF into LF and XML cannot carry most control characters.</summary>
 public static class MetadataText
 {
-    /// <summary>Converts CRLF and CR to LF and removes characters XML 1.0 cannot represent.</summary>
+    /// <summary>Converts CRLF and CR to LF and removes characters XML 1.0 cannot represent. Whitespace-only text becomes
+    /// empty, since mkvtoolnix drops such values on write.</summary>
     public static string Normalize(string? text)
     {
-        if (string.IsNullOrEmpty(text)) return "";
+        if (string.IsNullOrWhiteSpace(text)) return "";
         var builder = new StringBuilder(text.Length);
         for (var i = 0; i < text.Length; i++)
         {
