@@ -72,6 +72,7 @@ internal static class VideoEncoding
         else
             arguments.AddRange(["-c:v", "libx264", "-preset", "fast", "-crf", "18"]);
         arguments.AddRange(["-pix_fmt", target.PixelFormat]);
+        if (target.Interlaced is not null) arguments.AddRange(["-flags", "+ilme+ildct"]);
         arguments.AddRange(ColorArguments(target.Colour));
         return arguments;
     }
@@ -105,21 +106,26 @@ internal static class VideoEncoding
     };
 }
 
-/// <summary>The video every clip of a re-encoding merge is brought to.</summary>
+/// <summary>The video that clips which cannot be copied into a merge are re-encoded to.</summary>
 internal sealed record VideoTarget(string CodecName, int Width, int Height, string SampleAspectRatio, string FrameRate,
     string PixelFormat, VideoStreamInfo Colour, TimeSpan FrameDuration)
 {
-    /// <summary>Deinterlaces frames flagged as interlaced, scales square-pixel-aware without upscaling, pads to the
-    /// centre, then forces a constant frame rate.</summary>
+    /// <summary>"tff" or "bff" when the copied clips are interlaced, so re-encoded clips match them; null for progressive.</summary>
+    public string? Interlaced => Colour.FieldOrder switch { "tt" or "tb" => "tff", "bb" or "bt" => "bff", _ => null };
+
+    /// <summary>Scales square-pixel-aware without upscaling, pads to the centre and forces the target frame rate.
+    /// Interlaced sources are deinterlaced for a progressive target; for an interlaced target, fields are kept and the
+    /// field order is set to match.</summary>
     public string Filter
     {
         get
         {
             var sar = SampleAspectRatio.Replace(':', '/');
-            return "yadif=deint=interlaced," +
-                $"scale=w='max(2,trunc(iw*sar/({sar})/2)*2)':h='max(2,trunc(ih/2)*2)',setsar={sar}," +
+            return (Interlaced is null ? "yadif=deint=interlaced," : "") +
+                $"scale=w='max(2,trunc(iw*sar/({sar})/2)*2)':h='max(2,trunc(ih/2)*2)':interl={(Interlaced is null ? 0 : 1)},setsar={sar}," +
                 $"scale=w='min(iw,{Width})':h='min(ih,{Height})':force_original_aspect_ratio=decrease:force_divisible_by=2," +
-                $"pad={Width}:{Height}:(ow-iw)/2:(oh-ih)/2,setsar={sar},fps={FrameRate}";
+                $"pad={Width}:{Height}:(ow-iw)/2:(oh-ih)/2,setsar={sar},fps={FrameRate}" +
+                (Interlaced is { } order ? $",setfield={order}" : "");
         }
     }
 }
