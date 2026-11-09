@@ -19,10 +19,25 @@ public enum ClipCutMode
 /// <summary>What a cut will really produce, in source time.</summary>
 /// <param name="IsLossless">True when no frame is re-encoded.</param>
 /// <param name="Note">A short explanation for the user, including why a precise cut fell back to keyframes.</param>
-public sealed record ClipCutPlan(TimeSpan ActualStart, TimeSpan ActualEnd, bool IsLossless, string Note);
+public sealed record ClipCutPlan(TimeSpan ActualStart, TimeSpan ActualEnd, bool IsLossless, string Note)
+{
+    /// <summary>How much of the kept picture is re-encoded: zero for a copy, the frames next to each cut for a precise
+    /// cut, and all of it when no keyframe falls inside the range.</summary>
+    public TimeSpan ReencodedDuration { get; init; }
+}
 
 /// <param name="ReencodedClips">How many sources have their video or audio re-encoded to match the others.</param>
-public sealed record ClipMergePlan(bool IsLossless, int ReencodedClips, string Note);
+public sealed record ClipMergePlan(bool IsLossless, int ReencodedClips, string Note)
+{
+    /// <summary>One entry per source, in merge order.</summary>
+    public IReadOnlyList<ClipMergeSourcePlan> Clips { get; init; } = [];
+}
+
+/// <summary>What a merge does with one source.</summary>
+/// <param name="Duration">The source's video length.</param>
+/// <param name="Reason">Why the source is re-encoded, in plain words ("it is 720×480; the merged video is 1920×1080");
+/// null when it is copied.</param>
+public sealed record ClipMergeSourcePlan(bool ReencodesVideo, bool ReencodesAudio, TimeSpan Duration, string? Reason);
 
 public interface IClipEditingService
 {

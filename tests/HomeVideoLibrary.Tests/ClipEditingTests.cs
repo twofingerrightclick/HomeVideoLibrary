@@ -65,6 +65,7 @@ public sealed class ClipEditingTests : IDisposable
         var trimmed = Assert.Single(await editing.TrimAsync(source, TimeSpan.FromSeconds(1.35), TimeSpan.FromSeconds(4.65), "Precise"));
 
         Assert.False(plan.IsLossless);
+        Assert.Equal(TimeSpan.FromSeconds(1.3), plan.ReencodedDuration); // 1.4..2.0 and 4.0..4.7.
         Assert.Equal(TimeSpan.FromSeconds(1.4), plan.ActualStart);
         Assert.Equal(TimeSpan.FromSeconds(4.7), plan.ActualEnd);
         Assert.InRange((trimmed.Duration - TimeSpan.FromSeconds(3.3)).Duration(), TimeSpan.Zero, TwoFrames);
@@ -151,6 +152,9 @@ public sealed class ClipEditingTests : IDisposable
         var output = Assert.Single(await editing.MergeAsync([wide, square], "Ordered merge"));
 
         Assert.Equal(1, plan.ReencodedClips);
+        Assert.True(plan.Clips[0].ReencodesVideo);
+        Assert.Equal("it is 160×90 and the merged video is 96×96", plan.Clips[0].Reason);
+        Assert.Equal((false, null), (plan.Clips[1].ReencodesVideo, plan.Clips[1].Reason));
         var path = catalog.GetVideoPath(output.RelativePath);
         var streams = await StreamsAsync(path);
         var video = streams.Single(stream => stream.GetProperty("codec_type").GetString() == "video");

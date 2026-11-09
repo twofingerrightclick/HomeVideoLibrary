@@ -12,13 +12,15 @@ internal sealed record CutPlan(TimeSpan ActualStart, TimeSpan ActualEnd, IReadOn
 {
     public bool IsLossless => Pieces.All(piece => piece.Kind == PieceKind.Copy);
     public TimeSpan Duration => ActualEnd - ActualStart;
+    public TimeSpan EncodedDuration =>
+        TimeSpan.FromTicks(Pieces.Where(piece => piece.Kind == PieceKind.Encode).Sum(piece => (piece.End - piece.Start).Ticks));
 
     /// <summary>Output positions where re-encoded and copied pieces meet, with the source span each one replaces.</summary>
     public IReadOnlyList<EditBoundary> Boundaries(string sourcePath) => Pieces.Skip(1).Select(piece => new EditBoundary(
         piece.Start - ActualStart,
         [new DecodeWindow(sourcePath, piece.Start - MediaValidator.BoundaryRadius, MediaValidator.BoundaryRadius * 2)])).ToArray();
 
-    public ClipCutPlan ToPublic() => new(ActualStart, ActualEnd, IsLossless, Note);
+    public ClipCutPlan ToPublic() => new(ActualStart, ActualEnd, IsLossless, Note) { ReencodedDuration = EncodedDuration };
 }
 
 /// <summary>Pure cut arithmetic over video packet lists. Times within <see cref="Epsilon"/> are equal, because Matroska
@@ -73,11 +75,14 @@ internal static class CutPlanner
             pieces.Add(new CutPiece(PieceKind.Copy, copyStart, copyEnd));
             if (copyEnd < actualEnd - Epsilon) pieces.Add(new CutPiece(PieceKind.Encode, copyEnd, actualEnd));
         }
-        var encoded = TimeSpan.FromTicks(pieces.Where(piece => piece.Kind == PieceKind.Encode).Sum(piece => (piece.End - piece.Start).Ticks));
-        var note = encoded == TimeSpan.Zero
-            ? "Lossless copy; both cuts fall on keyframes."
-            : $"Frame-accurate; re-encodes {encoded.TotalSeconds:0.##} s next to the cuts and copies the rest.";
-        return new CutPlan(firstFrame, actualEnd, pieces, note);
+        var plan = new CutPlan(firstFrame, actualEnd, pieces, "");
+        var encoded = plan.EncodedDuration;
+        return plan with
+        {
+            Note = encoded == TimeSpan.Zero
+                ? "Lossless copy; both cuts fall on keyframes."
+                : $"Frame-accurate; re-encodes {encoded.TotalSeconds:0.##} s next to the cuts and copies the rest.",
+        };
     }
 
     /// <summary>The keyframe nearest <paramref name="position"/> that leaves both parts non-empty, or null.</summary>
