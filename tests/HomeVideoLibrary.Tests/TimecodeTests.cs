@@ -38,4 +38,23 @@ public sealed class TimecodeTests
         Assert.True(Timecode.TryParse(Timecode.Format(value), out var parsed));
         Assert.Equal(value, parsed);
     }
+
+    [Theory]
+    [InlineData("1997", "1997-01-01T00:00:00+00:00")]
+    [InlineData("1997-07", "1997-07-01T00:00:00+00:00")]
+    [InlineData("1997-07-03T12:00:00.0000000+00:00", "1997-07-03T12:00:00+00:00")]
+    [InlineData("1997-07-03 12:00:00.000", "1997-07-03T12:00:00+00:00")]
+    [InlineData("1997-07-03T12:00+02:00", "1997-07-03T10:00:00+00:00")]
+    public void RecordedDatesParseIso8601(string text, string expected)
+    {
+        Assert.True(RecordedDate.TryParse(text, out var value));
+        Assert.Equal(DateTimeOffset.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), value);
+    }
+
+    [Theory]
+    [InlineData("12:30")]
+    [InlineData("July 4")]
+    [InlineData("12/31/1999")]
+    [InlineData("1:2:3")]
+    public void RecordedDatesRejectTextWithoutAnUnambiguousYear(string text) => Assert.False(RecordedDate.TryParse(text, out _));
 }
