@@ -20,6 +20,8 @@
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/TagChipInput.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/VhsSpine.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Chapters.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Slider.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Lcd.axaml"/>
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>
@@ -32,6 +34,10 @@
   </Style>
   <Style Selector="TabControl.inspector">
     <Setter Property="Theme" Value="{StaticResource Vcr.Theme.InspectorTabControl}"/>
+  </Style>
+
+  <Style Selector="Slider.volume">
+    <Setter Property="Theme" Value="{StaticResource Vcr.Theme.VolumeSlider}"/>
   </Style>
 
   <StyleInclude Source="avares://HomeVideoLibrary.UI/Themes/StockControls.axaml"/>

@@ -15,7 +15,7 @@
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
           <ToggleSwitch x:Name="SoundSwitch" OnContent="SOUND" OffContent="SOUND" IsChecked="False"/>
-          <Slider x:Name="SoundVolume" Classes="volume" Width="140" Minimum="0" Maximum="1" Value="0.6"/>
+          <Slider x:Name="SoundVolume" Classes="volume" Width="140" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.2" Value="0.6"/>
         </StackPanel>
         <TextBlock Classes="gallery-title" Text="VCR COMPONENT GALLERY" VerticalAlignment="Center"/>
       </DockPanel>

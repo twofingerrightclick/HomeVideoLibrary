@@ -1,0 +1,262 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <!-- Fader cap: a molded block lit from above-left, so its faces shade across the travel axis. -->
+  <LinearGradientBrush x:Key="Vcr.Brush.Fader.Cap" StartPoint="0%,0%" EndPoint="100%,0%">
+    <GradientStop Offset="0" Color="#33373C"/>
+    <GradientStop Offset="0.07" Color="#555B61"/>
+    <GradientStop Offset="0.2" Color="#454B51"/>
+    <GradientStop Offset="0.5" Color="#3B4046"/>
+    <GradientStop Offset="0.62" Color="#2C3034"/>
+    <GradientStop Offset="0.9" Color="#25282C"/>
+    <GradientStop Offset="0.96" Color="#30343A"/>
+    <GradientStop Offset="1" Color="#16181A"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="Vcr.Brush.Fader.Cap.Hover" StartPoint="0%,0%" EndPoint="100%,0%">
+    <GradientStop Offset="0" Color="#3A3F44"/>
+    <GradientStop Offset="0.07" Color="#636A70"/>
+    <GradientStop Offset="0.2" Color="#50565C"/>
+    <GradientStop Offset="0.5" Color="#454B51"/>
+    <GradientStop Offset="0.62" Color="#33373C"/>
+    <GradientStop Offset="0.9" Color="#2B2F33"/>
+    <GradientStop Offset="0.96" Color="#383C42"/>
+    <GradientStop Offset="1" Color="#1A1C1F"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="Vcr.Brush.Fader.Cap.Vertical" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="#33373C"/>
+    <GradientStop Offset="0.07" Color="#555B61"/>
+    <GradientStop Offset="0.2" Color="#454B51"/>
+    <GradientStop Offset="0.5" Color="#3B4046"/>
+    <GradientStop Offset="0.62" Color="#2C3034"/>
+    <GradientStop Offset="0.9" Color="#25282C"/>
+    <GradientStop Offset="0.96" Color="#30343A"/>
+    <GradientStop Offset="1" Color="#16181A"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="Vcr.Brush.Fader.Cap.Vertical.Hover" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="#3A3F44"/>
+    <GradientStop Offset="0.07" Color="#636A70"/>
+    <GradientStop Offset="0.2" Color="#50565C"/>
+    <GradientStop Offset="0.5" Color="#454B51"/>
+    <GradientStop Offset="0.62" Color="#33373C"/>
+    <GradientStop Offset="0.9" Color="#2B2F33"/>
+    <GradientStop Offset="0.96" Color="#383C42"/>
+    <GradientStop Offset="1" Color="#1A1C1F"/>
+  </LinearGradientBrush>
+  <!-- Top-lit sheen laid over either cap orientation. -->
+  <LinearGradientBrush x:Key="Vcr.Brush.Fader.Sheen" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="#26FFFFFF"/>
+    <GradientStop Offset="0.3" Color="#00FFFFFF"/>
+    <GradientStop Offset="0.75" Color="#00000000"/>
+    <GradientStop Offset="1" Color="#40000000"/>
+  </LinearGradientBrush>
+  <SolidColorBrush x:Key="Vcr.Brush.Fader.Index" Color="#F2F4F1"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Fader.Line" Color="#C9CFD2"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Fader.Tick" Color="#646B70"/>
+  <!-- Molded edges only; the cast shadow is the thumb's Effect so slider states can change it. -->
+  <BoxShadows x:Key="Vcr.Shadow.Fader">0 1 0 0 #38FFFFFF inset, 0 -1 0 0 #73000000 inset, 0 1 0 0 #08090A</BoxShadows>
+
+  <!-- Groove segment either side of the cap: invisible on the decrease side so the dark slot shows,
+       a thin lit line on the increase side. Both stay hit-testable so clicking the groove seeks. -->
+  <ControlTheme x:Key="Vcr.Theme.FaderGroove" TargetType="RepeatButton">
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{TemplateBinding Background}">
+          <Border Name="PART_Line"
+                  Height="2"
+                  Margin="0,0,3,0"
+                  CornerRadius="1"
+                  VerticalAlignment="Center"
+                  Background="{TemplateBinding Foreground}"/>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^.lit">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Fader.Line}"/>
+      <Style Selector="^ /template/ Border#PART_Line">
+        <Setter Property="BoxShadow" Value="0 0 3 0 #59C9CFD2"/>
+      </Style>
+    </Style>
+    <Style Selector="^.vertical /template/ Border#PART_Line">
+      <Setter Property="Height" Value="NaN"/>
+      <Setter Property="Width" Value="2"/>
+      <Setter Property="Margin" Value="0,3,0,0"/>
+      <Setter Property="VerticalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+  </ControlTheme>
+
+  <!-- Fader cap with a bright index line across its middle. Interaction states belong to the owning
+       slider (pressing the groove presses the slider, not the cap), so the slider theme drives them
+       through Background, Foreground (index line), BorderBrush (focus ring), Effect (cast shadow), and
+       RenderTransform (sink). -->
+  <ControlTheme x:Key="Vcr.Theme.FaderCap" TargetType="Thumb">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Fader.Cap}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Fader.Index}"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Effect" Value="drop-shadow(1 4 6 #C0000000)"/>
+    <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Rest}"/>
+    <Setter Property="Width" Value="22"/>
+    <Setter Property="Height" Value="30"/>
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Press}"/>
+      </Transitions>
+    </Setter>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Border Name="PART_Cap"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{DynamicResource Vcr.Brush.Plastic.Rim}"
+                  BorderThickness="1"
+                  CornerRadius="5"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Fader}">
+            <Panel>
+              <Border Background="{DynamicResource Vcr.Brush.Fader.Sheen}" CornerRadius="4"/>
+              <Border Name="PART_Index"
+                      Width="4"
+                      Margin="0,5"
+                      CornerRadius="2"
+                      HorizontalAlignment="Center"
+                      Background="{TemplateBinding Foreground}"
+                      BorderBrush="#121416"
+                      BorderThickness="1"/>
+            </Panel>
+          </Border>
+          <Border Name="PART_FocusRing"
+                  Margin="-3"
+                  BorderThickness="2"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  CornerRadius="{DynamicResource Vcr.Radius.Focus}"/>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^.vertical">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Fader.Cap.Vertical}"/>
+      <Setter Property="Width" Value="30"/>
+      <Setter Property="Height" Value="22"/>
+      <Style Selector="^ /template/ Border#PART_Index">
+        <Setter Property="Width" Value="NaN"/>
+        <Setter Property="Height" Value="4"/>
+        <Setter Property="Margin" Value="5,0"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+
+  <!--
+    Volume fader modeled on a mixing-desk channel strip: a recessed groove between fine printed scales,
+    the cap's index line marks the level. Apply with Classes="volume". Keeps stock Slider behavior
+    (drag, click-to-seek, arrow keys).
+      PART_Ticks   scale printed above and below the groove; inset by half the cap so its end ticks
+                   line up with the cap's index at Minimum and Maximum.
+      PART_Groove  the dark slot the cap rides in.
+  -->
+  <ControlTheme x:Key="Vcr.Theme.VolumeSlider" TargetType="Slider">
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Fader.Tick}"/>
+    <Setter Property="MinHeight" Value="36"/>
+    <Setter Property="MinWidth" Value="60"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel Background="{TemplateBinding Background}">
+          <c:TickRuler Name="PART_Ticks"
+                       Margin="11,0"
+                       VerticalAlignment="Center"
+                       Foreground="{TemplateBinding Foreground}"/>
+          <Border Name="PART_Groove"
+                  Height="6"
+                  CornerRadius="3"
+                  VerticalAlignment="Center"
+                  Background="{DynamicResource Vcr.Brush.Glass.Edge}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Well}"/>
+          <Track Name="PART_Track"
+                 Orientation="Horizontal"
+                 Minimum="{TemplateBinding Minimum}"
+                 Maximum="{TemplateBinding Maximum}"
+                 Value="{TemplateBinding Value}"
+                 IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+            <Track.DecreaseButton>
+              <RepeatButton Name="PART_DecreaseButton" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+            </Track.DecreaseButton>
+            <Track.IncreaseButton>
+              <RepeatButton Name="PART_IncreaseButton" Classes="lit" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+            </Track.IncreaseButton>
+            <Thumb Name="PART_Thumb" Theme="{StaticResource Vcr.Theme.FaderCap}"/>
+          </Track>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:vertical">
+      <Setter Property="MinHeight" Value="60"/>
+      <Setter Property="MinWidth" Value="36"/>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Panel Background="{TemplateBinding Background}">
+            <c:TickRuler Name="PART_Ticks"
+                         Orientation="Vertical"
+                         Margin="0,11"
+                         HorizontalAlignment="Center"
+                         Foreground="{TemplateBinding Foreground}"/>
+            <Border Name="PART_Groove"
+                    Width="6"
+                    CornerRadius="3"
+                    HorizontalAlignment="Center"
+                    Background="{DynamicResource Vcr.Brush.Glass.Edge}"
+                    BoxShadow="{DynamicResource Vcr.Shadow.Well}"/>
+            <Track Name="PART_Track"
+                   Orientation="Vertical"
+                   Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value}"
+                   IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+              <Track.DecreaseButton>
+                <RepeatButton Name="PART_DecreaseButton" Classes="vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+              </Track.DecreaseButton>
+              <Track.IncreaseButton>
+                <RepeatButton Name="PART_IncreaseButton" Classes="lit vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+              </Track.IncreaseButton>
+              <Thumb Name="PART_Thumb" Classes="vertical" Theme="{StaticResource Vcr.Theme.FaderCap}"/>
+            </Track>
+          </Panel>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <Style Selector="^:pointerover">
+      <Style Selector="^ /template/ Thumb#PART_Thumb">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Fader.Cap.Hover}"/>
+        <Setter Property="Effect" Value="drop-shadow(1 5 8 #D0000000)"/>
+      </Style>
+      <Style Selector="^ /template/ Thumb#PART_Thumb.vertical">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Fader.Cap.Vertical.Hover}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:pressed /template/ Thumb#PART_Thumb">
+      <Setter Property="RenderTransform" Value="translate(0px, 1px)"/>
+      <Setter Property="Effect" Value="drop-shadow(0 1 2 #E0000000)"/>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Thumb#PART_Thumb">
+      <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Opacity" Value="0.55"/>
+      <Style Selector="^ /template/ Thumb#PART_Thumb">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+        <Setter Property="Effect" Value="drop-shadow(0 1 2 #80000000)"/>
+      </Style>
+      <Style Selector="^ /template/ RepeatButton#PART_IncreaseButton">
+        <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>

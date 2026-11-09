@@ -15,5 +15,6 @@ public sealed record GallerySection(string Key, string Title, Func<Control> Crea
         new("chapters", "Chapters", () => new ChaptersSection()),
         new("tags", "Tag chips", () => new TagsSection()),
         new("spines", "VHS spines", () => new SpinesSection()),
+        new("meters", "Volume & LCD", () => new MetersSection()),
     ];
 }
