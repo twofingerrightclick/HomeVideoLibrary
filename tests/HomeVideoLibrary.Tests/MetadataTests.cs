@@ -184,25 +184,6 @@ public sealed class MetadataTests : IDisposable
     }
 
     [Fact]
-    public async Task CancellationAfterStagingStartsLeavesOriginalByteIdentical()
-    {
-        var (catalog, video) = await CreateVideoAsync();
-        var path = catalog.GetVideoPath(video.RelativePath);
-        var before = SHA256.HashData(await File.ReadAllBytesAsync(path));
-        using var cancellation = new CancellationTokenSource();
-        using var watcher = new FileSystemWatcher(catalog.Paths.VideosDirectory, "*.metadata.mkv");
-        watcher.Created += (_, _) => cancellation.Cancel();
-        watcher.EnableRaisingEvents = true;
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MatroskaMetadataService(catalog, _tools)
-            .SaveAsync(video, VideoMetadata.Empty with { Description = "Must not publish" }, cancellation.Token));
-
-        Assert.Equal(before, SHA256.HashData(await File.ReadAllBytesAsync(path)));
-        Assert.Empty(Directory.GetFiles(catalog.Paths.VideosDirectory, ".*"));
-        Assert.Empty(Directory.GetDirectories(catalog.Paths.CacheDirectory, "metadata-*"));
-    }
-
-    [Fact]
     public async Task CancelledOrFailedSaveLeavesOriginalByteIdenticalAndUnlocksNextWrite()
     {
         var (catalog, video) = await CreateVideoAsync();
@@ -218,9 +199,208 @@ public sealed class MetadataTests : IDisposable
         }));
         Assert.Equal(before, SHA256.HashData(await File.ReadAllBytesAsync(path)));
         Assert.Empty(Directory.GetFiles(catalog.Paths.VideosDirectory, ".*"));
-        Assert.Empty(Directory.GetDirectories(catalog.Paths.CacheDirectory, "metadata-*"));
+        Assert.Empty(Directory.GetFileSystemEntries(catalog.Paths.ScratchDirectory));
         await service.SaveAsync(video, VideoMetadata.Empty with { Description = "Still writable" });
         Assert.Equal("Still writable", (await service.ReadAsync(video)).Description);
+    }
+
+    [Fact]
+    public void ChapterTimesRoundTripExactlyThroughTheXmlFormat()
+    {
+        var random = new Random(1234);
+        var samples = Enumerable.Range(0, 10_000).Select(_ => TimeSpan.FromTicks(random.NextInt64(0, TimeSpan.TicksPerDay * 3)))
+            .Concat(Enumerable.Range(0, 10_000).Select(_ => TimeSpan.FromMilliseconds(random.Next(0, 4 * 3600 * 1000))));
+        foreach (var sample in samples)
+        {
+            Assert.True(MatroskaMetadataXml.TryParseTime(MatroskaMetadataXml.FormatTime(sample), out var parsed));
+            Assert.Equal(sample, parsed);
+        }
+        Assert.True(MatroskaMetadataXml.TryParseTime("00:00:00.285000001", out var nanoseconds));
+        Assert.Equal(TimeSpan.FromTicks(2_850_000), nanoseconds);
+        Assert.False(MatroskaMetadataXml.TryParseTime("00:61:00.000", out _));
+    }
+
+    [Fact]
+    public async Task SavesMillisecondChapterAndNormalizesLineBreaksAndControlCharacters()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+
+        await service.SaveAsync(video, VideoMetadata.Empty with
+        {
+            Title = "  Beach\r\nday ",
+            Description = "line1\r\nline2\rline3\u000B",
+            Chapters = [new VideoChapter(7, TimeSpan.FromSeconds(0.285), "Wave", "", [])],
+        });
+
+        var read = await service.ReadAsync(video);
+        Assert.Equal("Beach day", read.Title);
+        Assert.Equal("line1\nline2\nline3", read.Description);
+        Assert.Equal(TimeSpan.FromSeconds(0.285), Assert.Single(read.Chapters).Position);
+    }
+
+    [Fact]
+    public async Task SaveIsInPlaceAndLeavesPacketsAndDurationUnchanged()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var packetsBefore = await StreamHashAsync(path);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var durationBefore = (await service.ReadTextAsync(path)).Duration;
+        // A copy-and-replace save would leave this handle on the old, unlinked file.
+        await using var original = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+
+        await service.SaveAsync(video, VideoMetadata.Empty with { Title = "In place", Tags = ["one", "two"], Thumbnails = [thumbnail] });
+        await service.SaveAsync(video, (await service.ReadAsync(video)) with { Description = "Second edit" });
+
+        Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(path)), await SHA256.HashDataAsync(original));
+        Assert.Equal([Path.GetFileName(path)], Directory.GetFiles(catalog.Paths.VideosDirectory).Select(Path.GetFileName));
+        Assert.Equal(packetsBefore, await StreamHashAsync(path));
+        Assert.Equal(durationBefore, (await service.ReadTextAsync(path)).Duration);
+        Assert.Equal("Second edit", (await service.ReadAsync(video)).Description);
+    }
+
+    [Fact]
+    public async Task FailedVerificationRollsBackTagsChaptersTitleAndThumbnails()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        await service.SaveAsync(video, VideoMetadata.Empty with
+        {
+            Title = "Original", Description = "Kept", Tags = ["kept"],
+            Chapters = [new VideoChapter(5, TimeSpan.FromSeconds(1), "Original chapter", "", [])], Thumbnails = [thumbnail],
+        });
+        var before = await service.ReadAsync(video);
+        service.AfterWriteForTesting = _ => throw new IOException("Simulated verification failure");
+
+        await Assert.ThrowsAsync<IOException>(() => service.SaveAsync(video, VideoMetadata.Empty with { Title = "Replaced" }));
+
+        service.AfterWriteForTesting = null;
+        Directory.Delete(catalog.Paths.ThumbnailCacheDirectory, recursive: true);
+        var after = await service.ReadAsync(video);
+        Assert.Equal(("Original", "Kept"), (after.Title, after.Description));
+        Assert.Equal(before.Tags, after.Tags);
+        Assert.Equal("Original chapter", Assert.Single(after.Chapters).Title);
+        Assert.Equal(thumbnail.Id, Assert.Single(after.Thumbnails).Id);
+        Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(thumbnail.ImagePath)), SHA256.HashData(await File.ReadAllBytesAsync(after.Thumbnails[0].ImagePath)));
+        Assert.Empty(Directory.GetFileSystemEntries(catalog.Paths.ScratchDirectory));
+    }
+
+    [Fact]
+    public async Task BrokenManifestStillReadsTextReportsWarningAndAllowsSaving()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        await service.SaveAsync(video, VideoMetadata.Empty with { Description = "Readable text" });
+        var manifest = Path.Combine(_root, "home-video-library.thumbnails.v1.json");
+        await File.WriteAllTextAsync(manifest, "{ not json");
+        await ToolAsync(_tools.MkvPropEdit, [path, "--attachment-name", "home-video-library.thumbnails.v1.json",
+            "--attachment-mime-type", "application/json", "--add-attachment", manifest]);
+
+        var text = await service.ReadTextAsync(path);
+        Assert.Equal("Readable text", text.Metadata.Description);
+        Assert.NotEmpty(text.Warnings);
+        Assert.Equal("Readable text", (await service.ReadAsync(video)).Description);
+        await service.SaveAsync(video, (await service.ReadAsync(video)) with { Description = "Saved anyway" });
+        var repaired = await service.ReadTextAsync(path);
+        Assert.Equal("Saved anyway", repaired.Metadata.Description);
+        Assert.Empty(repaired.Warnings);
+    }
+
+    [Fact]
+    public async Task ReadTextReturnsThumbnailRefsWithoutExtractingAndExtractionIsCached()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        var expectedHash = SHA256.HashData(await File.ReadAllBytesAsync(thumbnail.ImagePath));
+        await service.SaveAsync(video, VideoMetadata.Empty with { Thumbnails = [thumbnail] });
+        Directory.Delete(catalog.Paths.ThumbnailCacheDirectory, recursive: true);
+
+        var text = await service.ReadTextAsync(path);
+        var reference = Assert.Single(text.Thumbnails);
+        Assert.Equal((thumbnail.Id, thumbnail.Position), (reference.Id, reference.Position));
+        Assert.False(Directory.Exists(catalog.Paths.ThumbnailCacheDirectory));
+
+        var extracted = await service.ExtractThumbnailAsync(path, video.Id, reference);
+        Assert.Equal(Path.Combine(catalog.Paths.ThumbnailCacheDirectory, video.Id.ToString("N"), thumbnail.Id.ToString("N") + ".jpg"), extracted);
+        Assert.Equal(expectedHash, SHA256.HashData(await File.ReadAllBytesAsync(extracted)));
+        // A cache hit needs no process, so it succeeds even with the video gone.
+        File.Move(path, path + ".moved");
+        Assert.Equal(extracted, await service.ExtractThumbnailAsync(path, video.Id, reference));
+        File.Move(path + ".moved", path);
+        await File.WriteAllTextAsync(extracted, "tampered");
+        Assert.Equal(expectedHash, SHA256.HashData(await File.ReadAllBytesAsync(await service.ExtractThumbnailAsync(path, video.Id, reference))));
+    }
+
+    [Fact]
+    public async Task KeepsPartialRecordedDateAndSplitsCommaSeparatedKeywords()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var tagsPath = Path.Combine(_root, "partial-date.xml");
+        await File.WriteAllTextAsync(tagsPath, """
+            <Tags><Tag><Targets/><Simple><Name>DATE_RECORDED</Name><String>1997</String></Simple><Simple><Name>KEYWORDS</Name><String>a, b</String></Simple></Tag></Tags>
+            """);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--tags", "all:" + tagsPath]);
+        var service = new MatroskaMetadataService(catalog, _tools);
+
+        var read = await service.ReadAsync(video);
+        Assert.Equal(["a", "b"], read.Tags);
+        Assert.Equal("1997", read.RecordedAtText);
+        Assert.Equal(new DateTimeOffset(1997, 1, 1, 0, 0, 0, TimeSpan.Zero), read.RecordedAt);
+        await service.SaveAsync(video, read with { Description = "Unrelated" });
+
+        var saved = await service.ReadTextAsync(path);
+        Assert.Equal("1997", saved.Metadata.RecordedAtText);
+        Assert.Equal(["a", "b"], saved.Metadata.Tags);
+    }
+
+    [Fact]
+    public async Task WriteStagedAddsExtraTagsAndKeepsExistingThumbnails()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        await service.SaveAsync(video, VideoMetadata.Empty with { Thumbnails = [thumbnail] });
+        var staged = Path.Combine(_root, "staged.mkv");
+        File.Copy(catalog.GetVideoPath(video.RelativePath), staged);
+
+        await service.WriteStagedAsync(staged, VideoMetadata.Empty with
+        {
+            Title = "Imported", RecordedAt = new DateTimeOffset(2001, 2, 3, 4, 5, 6, TimeSpan.Zero),
+        }, new MetadataWriteOptions
+        {
+            ExtraGlobalTags = new Dictionary<string, string> { ["HVL_SOURCE_FINGERPRINT"] = "abc123" },
+            KeepExistingThumbnails = true,
+        });
+
+        var text = await service.ReadTextAsync(staged);
+        Assert.Equal("Imported", text.Metadata.Title);
+        Assert.Equal(new DateTimeOffset(2001, 2, 3, 4, 5, 6, TimeSpan.Zero), text.Metadata.RecordedAt);
+        Assert.Equal(thumbnail.Id, Assert.Single(text.Thumbnails).Id);
+        Assert.Contains("abc123", await File.ReadAllTextAsync(await ExtractTagsPathAsync(staged, "staged-tags.xml")));
+    }
+
+    [Fact]
+    public async Task CapturesAnamorphicFramesWithSquarePixels()
+    {
+        Directory.CreateDirectory(_root);
+        var source = Path.Combine(_root, "anamorphic.mkv");
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-f", "lavfi", "-i", "testsrc=size=720x480:rate=10", "-t", "1",
+            "-vf", "setsar=8/9", "-c:v", "libx264", "-pix_fmt", "yuv420p", source]);
+        var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));
+        var output = Path.Combine(_root, "frame.jpg");
+
+        await new MatroskaMetadataService(catalog, _tools).CaptureFrameAsync(source, TimeSpan.FromSeconds(0.5), output);
+
+        var probe = await ToolAsync(_tools.Ffprobe, ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", output]);
+        Assert.Equal("640,480", probe.StandardOutput.Trim());
     }
 
     private async Task<(LibraryCatalog Catalog, LibraryVideo Video)> CreateVideoAsync()
@@ -229,7 +409,7 @@ public sealed class MetadataTests : IDisposable
         await catalog.InitializeAsync();
         var source = Path.Combine(_root, "source.mkv");
         await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", source]);
-        return (catalog, await new VideoImporter(catalog, _tools).ImportAsync(source));
+        return (catalog, (await new VideoImporter(catalog, _tools).ImportAsync(source)).Video);
     }
 
     private async Task<MediaProcessResult> ToolAsync(string tool, string[] arguments)
@@ -239,12 +419,18 @@ public sealed class MetadataTests : IDisposable
         return result;
     }
 
-    private async Task<XDocument> ExtractTagsAsync(string videoPath, string filename)
+    private async Task<string> StreamHashAsync(string path) =>
+        (await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-map", "0:V", "-map", "0:a?", "-c", "copy", "-f", "streamhash", "-hash", "md5", "-"])).StandardOutput;
+
+    private async Task<string> ExtractTagsPathAsync(string videoPath, string filename)
     {
         var path = Path.Combine(_root, filename);
         await ToolAsync(_tools.MkvExtract, [videoPath, "tags", path]);
-        return XDocument.Load(path);
+        return path;
     }
+
+    private async Task<XDocument> ExtractTagsAsync(string videoPath, string filename) =>
+        XDocument.Load(await ExtractTagsPathAsync(videoPath, filename));
 
     public void Dispose()
     {

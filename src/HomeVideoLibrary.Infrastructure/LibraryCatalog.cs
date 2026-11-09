@@ -13,10 +13,12 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         Directory.CreateDirectory(Paths.VideosDirectory);
         Directory.CreateDirectory(Paths.CacheDirectory);
         await using var connection = await OpenAsync(cancellationToken);
-        await using (var version = connection.CreateCommand())
+        long version;
+        await using (var versionCommand = connection.CreateCommand())
         {
-            version.CommandText = "PRAGMA user_version";
-            if (Convert.ToInt64(await version.ExecuteScalarAsync(cancellationToken)) > 2)
+            versionCommand.CommandText = "PRAGMA user_version";
+            version = Convert.ToInt64(await versionCommand.ExecuteScalarAsync(cancellationToken));
+            if (version > 3)
                 throw new InvalidDataException("This library was created by a newer version of Home Video Library.");
         }
         await using var transaction = connection.BeginTransaction();
@@ -52,7 +54,20 @@ public sealed class LibraryCatalog(LibraryPaths paths)
                 INSERT INTO video_fts(video_fts,rowid,title,description,tags,chapters) VALUES('delete',old.rowid,old.title,old.description,old.tags,old.chapters);
                 INSERT INTO video_fts(rowid,title,description,tags,chapters) VALUES(new.rowid,new.title,new.description,new.tags,new.chapters);
             END;
-            PRAGMA user_version = 2;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        if (version < 3)
+        {
+            command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name = 'source_fingerprint'";
+            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+            {
+                command.CommandText = "ALTER TABLE videos ADD COLUMN source_fingerprint TEXT NULL";
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        command.CommandText = """
+            CREATE INDEX IF NOT EXISTS videos_source_fingerprint ON videos(source_fingerprint);
+            PRAGMA user_version = 3;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -74,18 +89,37 @@ public sealed class LibraryCatalog(LibraryPaths paths)
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,relative_path,display_name,duration_ticks,imported_at,recorded_at FROM videos ORDER BY recorded_at DESC";
+        command.CommandText = $"SELECT {VideoColumns} FROM videos ORDER BY recorded_at DESC";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var videos = new List<LibraryVideo>();
         while (await reader.ReadAsync(cancellationToken))
-        {
-            var relativePath = reader.GetString(1);
-            _ = GetVideoPath(relativePath);
-            videos.Add(new LibraryVideo(Guid.Parse(reader.GetString(0)), relativePath, reader.GetString(2),
-                TimeSpan.FromTicks(reader.GetInt64(3)), DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture),
-                DateTimeOffset.Parse(reader.GetString(5), System.Globalization.CultureInfo.InvariantCulture)));
-        }
+            videos.Add(ReadVideo(reader));
         return videos;
+    }
+
+    public async Task<LibraryVideo?> FindBySourceFingerprintAsync(string fingerprint, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT {VideoColumns} FROM videos WHERE source_fingerprint = $fingerprint LIMIT 1";
+        command.Parameters.AddWithValue("$fingerprint", fingerprint);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadVideo(reader) : null;
+    }
+
+    private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";
+
+    private LibraryVideo ReadVideo(SqliteDataReader reader)
+    {
+        var relativePath = reader.GetString(1);
+        _ = GetVideoPath(relativePath);
+        return new LibraryVideo(Guid.Parse(reader.GetString(0)), relativePath, reader.GetString(2),
+            TimeSpan.FromTicks(reader.GetInt64(3)), DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(5), System.Globalization.CultureInfo.InvariantCulture))
+        {
+            SourceFingerprint = reader.IsDBNull(6) ? null : reader.GetString(6),
+        };
     }
 
     public Task AddAsync(LibraryVideo video, CancellationToken cancellationToken = default) => AddBatchAsync([video], cancellationToken);
@@ -98,10 +132,11 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         {
             _ = GetVideoPath(video.RelativePath);
             await using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = "INSERT INTO videos VALUES ($id,$path,$name,$duration,$imported,$recorded)";
+            command.CommandText = $"INSERT INTO videos ({VideoColumns}) VALUES ($id,$path,$name,$duration,$imported,$recorded,$fingerprint)";
             command.Parameters.AddWithValue("$id", video.Id.ToString()); command.Parameters.AddWithValue("$path", video.RelativePath);
             command.Parameters.AddWithValue("$name", video.DisplayName); command.Parameters.AddWithValue("$duration", video.Duration.Ticks);
             command.Parameters.AddWithValue("$imported", video.ImportedAt.ToString("O")); command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToString("O"));
+            command.Parameters.AddWithValue("$fingerprint", (object?)video.SourceFingerprint ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         cancellationToken.ThrowIfCancellationRequested();

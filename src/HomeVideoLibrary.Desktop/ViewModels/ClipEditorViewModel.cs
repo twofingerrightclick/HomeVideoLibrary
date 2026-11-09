@@ -1,14 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using HomeVideoLibrary.Core;
-using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
 public sealed class ClipEditorViewModel : ViewModelBase, IDisposable
 {
     private readonly IClipEditingService _editing;
-    private readonly LibrarySearchIndex? _index;
+    private readonly Func<IReadOnlyList<LibraryVideo>, Task>? _outputsCreated;
     private CancellationTokenSource? _cancellation;
     private string _title, _start = "0", _end, _split, _status = "Choose an operation. Every save creates new MKV files.";
     private bool _isBusy;
@@ -19,10 +18,12 @@ public sealed class ClipEditorViewModel : ViewModelBase, IDisposable
     private long _formatVersion;
     private bool _disposed;
 
-    public ClipEditorViewModel(IReadOnlyList<LibraryVideo> sources, IClipEditingService editing, LibrarySearchIndex? index = null)
+    /// <param name="outputsCreated">Runs after the outputs are committed to the catalog; a failure is shown as a warning.</param>
+    public ClipEditorViewModel(IReadOnlyList<LibraryVideo> sources, IClipEditingService editing,
+        Func<IReadOnlyList<LibraryVideo>, Task>? outputsCreated = null)
     {
         if (sources.Count == 0) throw new ArgumentException("Select at least one video.", nameof(sources));
-        Sources = new ObservableCollection<LibraryVideo>(sources); _editing = editing; _index = index;
+        Sources = new ObservableCollection<LibraryVideo>(sources); _editing = editing; _outputsCreated = outputsCreated;
         _title = sources.Count > 1 ? "Merged home video" : sources[0].Title.Length > 0 ? sources[0].Title : sources[0].DisplayName;
         _end = sources[0].Duration.TotalSeconds.ToString("R", CultureInfo.InvariantCulture);
         _split = (sources[0].Duration.TotalSeconds / 2).ToString("0.###", CultureInfo.InvariantCulture);
@@ -75,14 +76,13 @@ public sealed class ClipEditorViewModel : ViewModelBase, IDisposable
         try
         {
             var outputs = await Task.Run(() => operation(progress, cancellation.Token));
-            var warnings = new List<string>();
-            if (_index is { } index)
-                foreach (var video in outputs)
-                {
-                    try { await Task.Run(() => index.UpdateVideoAsync(video, cancellationToken: cancellation.Token)); }
-                    catch (Exception exception) { warnings.Add(exception.Message); }
-                }
-            Status = $"Saved {outputs.Count} new video(s) in the library. Originals unchanged." + (warnings.Count > 0 ? " Search refresh needed: " + string.Join(" ", warnings) : "");
+            var warning = "";
+            if (_outputsCreated is { } outputsCreated)
+            {
+                try { await Task.Run(() => outputsCreated(outputs)); }
+                catch (Exception exception) { warning = " Search refresh needed: " + exception.Message; }
+            }
+            Status = $"Saved {outputs.Count} new video(s) in the library. Originals unchanged." + warning;
             Progress = 100;
         }
         catch (OperationCanceledException) { Status = "Editing cancelled; no new outputs published. Originals unchanged."; }

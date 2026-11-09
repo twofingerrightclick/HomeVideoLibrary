@@ -8,6 +8,8 @@ public sealed record MediaProcessResult(int ExitCode, string StandardOutput, str
 /// <summary>Runs media tools without a shell, with bounded output and whole-tree cancellation.</summary>
 public sealed class MediaProcess
 {
+    private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
+
     public async Task<MediaProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
         TimeSpan timeout, CancellationToken cancellationToken = default, Action<string>? outputReceived = null)
     {
@@ -16,7 +18,9 @@ public sealed class MediaProcess
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            // The tools print UTF-8 (paths, tag text) on every platform; the Windows default code page would garble it.
+            StandardOutputEncoding = Utf8, StandardErrorEncoding = Utf8,
         };
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);

@@ -19,10 +19,10 @@ public sealed class ImportTests : IDisposable
         var catalog = await CreateCatalogAsync();
         var importer = new VideoImporter(catalog, _tools);
 
-        var video = await importer.ImportAsync(source);
-        var second = await importer.ImportAsync(source);
+        var video = (await importer.ImportAsync(source)).Video;
+        var second = (await importer.ImportAsync(source)).Video;
         var importedMkv = catalog.GetVideoPath(video.RelativePath);
-        var third = await importer.ImportAsync(importedMkv);
+        var third = (await importer.ImportAsync(importedMkv)).Video;
 
         Assert.NotEqual(video.RelativePath, second.RelativePath);
         Assert.Equal(originalHash, SHA256.HashData(await File.ReadAllBytesAsync(source)));
@@ -148,7 +148,7 @@ public sealed class ImportTests : IDisposable
         Assert.Equal(0, mux.ExitCode);
         var catalog = await CreateCatalogAsync();
 
-        var imported = await new VideoImporter(catalog, _tools).ImportAsync(withSubtitles);
+        var imported = (await new VideoImporter(catalog, _tools).ImportAsync(withSubtitles)).Video;
 
         var probe = await new MediaProcess().RunAsync(_tools.Ffprobe,
             ["-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "json", catalog.GetVideoPath(imported.RelativePath)], TimeSpan.FromSeconds(30));
