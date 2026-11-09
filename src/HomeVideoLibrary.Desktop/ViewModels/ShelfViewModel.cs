@@ -61,6 +61,8 @@ public sealed class ShelfViewModel : ViewModelBase
     public bool IsSingleSelection => _selection.Count == 1;
     public bool IsMultiSelection => _selection.Count > 1;
     public IReadOnlyCollection<Guid> SelectedIds => _selection;
+    /// <summary>The selected videos this view shows, for actions on what the user can see (add here, remove).</summary>
+    public IReadOnlyCollection<Guid> VisibleSelectedIds => _selection.Where(_visibleIds.Contains).ToArray();
 
     /// <summary>Every selected video, newest first, including ones the current search or album hides.</summary>
     public IReadOnlyList<VideoRecord> SelectedRecords => _snapshot.Chronological.Where(record => _selection.Contains(record.Id)).ToArray();
@@ -87,8 +89,8 @@ public sealed class ShelfViewModel : ViewModelBase
         var desired = new List<TapeViewModel>(hits.Count);
         foreach (var hit in hits)
         {
-            if (_tapeIndex.TryGetValue(hit.Video.Id, out var tape)) tape.Update(hit.Video);
-            else _tapeIndex[hit.Video.Id] = tape = new TapeViewModel(hit.Video, SetSelection, _createPreview, _open, SelectRange, _selection.Contains(hit.Video.Id));
+            if (!_tapeIndex.TryGetValue(hit.Video.Id, out var tape))
+                _tapeIndex[hit.Video.Id] = tape = new TapeViewModel(hit.Video, SetSelection, _createPreview, _open, SelectRange, _selection.Contains(hit.Video.Id));
             tape.MatchedChapter = hit.Chapter;
             desired.Add(tape);
         }
@@ -159,7 +161,7 @@ public sealed class ShelfViewModel : ViewModelBase
 
     private void NotifySelection()
     {
-        foreach (var name in new[] { nameof(SelectedCount), nameof(HasSelection), nameof(IsSingleSelection), nameof(IsMultiSelection), nameof(SelectedIds), nameof(SelectedRecords), nameof(SelectionLabel) })
+        foreach (var name in new[] { nameof(SelectedCount), nameof(HasSelection), nameof(IsSingleSelection), nameof(IsMultiSelection), nameof(SelectedIds), nameof(VisibleSelectedIds), nameof(SelectedRecords), nameof(SelectionLabel) })
             OnPropertyChanged(name);
         ClearSelectionCommand.RaiseCanExecuteChanged(); ClearCommand.RaiseCanExecuteChanged();
         SelectionChanged?.Invoke();

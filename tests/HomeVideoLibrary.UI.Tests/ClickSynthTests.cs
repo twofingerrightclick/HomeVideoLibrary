@@ -8,6 +8,7 @@ public sealed class ClickSynthTests
     [Theory]
     [InlineData(ClickSoundKind.Plastic, 0.06)]
     [InlineData(ClickSoundKind.Rubber, 0.09)]
+    [InlineData(ClickSoundKind.Chime, 0.35)]
     public void Feedback_is_short_audible_and_unclipped(ClickSoundKind kind, double maxSeconds)
     {
         var pcm = ClickSynth.Synthesize(kind);

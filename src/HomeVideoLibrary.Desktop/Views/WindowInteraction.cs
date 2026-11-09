@@ -26,6 +26,19 @@ public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
             ]).AskAsync(window);
     }
 
+    public Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs)
+    {
+        if (owner() is not { } window) return Task.FromResult(CloseChoice.KeepOpen);
+        var jobs = activeJobs == 1 ? "1 import or edit is" : $"{activeJobs} imports or edits are";
+        return new PromptWindow<CloseChoice>("STILL WORKING",
+            $"{jobs} still running or queued. Finished videos are already safe in the library.", CloseChoice.KeepOpen,
+            [
+                new("KEEP OPEN", CloseChoice.KeepOpen, IsCancel: true),
+                new("CANCEL AND QUIT", CloseChoice.CancelJobs, "destructive"),
+                new("QUIT WHEN DONE", CloseChoice.WaitForJobs, "primary", IsDefault: true),
+            ]).AskAsync(window);
+    }
+
     public Task ShowErrorAsync(string title, string message) => owner() is { } window
         ? new PromptWindow<bool>(title, message, true, [new("OK", true, "primary", IsDefault: true, IsCancel: true)]).AskAsync(window)
         : Task.CompletedTask;

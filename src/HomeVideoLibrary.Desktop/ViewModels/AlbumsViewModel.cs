@@ -29,9 +29,10 @@ public sealed class AlbumsViewModel : ViewModelBase
         CreateCommand = new AsyncCommand(_ => CreateAsync([]), () => _model() is not null, context: "Create album");
         CreateFromSelectionCommand = new AsyncCommand(_ => CreateAsync([.. _shelf.SelectedIds]), () => _model() is not null && _shelf.HasSelection,
             context: "Create album");
-        RemoveSelectedCommand = new AsyncCommand(_ => RemoveSelectedAsync(), () => Current is not null && _shelf.HasSelection, context: "Remove from album");
-        AddSelectedHereCommand = new AsyncCommand(_ => Current is { } album ? AddToAlbumAsync(album.Id, _shelf.SelectedIds) : Task.CompletedTask,
-            () => Current is not null && _shelf.HasSelection, context: "Add to album");
+        RemoveSelectedCommand = new AsyncCommand(_ => RemoveSelectedAsync(), () => Current is not null && _shelf.VisibleSelectedIds.Count > 0,
+            context: "Remove from album");
+        AddSelectedHereCommand = new AsyncCommand(_ => Current is { } album ? AddToAlbumAsync(album.Id, _shelf.VisibleSelectedIds) : Task.CompletedTask,
+            () => Current is not null && IsAddingVideos && _shelf.VisibleSelectedIds.Count > 0, context: "Add to album");
         StartAddingCommand = new RelayCommand(() => IsAddingVideos = true, () => Current is not null && !IsAddingVideos);
         DoneAddingCommand = new RelayCommand(() => IsAddingVideos = false, () => IsAddingVideos);
         _shelf.SelectionChanged += UpdateCommands;
@@ -40,18 +41,17 @@ public sealed class AlbumsViewModel : ViewModelBase
     public ObservableCollection<AlbumRowViewModel> Rows { get; } = [];
 
     /// <summary>The album being shown, or null for all videos. User-selected in the album list.</summary>
-    public AlbumRowViewModel? Current
+    public AlbumRowViewModel? Current { get => _current; set => SetCurrent(value, refresh: true); }
+
+    private void SetCurrent(AlbumRowViewModel? value, bool refresh)
     {
-        get => _current;
-        set
-        {
-            if (ReferenceEquals(value, _current)) return;
-            _current = value;
-            _isAddingVideos = false;
-            OnPropertyChanged(); OnPropertyChanged(nameof(IsAllVideos)); OnPropertyChanged(nameof(IsAddingVideos)); OnPropertyChanged(nameof(ViewTitle));
-            UpdateCommands();
-            _viewChanged();
-        }
+        if (ReferenceEquals(value, _current)) return;
+        _current = value;
+        _isAddingVideos = false;
+        foreach (var name in new[] { nameof(Current), nameof(IsAllVideos), nameof(IsAddingVideos), nameof(ViewTitle), nameof(Filter) })
+            OnPropertyChanged(name);
+        UpdateCommands();
+        if (refresh) _viewChanged();
     }
 
     public bool IsAllVideos => Current is null;
@@ -73,7 +73,8 @@ public sealed class AlbumsViewModel : ViewModelBase
 
     public AlbumFilter Filter => Current is { } album ? new AlbumFilter(album.Id, IsAddingVideos) : AlbumFilter.All;
     public string ViewTitle => Current is { } album ? IsAddingVideos ? $"Choose videos to add to “{album.Name}”" : album.Name : "All videos";
-    public string AddHereLabel => $"ADD {_shelf.SelectedCount}";
+    /// <summary>Counts only the selected videos this view shows; hidden ones (already members) are not added.</summary>
+    public string AddHereLabel => $"ADD {_shelf.VisibleSelectedIds.Count}";
 
     public RelayCommand ShowAllCommand { get; }
     /// <summary>Creates an empty album with a free "New album" name and opens its inline rename.</summary>
@@ -85,11 +86,15 @@ public sealed class AlbumsViewModel : ViewModelBase
     public RelayCommand DoneAddingCommand { get; }
 
     /// <summary>Patches <see cref="Rows"/> to <paramref name="snapshot"/>'s albums by id and keeps <see cref="Current"/>
-    /// on the same album; a deleted current album returns the view to all videos.</summary>
+    /// on the same album. A deleted current album returns the view to all videos; the caller filters the shelf after
+    /// this, so it is not asked to refresh again.</summary>
     public void Apply(LibrarySnapshot snapshot)
     {
         var albums = snapshot.Albums;
         var wanted = albums.Select(album => album.Id).ToHashSet();
+        // Clear a vanished current album before removing its row: the album list writes its lost selection back to
+        // Current, and that write must find nothing to change.
+        if (_current is not null && !wanted.Contains(_current.Id)) SetCurrent(null, refresh: false);
         for (var index = Rows.Count - 1; index >= 0; index--)
             if (!wanted.Contains(Rows[index].Id)) Rows.RemoveAt(index);
         for (var index = 0; index < albums.Length; index++)
@@ -100,8 +105,7 @@ public sealed class AlbumsViewModel : ViewModelBase
             else if (existing != index) Rows.Move(existing, index);
             Rows[index].Update(album, snapshot.MembersOf(album.Id).Count);
         }
-        if (_current is not null && !wanted.Contains(_current.Id)) Current = null;
-        else OnPropertyChanged(nameof(ViewTitle));
+        OnPropertyChanged(nameof(ViewTitle));
         UpdateCommands();
     }
 
@@ -146,8 +150,8 @@ public sealed class AlbumsViewModel : ViewModelBase
         var name = NewAlbumName;
         for (var number = 2; taken.Contains(AlbumNames.Key(name)); number++) name = $"{NewAlbumName} {number}";
         var album = await Task.Run(() => model.CreateAlbumAsync(name, ids));
-        // The model has published the album; showing the current snapshot now creates its row.
-        _viewChanged();
+        // The model has published the album, so patching to its snapshot creates the row; showing it refreshes the shelf.
+        Apply(model.Snapshot);
         if (Rows.FirstOrDefault(row => row.Id == album.Id) is not { } created) return;
         Current = created;
         created.BeginRename();
@@ -157,7 +161,7 @@ public sealed class AlbumsViewModel : ViewModelBase
     private Task RemoveSelectedAsync()
     {
         if (Current is not { } album) return Task.CompletedTask;
-        var ids = _shelf.SelectedIds.ToArray();
+        var ids = _shelf.VisibleSelectedIds.ToArray();
         return RunAsync(async model =>
         {
             var change = await Task.Run(() => model.RemoveFromAlbumAsync(album.Id, ids));
@@ -212,7 +216,13 @@ public sealed class AlbumRowViewModel : ViewModelBase
     public AsyncCommand DeleteCommand { get; }
     public AsyncCommand AddSelectedCommand { get; }
 
-    public void BeginRename() => Rename ??= new AlbumRenameViewModel(Name, name => _owner.RenameAsync(this, name), EndRename);
+    public void BeginRename()
+    {
+        if (Rename is not null) return;
+        AlbumRenameViewModel? rename = null;
+        rename = new AlbumRenameViewModel(Name, name => _owner.RenameAsync(this, name), EndRename, () => ReferenceEquals(Rename, rename));
+        Rename = rename;
+    }
 
     internal void EndRename() => Rename = null;
 
@@ -231,11 +241,13 @@ public sealed class AlbumRenameViewModel : ViewModelBase
     private readonly string _original;
     private string _draftName;
 
-    internal AlbumRenameViewModel(string name, Func<string, Task> commit, Action cancel)
+    /// <param name="isOpen">Whether this rename is still the row's open one. Once cancelled or committed, the field's
+    /// final lost-focus commit finds nothing to do.</param>
+    internal AlbumRenameViewModel(string name, Func<string, Task> commit, Action cancel, Func<bool> isOpen)
     {
         _original = _draftName = name;
-        CommitCommand = new AsyncCommand(_ => DraftName == _original ? Cancel(cancel) : commit(DraftName), context: "Rename album");
-        CancelCommand = new RelayCommand(cancel);
+        CommitCommand = new AsyncCommand(_ => DraftName == _original ? Cancel(cancel) : commit(DraftName), isOpen, context: "Rename album");
+        CancelCommand = new RelayCommand(cancel, isOpen);
     }
 
     public string DraftName { get => _draftName; set => SetProperty(ref _draftName, value); }

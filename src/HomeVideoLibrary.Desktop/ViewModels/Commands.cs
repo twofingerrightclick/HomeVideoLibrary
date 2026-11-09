@@ -80,7 +80,7 @@ public abstract class AsyncCommandBase : ViewModelBase, ICommand
         OnPropertyChanged(nameof(IsRunning));
         RaiseCanExecuteChanged();
         try { await _execute(parameter, cancellation.Token); }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception exception) { _onError(exception); }
         finally
         {
