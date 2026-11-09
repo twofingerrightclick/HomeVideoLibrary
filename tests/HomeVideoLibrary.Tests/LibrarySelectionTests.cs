@@ -25,6 +25,7 @@ public sealed class LibrarySelectionTests : IDisposable
         }
         var viewModel = new MainWindowViewModel(new MainWindowDependencies
         {
+            Interaction = new FakeInteraction(),
             Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
             CreateServices = _ => new LibraryServices(_files, new UnusedMetadata()),
             CreateImporter = library => _importer?.Invoke(library) ?? throw new NotSupportedException(),

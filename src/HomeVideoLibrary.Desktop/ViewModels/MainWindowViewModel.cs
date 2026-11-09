@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Infrastructure;
+using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
@@ -13,6 +14,8 @@ public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataSe
 /// <summary>External services of <see cref="MainWindowViewModel"/>; the defaults are the real ones.</summary>
 public sealed record MainWindowDependencies
 {
+    /// <summary>Asks the user modal questions (unsaved changes). Required: every caller decides how they are answered.</summary>
+    public required IInteraction Interaction { get; init; }
     public LibrarySettings Settings { get; init; } = new();
     public Func<LibraryCatalog, LibraryServices> CreateServices { get; init; } = catalog =>
     {
@@ -27,17 +30,6 @@ public sealed record MainWindowDependencies
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
-}
-
-public enum LeaveChoice { Save, Discard, KeepEditing }
-
-/// <summary>An open "unsaved changes" question. The view shows it while <see cref="MainWindowViewModel.LeavePrompt"/>
-/// is set and answers it once; the close flow awaits <see cref="Choice"/>.</summary>
-public sealed class LeavePrompt
-{
-    private readonly TaskCompletionSource<LeaveChoice> _choice = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<LeaveChoice> Choice => _choice.Task;
-    public void Answer(LeaveChoice choice) => _choice.TrySetResult(choice);
 }
 
 public sealed class MainWindowViewModel : ViewModelBase
@@ -58,6 +50,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private TaskCompletionSource? _importFinished;
     private Task? _indexRun;
     private Task<bool>? _closing;
+    private Task<bool>? _navigating;
     private DateTime _lastActivationStat;
     private IReadOnlyList<string> _unavailableTools = [];
     private IReadOnlyList<string> _importResults = [], _indexErrors = [];
@@ -68,14 +61,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _isDrawerOpen = true, _isDraggingTapes;
     private double _progress;
     private int _tapeColumns = 1;
-    private VideoEditorViewModel? _editor;
-    private ClipEditorViewModel? _clipEditor;
+    private PageViewModel? _page;
     private LibraryVideo? _selectedVideo;
     private VideoAlbum? _currentAlbum, _targetAlbum;
-    private LeavePrompt? _leavePrompt;
-
-    public MainWindowViewModel() : this(new MainWindowDependencies()) { }
-
     public MainWindowViewModel(MainWindowDependencies dependencies) => _dependencies = dependencies;
 
     public string Title => "Home Video Library";
@@ -85,6 +73,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// <see cref="LibraryModel.Snapshot"/> (for example its <see cref="TagIndex"/>) from here.</summary>
     public LibraryModel? Model => _model;
     public TagIndex Tags => _model?.Snapshot.Tags ?? TagIndex.Empty;
+
+    /// <summary>Tag autocomplete over the current snapshot's index: a pure read on the UI thread, so a tag saved on one
+    /// video is suggested on the next as soon as its delta lands.</summary>
+    public TagSuggestionProvider SuggestTags => (query, exclude, max) =>
+        Tags.Suggest(query, max, exclude).Select(suggestion => new TagFrequency(suggestion.Tag, suggestion.Uses)).ToArray();
 
     public bool IsDrawerOpen { get => _isDrawerOpen; set => SetProperty(ref _isDrawerOpen, value); }
     public bool IsDraggingTapes { get => _isDraggingTapes; set => SetProperty(ref _isDraggingTapes, value); }
@@ -170,16 +163,11 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// <summary>One line per file of the last import, kept when it was cancelled.</summary>
     public IReadOnlyList<string> ImportResults { get => _importResults; private set => SetProperty(ref _importResults, value); }
 
-    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasVideoEditor)); NotifyEditorState(); } }
-    public ClipEditorViewModel? ClipEditor { get => _clipEditor; private set { SetProperty(ref _clipEditor, value); OnPropertyChanged(nameof(HasClipEditor)); NotifyEditorState(); } }
-    public bool HasVideoEditor => Editor is not null;
-    public bool HasClipEditor => ClipEditor is not null;
+    /// <summary>The page shown instead of the shelf, or null for the shelf. Change it with <see cref="NavigateAsync"/>.</summary>
+    public PageViewModel? Page { get => _page; private set { if (SetProperty(ref _page, value)) NotifyEditorState(); } }
     public bool CanEditClips => _selection.Count > 0 && !HasEditor && !IsBusy && ToolsReady;
     public bool CanOpenSelected => SelectedVideo is not null && !IsBusy && !HasEditor;
-    public bool HasEditor => Editor is not null || ClipEditor is not null;
-    /// <summary>The unsaved-changes question being asked, or null.</summary>
-    public LeavePrompt? LeavePrompt { get => _leavePrompt; private set { if (SetProperty(ref _leavePrompt, value)) OnPropertyChanged(nameof(IsAskingToLeave)); } }
-    public bool IsAskingToLeave => LeavePrompt is not null;
+    public bool HasEditor => Page is not null;
 
     private void NotifyCommandState()
     {
@@ -256,26 +244,29 @@ public sealed class MainWindowViewModel : ViewModelBase
         return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
     }
 
-    public async Task OpenVideoAsync(LibraryVideo video)
+    public Task OpenVideoAsync(LibraryVideo video)
     {
-        if (_model is not { } model || _services is not { } services || IsBusy || HasEditor) return;
+        if (_model is not { } model || _services is not { } services || IsBusy) return Task.CompletedTask;
         var record = model.Snapshot.Find(video.Id);
-        if (record is null) return;
-        if (record.IsMissing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return; }
-        var indexed = new IndexedMetadataService(services.Metadata, model);
-        indexed.IndexingFailed += warning => Status = warning;
-        Editor = new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed, _dependencies.CreatePlayback(), record.ToMetadata());
-        await Editor.LoadAsync();
+        if (record is null) return Task.CompletedTask;
+        if (record.IsMissing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return Task.CompletedTask; }
+        return NavigateAsync(() =>
+        {
+            var indexed = new IndexedMetadataService(services.Metadata, model);
+            indexed.IndexingFailed += warning => Status = warning;
+            return new VideoEditorPage(new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed,
+                _dependencies.CreatePlayback(), record.ToMetadata()));
+        });
     }
 
     public Task OpenSelectedAsync() => SelectedVideo is { } video ? OpenVideoAsync(video) : Task.CompletedTask;
 
-    public async Task OpenClipEditorAsync()
+    public Task OpenClipEditorAsync()
     {
-        if (!CanEditClips || _model is not { } model) return;
-        ClipEditor = new ClipEditorViewModel(SelectedVideos, _dependencies.CreateClipEditing(model.Catalog),
-            outputs => PublishOutputsAsync(model, outputs));
-        await ClipEditor.LoadFormatAsync();
+        if (!CanEditClips || _model is not { } model) return Task.CompletedTask;
+        var sources = SelectedVideos;
+        return NavigateAsync(() => new ClipEditorPage(new ClipEditorViewModel(sources, _dependencies.CreateClipEditing(model.Catalog),
+            outputs => PublishOutputsAsync(model, outputs))));
     }
 
     private static async Task PublishOutputsAsync(LibraryModel model, IReadOnlyList<LibraryVideo> videos)
@@ -289,67 +280,47 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (errors.Count > 0) throw new InvalidOperationException(string.Join(" ", errors));
     }
 
-    /// <summary>Closes the open editor, asking first when it has unsaved changes. Returns false when it stays open (busy,
-    /// Keep editing, a failed save, or a newer close request superseding this one).</summary>
-    /// <param name="finishRunningWork">When true (closing the window), a running clip edit is cancelled and a running
-    /// save is waited for, instead of keeping the editor open.</param>
-    public async Task<bool> CloseEditorAsync(bool finishRunningWork = false)
+    /// <summary>Leaves the current page (asking about unsaved changes) and shows <paramref name="next"/>'s page, or the
+    /// shelf when it returns null. Returns false when the current page stays. A request made while another is still
+    /// asking waits for it, so two prompts never stack.</summary>
+    public async Task<bool> NavigateAsync(Func<PageViewModel?> next)
     {
-        if (ClipEditor is { } clips)
+        while (_navigating is { IsCompleted: false } running) await running;
+        var navigation = _navigating = NavigateCoreAsync(next);
+        return await navigation;
+    }
+
+    private async Task<bool> NavigateCoreAsync(Func<PageViewModel?> next)
+    {
+        if (Page is { } current)
         {
-            if (clips.IsBusy)
-            {
-                if (!finishRunningWork) return false;
-                Status = "Cancelling the clip edit, then closing…";
-                clips.Cancel();
-                await WhenIdleAsync(clips, () => clips.IsBusy);
-            }
-            if (ClipEditor != clips) return ClipEditor is null;
-            ClipEditor = null; clips.Dispose();
-            return true;
+            if (!await current.CanLeaveAsync(_dependencies.Interaction)) return false;
+            Page = null;
+            await current.DisposeAsync();
         }
-        if (Editor is not { } editor) return true;
-        if (editor.IsBusy)
-        {
-            if (!finishRunningWork) return false;
-            Status = "Finishing the current operation, then closing…";
-            await WhenIdleAsync(editor, () => editor.IsBusy);
-        }
-        if (editor.IsDirty)
-        {
-            switch (await AskToLeaveAsync())
-            {
-                case LeaveChoice.KeepEditing: return false;
-                case LeaveChoice.Save:
-                    await editor.SaveAsync();
-                    if (editor.IsDirty) return false;
-                    break;
-            }
-        }
-        if (Editor != editor) return Editor is null;
-        Editor = null;
-        await editor.DisposeAsync();
+        var page = next();
+        Page = page;
+        if (page is not null) await page.LoadAsync();
         return true;
     }
 
-    private static async Task WhenIdleAsync(ViewModelBase viewModel, Func<bool> isBusy)
-    {
-        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs args) { if (!isBusy()) idle.TrySetResult(); }
-        viewModel.PropertyChanged += Changed;
-        try { if (isBusy()) await idle.Task; }
-        finally { viewModel.PropertyChanged -= Changed; }
-    }
+    /// <summary>Returns to the shelf through the leave prompt.</summary>
+    public Task<bool> CloseEditorAsync() => NavigateAsync(() => null);
 
-    /// <summary>Everything that must happen before the window closes: cancels an import, closes the editor (asking about
-    /// unsaved changes, finishing a save, cancelling a clip edit), stops the library refresh and releases the library.
+    /// <summary>Everything that must happen before the window closes: cancels an import, settles the page (cancelling a
+    /// clip edit, finishing a save), asks about unsaved changes, stops the library refresh and releases the library.
     /// Returns false when the user chose to keep editing. Repeated calls while one is running share it.</summary>
     public Task<bool> RequestCloseAsync() => _closing is { IsCompleted: false } running ? running : _closing = CloseAsync();
 
     private async Task<bool> CloseAsync()
     {
         await CancelImportAndWaitAsync();
-        if (!await CloseEditorAsync(finishRunningWork: true)) return false;
+        if (Page is { } page)
+        {
+            Status = "Finishing the current operation, then closing…";
+            await page.SettleForCloseAsync();
+        }
+        if (!await NavigateAsync(() => null)) return false;
         await ReleaseLibraryAsync();
         return true;
     }
@@ -361,17 +332,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (_indexRun is { } run) await run;
         if (_model is { } model) model.Changed -= OnModelChanged;
         _lock?.Dispose(); _lock = null;
-    }
-
-    /// <summary>Asks the unsaved-changes question. A newer request supersedes an unanswered one as Keep editing, so only
-    /// the latest close intent (Back or closing the window) acts on the answer.</summary>
-    private async Task<LeaveChoice> AskToLeaveAsync()
-    {
-        LeavePrompt?.Answer(LeaveChoice.KeepEditing);
-        var prompt = LeavePrompt = new LeavePrompt();
-        var choice = await prompt.Choice;
-        if (LeavePrompt == prompt) LeavePrompt = null;
-        return choice;
     }
 
     public async Task RestoreLibraryAsync()

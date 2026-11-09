@@ -13,11 +13,13 @@ public sealed class EditorNavigationTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-navigation-" + Guid.NewGuid().ToString("N"));
     private readonly FakeMatroska _files = new();
     private readonly Metadata _metadata = new();
+    private readonly FakeInteraction _interaction = new();
 
     private LibraryPaths Library => new(Path.Combine(_root, "library"));
 
     private MainWindowViewModel NewViewModel() => new(new MainWindowDependencies
     {
+        Interaction = _interaction,
         Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
         CreateServices = _ => new LibraryServices(_files, _metadata),
         CreateClipEditing = _ => new BlockingClipEditing(),
@@ -42,7 +44,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var (viewModel, video) = await OpenLibraryAsync();
         await viewModel.OpenVideoAsync(video);
-        Assert.NotNull(viewModel.Editor);
+        Assert.IsType<VideoEditorPage>(viewModel.Page);
         return viewModel;
     }
 
@@ -77,14 +79,14 @@ public sealed class EditorNavigationTests : IDisposable
         var (viewModel, _) = await OpenLibraryAsync();
         viewModel.ToggleTapeSelection(viewModel.Tapes.Single());
         await viewModel.OpenClipEditorAsync();
-        var clips = viewModel.ClipEditor!;
+        var clips = Assert.IsType<ClipEditorPage>(viewModel.Page).Editor;
         var trim = clips.TrimAsync();
         Assert.True(clips.IsBusy);
         Assert.False(await viewModel.CloseEditorAsync()); // Back keeps a running edit.
 
         Assert.True(await viewModel.RequestCloseAsync());
         await trim;
-        Assert.Null(viewModel.ClipEditor);
+        Assert.Null(viewModel.Page);
         using var released = LibraryLock.TryAcquire(Library);
         Assert.NotNull(released);
     }
@@ -94,63 +96,63 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var viewModel = await OpenEditorAsync();
         Assert.True(await viewModel.CloseEditorAsync());
-        Assert.Null(viewModel.Editor);
-        Assert.False(viewModel.IsAskingToLeave);
+        Assert.Null(viewModel.Page);
+        Assert.Equal(0, _interaction.Asked);
     }
 
     [Fact]
     public async Task KeepEditingLeavesTheEditorOpenAndDiscardCloses()
     {
         var viewModel = await OpenEditorAsync();
-        viewModel.Editor!.Title = "unsaved";
+        var page = viewModel.Page;
+        Editor(viewModel).Title = "unsaved";
 
-        var closing = viewModel.CloseEditorAsync();
-        Assert.False(closing.IsCompleted);
-        viewModel.LeavePrompt!.Answer(LeaveChoice.KeepEditing);
-        Assert.False(await closing);
-        Assert.NotNull(viewModel.Editor);
-        Assert.False(viewModel.IsAskingToLeave);
+        _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
+        Assert.False(await viewModel.CloseEditorAsync());
+        Assert.Same(page, viewModel.Page);
 
-        closing = viewModel.CloseEditorAsync();
-        viewModel.LeavePrompt!.Answer(LeaveChoice.Discard);
-        Assert.True(await closing);
-        Assert.Null(viewModel.Editor);
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.CloseEditorAsync());
+        Assert.Null(viewModel.Page);
         Assert.Equal(0, _metadata.Saves);
     }
 
     [Fact]
-    public async Task ANewerCloseRequestSupersedesAnUnansweredOne()
+    public async Task ASecondNavigationWaitsForTheOpenQuestionInsteadOfStackingAnother()
     {
         var viewModel = await OpenEditorAsync();
-        viewModel.Editor!.Title = "unsaved";
+        Editor(viewModel).Title = "unsaved";
+        var answer = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
 
-        var windowClose = viewModel.CloseEditorAsync();
-        var firstPrompt = viewModel.LeavePrompt;
-        var back = viewModel.CloseEditorAsync(); // Back to library after asking to close the window.
-        Assert.False(await windowClose); // The window stays open; only the latest intent acts on the answer.
-        Assert.NotSame(firstPrompt, viewModel.LeavePrompt);
-        viewModel.LeavePrompt!.Answer(LeaveChoice.Discard);
+        var back = viewModel.CloseEditorAsync();
+        var close = viewModel.RequestCloseAsync();
+        Assert.False(back.IsCompleted);
+        Assert.Equal(1, _interaction.Asked);
+
+        answer.SetResult(LeaveChoice.Discard);
         Assert.True(await back);
-        Assert.Null(viewModel.Editor);
+        Assert.True(await close);
+        Assert.Equal(1, _interaction.Asked);
     }
 
     [Fact]
     public async Task SaveAndLeaveSavesThenCloses()
     {
         var viewModel = await OpenEditorAsync();
-        viewModel.Editor!.Title = "saved title";
+        Editor(viewModel).Title = "saved title";
 
-        var closing = viewModel.CloseEditorAsync();
-        viewModel.LeavePrompt!.Answer(LeaveChoice.Save);
-        Assert.True(await closing);
+        _interaction.Answers.Enqueue(LeaveChoice.Save);
+        Assert.True(await viewModel.CloseEditorAsync());
         Assert.Equal(1, _metadata.Saves);
-        Assert.Null(viewModel.Editor);
+        Assert.Null(viewModel.Page);
     }
+
+    private static VideoEditorViewModel Editor(MainWindowViewModel viewModel) => Assert.IsType<VideoEditorPage>(viewModel.Page).Editor;
 
     [Fact]
     public void VisibleOpenActionRequiresASelectionAndClearsWithIt()
     {
-        var viewModel = new MainWindowViewModel();
+        var viewModel = NewViewModel();
         Assert.False(viewModel.CanOpenSelected);
         viewModel.SelectedVideo = new LibraryVideo(Guid.NewGuid(), "Videos/test.mkv", "Test", TimeSpan.FromSeconds(10), DateTimeOffset.Now, DateTimeOffset.Now);
         Assert.True(viewModel.CanOpenSelected);

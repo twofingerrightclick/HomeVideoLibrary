@@ -15,7 +15,10 @@ public sealed partial class App : Application
         AppErrors.InstallDispatcherHandler();
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var viewModel = new MainWindowViewModel();
+            var viewModel = new MainWindowViewModel(new MainWindowDependencies
+            {
+                Interaction = new WindowInteraction(() => desktop.MainWindow),
+            });
             AppErrors.Reported += viewModel.ShowError;
             desktop.MainWindow = new MainWindow { DataContext = viewModel };
         }

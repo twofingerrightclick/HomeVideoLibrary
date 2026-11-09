@@ -73,17 +73,6 @@
      <Button Content="Add selected here" Click="AddSelectedHereClicked" IsVisible="{Binding IsChoosingAlbumVideos}" Margin="0,0,8,8"/>
      <Button Content="Remove from album" Click="RemoveSelectedClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,8,8"/>
     </WrapPanel>
-        <Border IsVisible="{Binding IsAskingToLeave}" Padding="12" Background="#363023">
-          <StackPanel Spacing="10">
-            <TextBlock Text="This video has unsaved changes. Save them or discard them before leaving." TextWrapping="Wrap" />
-            <WrapPanel>
-              <Button Content="Save and leave" Click="SaveAndLeaveClicked" Margin="0,0,10,0" />
-              <Button Content="Discard and leave" Click="DiscardClicked" Margin="0,0,10,0" />
-              <Button Content="Keep editing" Click="KeepEditingClicked" />
-            </WrapPanel>
-          </StackPanel>
-        </Border>
-
    </StackPanel>
    <Grid Grid.Row="1" IsVisible="{Binding !HasEditor}" RowDefinitions="Auto,*">
     <Grid ColumnDefinitions="Auto,*,Auto" Margin="3,0,3,16">
@@ -106,15 +95,7 @@
      <Button Content="Choose library folder…" Click="ChooseLibraryClicked" HorizontalAlignment="Center" IsEnabled="{Binding !IsBusy}" IsVisible="{Binding !HasLibrary}"/>
     </StackPanel>
    </Grid>
-      <ContentControl Grid.Row="1" Content="{Binding Editor}" IsVisible="{Binding HasVideoEditor}">
-        <ContentControl.ContentTemplate>
-          <DataTemplate x:DataType="vm:VideoEditorViewModel"><views:VideoEditorView /></DataTemplate>
-        </ContentControl.ContentTemplate>
-      </ContentControl>
-      <ContentControl Grid.Row="1" Content="{Binding ClipEditor}" IsVisible="{Binding HasClipEditor}">
-        <ContentControl.ContentTemplate><DataTemplate x:DataType="vm:ClipEditorViewModel"><views:ClipEditorView /></DataTemplate></ContentControl.ContentTemplate>
-      </ContentControl>
-
+   <ContentControl Grid.Row="1" Content="{Binding Page}" ContentTemplate="{x:Static views:PageViews.Template}" IsVisible="{Binding HasEditor}"/>
    <StackPanel Grid.Row="2" Spacing="8" Margin="3,14,3,0">
     <ProgressBar Value="{Binding Progress}" IsIndeterminate="{Binding IsProgressIndeterminate}" Minimum="0" Maximum="100" Height="3" IsVisible="{Binding IsImporting}"/>
     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">

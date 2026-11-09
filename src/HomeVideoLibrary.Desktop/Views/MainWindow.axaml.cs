@@ -222,13 +222,10 @@ public sealed partial class MainWindow : Window
     private void OpenSelectedClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenSelectedAsync, "Open video");
     private void EditClipsClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenClipEditorAsync, "Edit clips");
     private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(() => ViewModel.CloseEditorAsync(), "Back to library");
-    private void SaveAndLeaveClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Save);
-    private void DiscardClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Discard);
-    private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.KeepEditing);
 
     private void MarkerKeyDown(object? sender, KeyEventArgs args)
     {
-        if (ViewModel.Editor is not { } editor) return;
+        if ((ViewModel.Page as VideoEditorPage)?.Editor is not { } editor) return;
         var focused = FocusManager?.GetFocusedElement() as Control;
         var textInput = focused is TextBox || focused?.FindAncestorOfType<TextBox>() is not null;
         if (!VideoEditorViewModel.ShouldAddMarker(args.Key == Key.M, args.KeyModifiers != KeyModifiers.None, textInput, editor.IsBusy)) return;

@@ -92,3 +92,21 @@ internal static class TestLibrary
         if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
 }
+
+/// <summary>Answers modal questions from a queue (KeepEditing when it runs out) and counts them. Set
+/// <see cref="Pending"/> to hold the next answer until the test completes it.</summary>
+internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInteraction
+{
+    public Queue<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> Answers { get; } = new();
+    public TaskCompletionSource<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice>? Pending { get; set; }
+    public int Asked { get; private set; }
+
+    public Task<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> AskLeaveAsync(string title)
+    {
+        Asked++;
+        if (Pending is { } pending) { Pending = null; return pending.Task; }
+        return Task.FromResult(Answers.TryDequeue(out var answer) ? answer : HomeVideoLibrary.Desktop.ViewModels.LeaveChoice.KeepEditing);
+    }
+
+    public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
+}

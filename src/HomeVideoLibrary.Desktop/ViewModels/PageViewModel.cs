@@ -1,0 +1,20 @@
+namespace HomeVideoLibrary.Desktop.ViewModels;
+
+/// <summary>A full-window page shown in place of the shelf. The shell creates one per visit (a video, a merge) and
+/// disposes it on leaving, so per-visit state never outlives the visit. Pages are rendered through
+/// <c>PageViews.Template</c>, which builds a new view for every page.</summary>
+public abstract class PageViewModel : ViewModelBase, IAsyncDisposable
+{
+    /// <summary>Runs once after the page's view exists (so native surfaces can bind first).</summary>
+    public virtual Task LoadAsync() => Task.CompletedTask;
+
+    /// <summary>Whether the user may leave now. A dirty page asks through <paramref name="interaction"/> and saves or
+    /// discards; busy work keeps the page. Returns false to stay.</summary>
+    public virtual Task<bool> CanLeaveAsync(IInteraction interaction) => Task.FromResult(true);
+
+    /// <summary>Called before the window closes: cancels cancellable work and waits for work that must finish (a
+    /// save), so <see cref="CanLeaveAsync"/> afterwards only has unsaved changes left to ask about.</summary>
+    public virtual Task SettleForCloseAsync() => Task.CompletedTask;
+
+    public abstract ValueTask DisposeAsync();
+}
