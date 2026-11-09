@@ -1,9 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
-using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Interactivity;
 using Avalonia.Media;
 
 namespace HomeVideoLibrary.UI.Controls;
@@ -25,13 +23,13 @@ public enum SpineSticker
 /// One ~60px VHS tape spine as seen on a shelf. The sticker's printed artwork (brand marks, "VIDEO
 /// CASSETTE" bands) is rotated a quarter turn the way a real spine label is printed, while the user's
 /// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. Hover lifts the
-/// tape out of the stack. A single unmodified left click (pressed and released on the spine), or Enter
-/// or Space while the spine itself has focus, raises <see cref="Activated"/> once; modifier clicks and
-/// input handled by <see cref="LeadingContent"/> do not. Selection is the host's concern and is only
-/// displayed via <see cref="IsSelected"/>.
+/// tape out of the stack. As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
+/// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
+/// left to the host list for selection; selection itself is the host's and is only displayed via
+/// <see cref="IsSelected"/>.
 /// </summary>
 [PseudoClasses(":selected", ":branded", ":graph", ":cream", ":has-leading")]
-public class VhsSpine : TemplatedControl
+public class VhsSpine : Button
 {
     public static readonly StyledProperty<string?> LabelProperty =
         AvaloniaProperty.Register<VhsSpine, string?>(nameof(Label));
@@ -58,25 +56,9 @@ public class VhsSpine : TemplatedControl
     public static readonly StyledProperty<bool> IsSelectedProperty =
         AvaloniaProperty.Register<VhsSpine, bool>(nameof(IsSelected));
 
-    public static readonly RoutedEvent<RoutedEventArgs> ActivatedEvent =
-        RoutedEvent.Register<VhsSpine, RoutedEventArgs>(nameof(Activated), RoutingStrategies.Bubble);
-
-    static VhsSpine()
-    {
-        FocusableProperty.OverrideDefaultValue<VhsSpine>(true);
-    }
-
-    private bool _pressedHere;
-
     public VhsSpine()
     {
         UpdateStickerClasses();
-    }
-
-    public event EventHandler<RoutedEventArgs>? Activated
-    {
-        add => AddHandler(ActivatedEvent, value);
-        remove => RemoveHandler(ActivatedEvent, value);
     }
 
     public string? Label
@@ -138,38 +120,16 @@ public class VhsSpine : TemplatedControl
         }
     }
 
+    // A double-click's second press must not open the tape again, and modifier clicks are selection
+    // gestures for the host list; leaving them unhandled lets them bubble there.
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
+        if (e.ClickCount > 1 || e.KeyModifiers != KeyModifiers.None)
+        {
+            return;
+        }
+
         base.OnPointerPressed(e);
-
-        // The second press of a double-click must not open the tape a second time.
-        _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed
-            && e.ClickCount == 1;
-    }
-
-    protected override void OnPointerReleased(PointerReleasedEventArgs e)
-    {
-        base.OnPointerReleased(e);
-        var pressedHere = _pressedHere;
-        _pressedHere = false;
-        if (pressedHere
-            && e.InitialPressMouseButton == MouseButton.Left
-            && e.KeyModifiers == KeyModifiers.None
-            && new Rect(Bounds.Size).Contains(e.GetPosition(this)))
-        {
-            e.Handled = true;
-            RaiseEvent(new RoutedEventArgs(ActivatedEvent));
-        }
-    }
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        if (!e.Handled && e.Key is Key.Enter or Key.Space && ReferenceEquals(e.Source, this))
-        {
-            e.Handled = true;
-            RaiseEvent(new RoutedEventArgs(ActivatedEvent));
-        }
     }
 
     private void UpdateStickerClasses()
