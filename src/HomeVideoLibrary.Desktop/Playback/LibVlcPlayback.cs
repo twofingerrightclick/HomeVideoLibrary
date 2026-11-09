@@ -21,9 +21,14 @@ public sealed class LibVlcPlayback : IVideoPlayback
         ClosePlayer();
         cancellationToken.ThrowIfCancellationRequested();
         if (!File.Exists(path)) throw new FileNotFoundException("The video file is missing from the library folder.", path);
+        LibVLC engine;
+        try { engine = GetEngine(); }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException("Playback is unavailable. Install a matching LibVLC 3 runtime or set HOME_VIDEO_LIBRARY_LIBVLC to its native library folder (including plugins). The VLC desktop app is optional. " + exception.Message, exception);
+        }
         try
         {
-            var engine = GetEngine();
             var version = Version;
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var player = new MediaPlayer(engine);
@@ -60,7 +65,8 @@ public sealed class LibVlcPlayback : IVideoPlayback
         catch (Exception exception)
         {
             await DetachAndCloseAsync(attachPlayer);
-            throw new InvalidOperationException("Playback is unavailable. Install a matching LibVLC 3 runtime or set HOME_VIDEO_LIBRARY_LIBVLC to its native library folder (including plugins). The VLC desktop app is optional. " + exception.Message, exception);
+            throw new InvalidOperationException(exception is TimeoutException
+                ? "The video took too long to start playing." : "The video could not be played. " + exception.Message, exception);
         }
     });
 

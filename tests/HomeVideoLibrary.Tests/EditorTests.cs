@@ -81,6 +81,21 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public async Task EditingIsAvailableWhilePlaybackIsStillOpening()
+    {
+        var opening = new TaskCompletionSource();
+        var playback = new FakePlayback { OpenGate = opening.Task };
+        await using var editor = CreateEditor(new FakeMetadata(), playback);
+
+        var loading = editor.LoadAsync();
+
+        Assert.True(editor.CanEdit);
+        Assert.False(loading.IsCompleted);
+        opening.SetResult();
+        await loading;
+    }
+
+    [Fact]
     public async Task MissingTitleStaysBlankWithTheFileNameAsPlaceholder()
     {
         await using var editor = CreateEditor(new FakeMetadata(), new FakePlayback());
@@ -221,9 +236,10 @@ public sealed class EditorTests
         public int Opens { get; private set; }
         public bool LastPlay { get; private set; }
         public TimeSpan LastPosition { get; private set; }
+        public Task OpenGate { get; init; } = Task.CompletedTask;
         public Task OpenAsync(string path, TimeSpan position, bool play, Func<Task> attachPlayer, CancellationToken cancellationToken)
         {
-            Opens++; Closed = false; LastPosition = position; LastPlay = play; return Task.CompletedTask;
+            Opens++; Closed = false; LastPosition = position; LastPlay = play; return OpenGate;
         }
         public Task CloseAsync(Func<Task> detachPlayer) { Closed = true; return Task.CompletedTask; }
         public Task SetPlayingAsync(bool play) { LastPlay = play; return Task.CompletedTask; }

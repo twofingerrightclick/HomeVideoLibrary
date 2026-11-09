@@ -70,29 +70,27 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     public bool CanCapture => !IsBusy && _loaded && Thumbnails.Count < 20;
     public MediaPlayer? Player { get => _player; private set => SetProperty(ref _player, value); }
 
-    /// <summary>Starts playback and the metadata read together; playback does not wait for, or depend on, the read.</summary>
+    /// <summary>Starts playback and the metadata read together. Editing is enabled as soon as the read succeeds; playback
+    /// neither waits for the read nor holds up editing.</summary>
     public async Task LoadAsync()
     {
         using var operation = BeginOperation();
         IsBusy = true;
         if (_initialMetadata is { } initial) ApplyMetadata(initial);
         var playback = OpenPlaybackAsync(TimeSpan.Zero, true);
-        string? playbackError = null, readError = null;
         try
         {
             var metadata = await _metadata.ReadAsync(_video, operation.Token);
             ApplyMetadata(metadata);
             _loaded = true; IsDirty = false;
+            Status = "M adds a chapter at the current position. Save writes changes into this MKV.";
         }
-        catch (OperationCanceledException) { readError = "Loading cancelled. Return to the library to reopen this video."; }
-        catch (Exception exception) { readError = "Details could not be read, so editing is off: " + exception.Message; }
+        catch (OperationCanceledException) { Status = "Loading cancelled. Return to the library to reopen this video."; }
+        catch (Exception exception) { Status = "Details could not be read, so editing is off: " + exception.Message; }
+        finally { _operationCancellation = null; IsBusy = false; }
         try { await playback; }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { playbackError = exception.Message; }
-        Status = string.Join(" ", new[] { readError, playbackError }.Where(message => message is not null)) is { Length: > 0 } problems
-            ? problems : "M adds a chapter at the current position. Save writes changes into this MKV.";
-        _operationCancellation = null;
-        IsBusy = false;
+        catch (Exception exception) { Status = _loaded ? exception.Message : Status + " " + exception.Message; }
     }
 
     private void ApplyMetadata(VideoMetadata metadata)
