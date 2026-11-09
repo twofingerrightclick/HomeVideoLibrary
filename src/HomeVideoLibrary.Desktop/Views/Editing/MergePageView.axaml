@@ -1,0 +1,82 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:core="using:HomeVideoLibrary.Core"
+             xmlns:views="using:HomeVideoLibrary.Desktop.Views"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.MergePageView" x:DataType="vm:MergePageViewModel">
+ <UserControl.Styles>
+  <Style Selector="TextBlock.pending">
+   <Setter Property="Opacity" Value="0.55"/>
+  </Style>
+ </UserControl.Styles>
+ <Grid RowDefinitions="Auto,*">
+  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16" Margin="20,16,20,0">
+   <c:PlasticButton Classes="toolbar" Content="◀ LIBRARY" Command="{Binding BackCommand}" VerticalAlignment="Center"
+    ToolTip.Tip="Back to the library (Esc)"/>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+    <TextBlock Classes="title" Text="Merge videos" VerticalAlignment="Center"/>
+    <TextBlock Classes="meta" VerticalAlignment="Center">
+     <Run Text="{Binding Sources.Count}"/><Run Text=" clips · "/><Run Text="{Binding TotalDurationText}"/>
+    </TextBlock>
+   </StackPanel>
+  </Grid>
+
+  <ScrollViewer Grid.Row="1" Margin="0,12,0,0">
+   <StackPanel MaxWidth="720" Margin="20,4,20,20" Spacing="14">
+    <c:SectionHeader Title="PLAY ORDER">
+     <StackPanel Orientation="Horizontal" Spacing="6">
+      <c:PlasticButton Classes="toolbar" Content="MOVE UP" Command="{Binding MoveUpCommand}" ToolTip.Tip="Move the selected clip earlier (Alt+↑)"/>
+      <c:PlasticButton Classes="toolbar" Content="MOVE DOWN" Command="{Binding MoveDownCommand}" ToolTip.Tip="Move the selected clip later (Alt+↓)"/>
+     </StackPanel>
+    </c:SectionHeader>
+    <Border Classes="well">
+     <ListBox x:Name="SourceList" Classes="vcr" ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
+      IsEnabled="{Binding !IsBusy}" AutomationProperties.Name="Clips in play order">
+      <ListBox.ItemTemplate>
+       <DataTemplate x:DataType="vm:MergeSource">
+        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+         <Border Width="6" Height="22" CornerRadius="2" VerticalAlignment="Center"
+          Background="{Binding AccentKey, Converter={x:Static views:ResourceConverter.Instance}}"/>
+         <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+         <TextBlock Grid.Column="2" Classes="meta" Text="{Binding DurationText}" VerticalAlignment="Center"/>
+        </Grid>
+       </DataTemplate>
+      </ListBox.ItemTemplate>
+     </ListBox>
+    </Border>
+
+    <c:SectionHeader Title="PLAN"/>
+    <TextBlock Text="{Binding Plan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding Plan.IsPending}"/>
+
+    <TextBlock Classes="legend" Text="NEW VIDEO TITLE"/>
+    <TextBox Text="{Binding OutputTitle}" IsEnabled="{Binding !IsBusy}" Watermark="Merged home video"
+     AutomationProperties.Name="New video title"/>
+
+    <StackPanel Orientation="Horizontal" Spacing="10">
+     <c:PlasticButton Classes="primary" Content="SAVE MERGED" Command="{Binding SaveCommand}"/>
+     <c:PlasticButton Content="CANCEL" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}"/>
+    </StackPanel>
+    <ProgressBar Value="{Binding Run.Progress}" IsIndeterminate="{Binding Run.IsProgressIndeterminate}" Minimum="0" Maximum="100"
+     IsVisible="{Binding IsBusy}"/>
+    <TextBlock Classes="meta" Text="{Binding Run.Status}" TextWrapping="Wrap"/>
+
+    <Border Classes="bezel" IsVisible="{Binding Run.HasOutputs}">
+     <StackPanel Spacing="8">
+      <TextBlock Classes="legend" Text="{Binding Run.SavedLabel}"/>
+      <ItemsControl ItemsSource="{Binding Run.Outputs}">
+       <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="core:LibraryVideo">
+         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+          <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="OPEN" CommandParameter="{Binding}"
+           Command="{Binding $parent[ItemsControl].((vm:MergePageViewModel)DataContext).OpenOutputCommand}"/>
+         </Grid>
+        </DataTemplate>
+       </ItemsControl.ItemTemplate>
+      </ItemsControl>
+     </StackPanel>
+    </Border>
+   </StackPanel>
+  </ScrollViewer>
+ </Grid>
+</UserControl>

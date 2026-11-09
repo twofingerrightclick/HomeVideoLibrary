@@ -1,0 +1,92 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:core="using:HomeVideoLibrary.Core"
+             xmlns:sys="using:System"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.EditTab" x:DataType="vm:TrimPanelViewModel">
+ <UserControl.Styles>
+  <Style Selector="TextBlock.pending">
+   <Setter Property="Opacity" Value="0.55"/>
+  </Style>
+  <Style Selector="TextBlock.error">
+   <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Red}"/>
+  </Style>
+  <!-- An unset point shows dashes, like a counter with no tape loaded. -->
+  <Style Selector="c|LcdCounter.unset">
+   <Setter Property="Text" Value="-:--:--"/>
+  </Style>
+ </UserControl.Styles>
+ <StackPanel Spacing="12">
+  <c:SectionHeader Title="TRIM">
+   <c:PlasticButton Classes="toolbar" Content="CLEAR" Command="{Binding ClearCommand}" ToolTip.Tip="Clear the in and out points"/>
+  </c:SectionHeader>
+  <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+   <c:LegendFrame Legend="IN">
+    <c:LcdCounter Classes="small" Hours="Always" HorizontalAlignment="Stretch"
+     Value="{Binding In, TargetNullValue={x:Static sys:TimeSpan.Zero}}"
+     Classes.unset="{Binding In, Converter={x:Static ObjectConverters.IsNull}}"/>
+   </c:LegendFrame>
+   <c:LegendFrame Grid.Column="1" Legend="OUT">
+    <c:LcdCounter Classes="small" Hours="Always" HorizontalAlignment="Stretch"
+     Value="{Binding Out, TargetNullValue={x:Static sys:TimeSpan.Zero}}"
+     Classes.unset="{Binding Out, Converter={x:Static ObjectConverters.IsNull}}"/>
+   </c:LegendFrame>
+   <c:PlasticButton Grid.Row="1" Content="SET IN" HorizontalAlignment="Stretch" Command="{Binding SetInCommand}"
+    ToolTip.Tip="Start the kept range at the playhead (I)"/>
+   <c:PlasticButton Grid.Row="1" Grid.Column="1" Content="SET OUT" HorizontalAlignment="Stretch" Command="{Binding SetOutCommand}"
+    ToolTip.Tip="End the kept range at the playhead (O)"/>
+   <TextBox Grid.Row="2" x:Name="InField" Text="{Binding InText, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding !IsBusy}" Watermark="h:mm:ss.fff"
+    AutomationProperties.Name="In point"/>
+   <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutField" Text="{Binding OutText, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding !IsBusy}" Watermark="h:mm:ss.fff"
+    AutomationProperties.Name="Out point"/>
+   <TextBlock Grid.Row="3" Classes="legend error" Text="{Binding InTextError}" TextWrapping="Wrap"
+    IsVisible="{Binding InTextError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+   <TextBlock Grid.Row="3" Grid.Column="1" Classes="legend error" Text="{Binding OutTextError}" TextWrapping="Wrap"
+    IsVisible="{Binding OutTextError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  </Grid>
+  <TextBlock Classes="legend error" Text="{Binding RangeError}" TextWrapping="Wrap"
+   IsVisible="{Binding RangeError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  <StackPanel Orientation="Horizontal" Spacing="10" IsEnabled="{Binding !IsBusy}">
+   <c:LatchButton Classes="toolbar" Content="PRECISE" IsChecked="{Binding IsPrecise}" VerticalAlignment="Center"
+    ToolTip.Tip="Cut at the exact frames, re-encoding a fraction of a second at each cut. Off: cuts snap to keyframes."/>
+   <TextBlock Classes="meta" Text="Frame-accurate cuts" VerticalAlignment="Center"/>
+  </StackPanel>
+  <TextBlock Text="{Binding TrimPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding TrimPlan.IsPending}"/>
+  <c:PlasticButton Classes="primary" Content="SAVE AS NEW CLIP" Icon="{StaticResource Vcr.Icon.Scissors}" HorizontalAlignment="Left"
+   Command="{Binding TrimCommand}"/>
+
+  <c:SectionHeader Title="SPLIT AT PLAYHEAD" Margin="0,8,0,0"/>
+  <StackPanel Orientation="Horizontal" Spacing="10">
+   <c:LcdCounter Classes="small" Hours="Always" Value="{Binding SplitAt}" Caption="SPLIT"/>
+  </StackPanel>
+  <TextBlock Text="{Binding SplitPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding SplitPlan.IsPending}"/>
+  <c:PlasticButton Content="SAVE BOTH PARTS" Icon="{StaticResource Vcr.Icon.Slice}" HorizontalAlignment="Left" Command="{Binding SplitCommand}"/>
+
+  <c:SectionHeader Title="NEW VIDEO" Margin="0,8,0,0"/>
+  <TextBox Text="{Binding OutputTitle}" IsEnabled="{Binding !IsBusy}" Watermark="Title for the new clips" AutomationProperties.Name="New video title"/>
+  <TextBlock Classes="legend error" Text="{Binding UnsavedDetailsHint}"
+   IsVisible="{Binding UnsavedDetailsHint, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" IsVisible="{Binding IsBusy}">
+   <ProgressBar Value="{Binding Run.Progress}" IsIndeterminate="{Binding Run.IsProgressIndeterminate}" Minimum="0" Maximum="100"
+    VerticalAlignment="Center"/>
+   <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="CANCEL" Command="{Binding CancelCommand}"/>
+  </Grid>
+  <TextBlock Classes="meta" Text="{Binding Run.Status}" TextWrapping="Wrap"/>
+  <Border Classes="bezel" IsVisible="{Binding Run.HasOutputs}">
+   <StackPanel Spacing="8">
+    <TextBlock Classes="legend" Text="{Binding Run.SavedLabel}"/>
+    <ItemsControl ItemsSource="{Binding Run.Outputs}">
+     <ItemsControl.ItemTemplate>
+      <DataTemplate x:DataType="core:LibraryVideo">
+       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="OPEN" CommandParameter="{Binding}"
+         Command="{Binding $parent[ItemsControl].((vm:TrimPanelViewModel)DataContext).OpenOutputCommand}"/>
+       </Grid>
+      </DataTemplate>
+     </ItemsControl.ItemTemplate>
+    </ItemsControl>
+   </StackPanel>
+  </Border>
+ </StackPanel>
+</UserControl>

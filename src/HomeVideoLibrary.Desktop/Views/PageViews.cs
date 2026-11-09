@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
+using HomeVideoLibrary.Desktop.Views.Editing;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
@@ -13,6 +15,7 @@ public static class PageViews
         null => null,
         VideoEditorPage editor => new VideoEditorView { DataContext = editor.Editor },
         ClipEditorPage clips => new ClipEditorView { DataContext = clips.Editor },
+        MergePageViewModel merge => new MergePageView { DataContext = merge },
         _ => throw new ArgumentOutOfRangeException(nameof(page), page.GetType().Name, "No view for this page."),
     }, supportsRecycling: false);
 }
