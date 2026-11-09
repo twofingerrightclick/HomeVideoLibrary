@@ -1,26 +1,31 @@
 using System.Diagnostics;
-using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
 /// <summary>Removes temporary files that an earlier, interrupted run left behind.</summary>
 public static class ScratchSweeper
 {
-    /// <summary>Deletes scratch and preview entries, plus the staging names older versions wrote into <c>Videos/</c>, whose last
-    /// write is before <paramref name="processStartUtc"/>, so this run's own work is never touched. Library MKVs
-    /// (<c>Videos/*.mkv</c> without a leading dot) never match. Failures are traced, not thrown.</summary>
-    public static Task SweepAsync(LibraryPaths paths, DateTime processStartUtc, CancellationToken cancellationToken = default) =>
-        Task.Run(() =>
+    /// <summary>Deletes scratch and preview entries, plus the staging names older versions wrote into <c>Videos/</c>, that
+    /// were last written before <paramref name="owner"/> was acquired. The lock guarantees no other instance is using
+    /// them, and the time bound keeps this instance's own work safe. Library MKVs (<c>Videos/*.mkv</c> without a leading
+    /// dot) and metadata recovery snapshots never match. Failures are traced, not thrown.</summary>
+    public static Task SweepAsync(LibraryLock owner, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        var paths = owner.Paths;
+        var before = owner.AcquiredAt.UtcDateTime;
+        return Task.Run(() =>
         {
-            SweepChildren(paths.ScratchDirectory, "*", processStartUtc, cancellationToken);
-            SweepChildren(paths.PreviewDirectory, "*", processStartUtc, cancellationToken);
-            SweepChildren(paths.CacheDirectory, "metadata-*", processStartUtc, cancellationToken);
-            SweepChildren(paths.VideosDirectory, ".*.import.mkv", processStartUtc, cancellationToken);
-            SweepChildren(paths.VideosDirectory, ".*.metadata.mkv", processStartUtc, cancellationToken);
-            SweepChildren(paths.VideosDirectory, ".edit-*", processStartUtc, cancellationToken);
+            SweepChildren(paths.ScratchDirectory, "*", before, cancellationToken);
+            SweepChildren(paths.PreviewDirectory, "*", before, cancellationToken);
+            SweepChildren(paths.CacheDirectory, "metadata-*", before, cancellationToken);
+            SweepChildren(paths.VideosDirectory, ".*.import.mkv", before, cancellationToken);
+            SweepChildren(paths.VideosDirectory, ".*.metadata.mkv", before, cancellationToken);
+            SweepChildren(paths.VideosDirectory, ".edit-*", before, cancellationToken);
         }, cancellationToken);
+    }
 
-    private static void SweepChildren(string directory, string pattern, DateTime processStartUtc, CancellationToken cancellationToken)
+    private static void SweepChildren(string directory, string pattern, DateTime beforeUtc, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(directory)) return;
         foreach (var entry in new DirectoryInfo(directory).EnumerateFileSystemInfos(pattern))
@@ -28,7 +33,7 @@ public static class ScratchSweeper
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                if (LatestWriteUtc(entry) >= processStartUtc) continue;
+                if (LatestWriteUtc(entry) >= beforeUtc) continue;
                 if (entry is DirectoryInfo folder) folder.Delete(recursive: true);
                 else entry.Delete();
             }
