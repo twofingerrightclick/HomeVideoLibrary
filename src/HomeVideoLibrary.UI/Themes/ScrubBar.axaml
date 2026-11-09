@@ -1,0 +1,113 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <SolidColorBrush x:Key="Vcr.Brush.Scrub.Buffered" Color="#666C71"/>
+  <LinearGradientBrush x:Key="Vcr.Brush.Scrub.Sheen" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="#38FFFFFF"/>
+    <GradientStop Offset="0.3" Color="#0AFFFFFF"/>
+    <GradientStop Offset="0.7" Color="#00000000"/>
+    <GradientStop Offset="1" Color="#33000000"/>
+  </LinearGradientBrush>
+  <BoxShadows x:Key="Vcr.Shadow.Scrub.Groove">0 1 3 0 #E6000000 inset, 0 1 0 0 #1AFFFFFF</BoxShadows>
+  <BoxShadows x:Key="Vcr.Shadow.Scrub.Played">0 0 5 0 #59FF5040</BoxShadows>
+  <BoxShadows x:Key="Vcr.Shadow.Scrub.Tooltip">0 1 0 0 #1AFFFFFF inset, 0 4 10 0 #A6000000</BoxShadows>
+
+  <!--
+    The track, segments, thumb, and marker are drawn by ScrubBar.Render from the brush properties below.
+    The template adds only the hover tooltip; the tooltip uses the overlay layer so it
+    can rise above the bar without clipping by the bar's ancestors.
+  -->
+  <ControlTheme x:Key="{x:Type c:ScrubBar}" TargetType="c:ScrubBar">
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="MinWidth" Value="80"/>
+    <!-- The thumb and focus ring overhang the ends of the track. -->
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    <Setter Property="TrackBrush" Value="{DynamicResource Vcr.Brush.Chassis.Highlight}"/>
+    <Setter Property="BufferedBrush" Value="{DynamicResource Vcr.Brush.Scrub.Buffered}"/>
+    <Setter Property="PlayedBrush" Value="{DynamicResource Vcr.Brush.Red}"/>
+    <Setter Property="SegmentSheenBrush" Value="{DynamicResource Vcr.Brush.Scrub.Sheen}"/>
+    <Setter Property="MarkerBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+    <Setter Property="ThumbBrush" Value="{DynamicResource Vcr.Brush.Plastic}"/>
+    <Setter Property="ThumbIndexBrush" Value="{DynamicResource Vcr.Brush.Red.Led}"/>
+    <Setter Property="GrooveShadow" Value="{DynamicResource Vcr.Shadow.Scrub.Groove}"/>
+    <Setter Property="PlayedGlow" Value="{DynamicResource Vcr.Shadow.Scrub.Played}"/>
+    <Setter Property="ThumbShadow" Value="{DynamicResource Vcr.Shadow.Cap.Raised}"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="HoverExpansion" Duration="0:0:0.14"/>
+      </Transitions>
+    </Setter>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Popup Name="PART_Popup"
+                 Placement="Top"
+                 VerticalOffset="3"
+                 ShouldUseOverlayLayer="True"
+                 IsLightDismissEnabled="False">
+            <Border Name="PART_Tooltip"
+                    IsHitTestVisible="False"
+                    Margin="0,0,0,2"
+                    MinWidth="56"
+                    Padding="9,5,9,6"
+                    Background="{DynamicResource Vcr.Brush.Glass}"
+                    BorderBrush="{DynamicResource Vcr.Brush.Chassis.Edge}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource Vcr.Radius.Field}"
+                    BoxShadow="{DynamicResource Vcr.Shadow.Scrub.Tooltip}">
+              <StackPanel Spacing="4" HorizontalAlignment="Center">
+                <TextBlock Name="PART_HoverTitle"
+                           Text="{TemplateBinding HoverChapterTitle}"
+                           IsVisible="{TemplateBinding HoverChapterTitle, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           HorizontalAlignment="Center"
+                           MaxWidth="240"
+                           TextTrimming="CharacterEllipsis"
+                           FontFamily="{DynamicResource Vcr.Font.Legend}"
+                           FontSize="{DynamicResource Vcr.FontSize.CapLegend}"
+                           FontWeight="SemiBold"
+                           LetterSpacing="0.3"
+                           Foreground="{DynamicResource Vcr.Brush.Legend}"/>
+                <Panel HorizontalAlignment="Center">
+                  <TextBlock Name="PART_HoverTimeGhost"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="12"
+                             Foreground="{DynamicResource Vcr.Brush.Amber.Ghost}"/>
+                  <TextBlock Name="PART_HoverTime"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="12"
+                             Foreground="{DynamicResource Vcr.Brush.Amber}"/>
+                </Panel>
+              </StackPanel>
+            </Border>
+          </Popup>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="HoverExpansion" Value="1"/>
+      <Setter Property="ThumbBrush" Value="{DynamicResource Vcr.Brush.Plastic.Hover}"/>
+      <Setter Property="ThumbShadow" Value="{DynamicResource Vcr.Shadow.Cap.Hover}"/>
+    </Style>
+    <Style Selector="^:scrubbing">
+      <Setter Property="HoverExpansion" Value="1"/>
+    </Style>
+    <Style Selector="^:focus-visible">
+      <Setter Property="FocusRingBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Cursor" Value="Arrow"/>
+      <Setter Property="TrackBrush" Value="{DynamicResource Vcr.Brush.Chassis.Edge}"/>
+      <Setter Property="BufferedBrush" Value="{DynamicResource Vcr.Brush.Chassis.Edge}"/>
+      <Setter Property="PlayedBrush" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="PlayedGlow" Value="{DynamicResource Vcr.Shadow.None}"/>
+      <Setter Property="ThumbBrush" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Setter Property="ThumbIndexBrush" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="ThumbShadow" Value="{DynamicResource Vcr.Shadow.None}"/>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>
