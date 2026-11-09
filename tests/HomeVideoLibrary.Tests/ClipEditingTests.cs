@@ -185,13 +185,196 @@ public sealed class ClipEditingTests : IDisposable
     }
 
     [Fact]
+    public async Task WholeVideoEndTakenFromALongerAudioTrackMeansTheVideosEnd()
+    {
+        var catalog = await CreateCatalogAsync();
+        var source = await AddVideoAsync(catalog, "long audio", TimeSpan.FromSeconds(7),
+            ["-f", "lavfi", "-t", "6", "-i", "testsrc=size=160x120:rate=10", "-f", "lavfi", "-t", "7", "-i", "sine=sample_rate=48000",
+                "-c:v", "libx264", "-g", "10", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var plan = await editing.PlanTrimAsync(source, TimeSpan.FromSeconds(1), source.Duration);
+        var trimmed = Assert.Single(await editing.TrimAsync(source, TimeSpan.FromSeconds(1), source.Duration, "To the end"));
+
+        Assert.Equal(TimeSpan.FromSeconds(6), plan.ActualEnd);
+        Assert.InRange(trimmed.Duration.TotalSeconds, 4.9, 5.1);
+    }
+
+    [Fact]
+    public async Task PreciseTrimEncodesTheRightFramesWhenTheSourceTimelineDoesNotStartAtZero()
+    {
+        var catalog = await CreateCatalogAsync();
+        var fixture = await CreateFixtureAsync(catalog, "offset");
+        var shifted = await AddFileAsync(catalog, "shifted", async path =>
+        {
+            var tracks = Enumerable.Range(0, 4).SelectMany(track => new[] { "--sync", $"{track}:1500" });
+            Assert.Equal(0, (await new MediaProcess().RunAsync(_tools.MkvMerge, ["-q", "-o", path, .. tracks, catalog.GetVideoPath(fixture.RelativePath)],
+                TimeSpan.FromSeconds(30))).ExitCode);
+        });
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var plan = await editing.PlanTrimAsync(shifted, TimeSpan.FromSeconds(2.85), TimeSpan.FromSeconds(6.15));
+        var trimmed = Assert.Single(await editing.TrimAsync(shifted, TimeSpan.FromSeconds(2.85), TimeSpan.FromSeconds(6.15), "Shifted"));
+
+        Assert.False(plan.IsLossless);
+        Assert.Equal(TimeSpan.FromSeconds(2.9), plan.ActualStart);
+        // Absolute 2.9 s is content time 1.4 s, frame 14 of the unshifted fixture.
+        var source = await GrayFramesAsync(catalog.GetVideoPath(fixture.RelativePath));
+        var output = await GrayFramesAsync(catalog.GetVideoPath(trimmed.RelativePath));
+        Assert.Equal(33, output.Count);
+        Assert.InRange(MeanDifference(output[0], source[14]), 0, 4);
+        Assert.Equal(source.Skip(20).Take(20).Select(Convert.ToHexString), output.Skip(6).Take(20).Select(Convert.ToHexString));
+    }
+
+    [Fact]
+    public async Task PreciseTrimKeepsTheSourcesFrameTimesAcrossDroppedFrames()
+    {
+        var catalog = await CreateCatalogAsync();
+        var source = await AddVideoAsync(catalog, "dropped frames", TimeSpan.FromSeconds(6),
+            ["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "6", "-vf", "select='not(between(n,75,78))'", "-fps_mode", "passthrough",
+                "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p"]);
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var trimmed = Assert.Single(await editing.TrimAsync(source, TimeSpan.FromSeconds(1.1), TimeSpan.FromSeconds(5.1), "Gap"));
+
+        var expected = (await VideoTimesAsync(catalog.GetVideoPath(source.RelativePath)))
+            .Where(time => time >= 1.1 - 0.0005 && time < 5.1 - 0.0005).Select(time => Math.Round(time - 1.12, 3)).ToArray();
+        Assert.Equal(expected, (await VideoTimesAsync(catalog.GetVideoPath(trimmed.RelativePath))).Select(time => Math.Round(time, 3)));
+    }
+
+    [Fact]
+    public async Task ClipsDifferingOnlyInNominalFrameDurationAreAppended()
+    {
+        var catalog = await CreateCatalogAsync();
+        var first = await CreateFixtureAsync(catalog, "first");
+        var second = await CreateFixtureAsync(catalog, "second");
+        await new MediaProcess().RunAsync(_tools.MkvPropEdit, [catalog.GetVideoPath(second.RelativePath), "--edit", "track:v1", "--set", "default-duration=100000001"],
+            TimeSpan.FromSeconds(30));
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var plan = await editing.PlanMergeAsync([first, second]);
+        var output = Assert.Single(await editing.MergeAsync([first, second], "Appended"));
+
+        Assert.True(plan.IsLossless);
+        Assert.Equal(await TracksAsync(catalog, first), await TracksAsync(catalog, output));
+    }
+
+    [Fact]
+    public async Task InterlacedClipsWithDifferentEncoderSettingsAreJoinedWithoutReencoding()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo[] clips = [await CreateInterlacedAsync(catalog, "camera a", "2"), await CreateInterlacedAsync(catalog, "camera b", "4")];
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var plan = await editing.PlanMergeAsync(clips);
+        var output = Assert.Single(await editing.MergeAsync(clips, "Tapes"));
+
+        Assert.Equal(0, plan.ReencodedClips);
+        var path = catalog.GetVideoPath(output.RelativePath);
+        Assert.Equal((await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[0].RelativePath)))
+                .Concat(await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[1].RelativePath))),
+            await DecodedFrameHashesAsync(path));
+        Assert.Contains("field_order=tt", (await new MediaProcess().RunAsync(_tools.Ffprobe,
+            ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=field_order", "-of", "default=nw=1", path], TimeSpan.FromSeconds(30))).StandardOutput);
+    }
+
+    [Fact]
+    public async Task ClipWhoseAudioOutlastsItsVideoIsJoinedWithoutAHoleInThePicture()
+    {
+        var catalog = await CreateCatalogAsync();
+        var arguments = new[] { "-f", "lavfi", "-t", "4", "-i", "testsrc=size=160x120:rate=10", "-f", "lavfi", "-t", "5", "-i", "sine=sample_rate=48000",
+            "-c:v", "libx264", "-g", "10", "-pix_fmt", "yuv420p", "-c:a", "aac" };
+        var first = await AddVideoAsync(catalog, "first", TimeSpan.FromSeconds(5), arguments);
+        var second = await AddVideoAsync(catalog, "second", TimeSpan.FromSeconds(5), arguments);
+
+        var output = Assert.Single(await new ClipEditingService(catalog, _tools).MergeAsync([first, second], "No hole"));
+
+        var times = await VideoTimesAsync(catalog.GetVideoPath(output.RelativePath));
+        Assert.Equal(80, times.Length);
+        Assert.InRange(times.Zip(times.Skip(1), (a, b) => b - a).Max(), 0.09, 0.11);
+        var content = await new MatroskaMetadataService(catalog, _tools).ReadAsync(output);
+        Assert.InRange(content.Chapters[1].Position.TotalSeconds, 3.99, 4.01);
+    }
+
+    [Fact]
+    public async Task MergeSucceedsWhenAClipWasAlreadyDamagedNextToTheJoin()
+    {
+        var catalog = await CreateCatalogAsync();
+        Task<LibraryVideo> TapeAsync(string name, bool damage) => AddFileAsync(catalog, name, async path =>
+        {
+            var tape = Path.Combine(_root, name + ".ts");
+            await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "6", "-c:v", "mpeg2video", "-g", "12", "-f", "mpegts", tape]);
+            if (damage) ImportTests.CorruptTransportPackets(tape, [0.95]);
+            await RunFfmpegAsync(["-i", tape, "-c", "copy", path]);
+        });
+        var damaged = await TapeAsync("damaged", damage: true);
+        var intact = await TapeAsync("intact", damage: false);
+        Assert.NotEqual("", await DecodeErrorsAsync(catalog.GetVideoPath(damaged.RelativePath)));
+        var warnings = new List<string>();
+
+        var output = Assert.Single(await new ClipEditingService(catalog, _tools).MergeAsync([damaged, intact], "Tape",
+            new InlineProgress(update => { if (update.Warning is { } warning) warnings.Add(warning); })));
+
+        Assert.True(File.Exists(catalog.GetVideoPath(output.RelativePath)));
+        Assert.True(warnings.Any(warning => warning.Contains("as in the original", StringComparison.Ordinal)), string.Join(" / ", warnings));
+    }
+
+    [Fact]
+    public async Task CompositeMergeKeepsSubtitlesAndAttachmentsAndSmartCutKeepsTheTrackHeader()
+    {
+        var catalog = await CreateCatalogAsync();
+        var first = await CreateFixtureAsync(catalog, "first");
+        var second = await AddFileAsync(catalog, "second", async path =>
+        {
+            var fixture = await CreateFixtureAsync(catalog, "re-encoded");
+            await RunFfmpegAsync(["-i", catalog.GetVideoPath(fixture.RelativePath), "-map", "0", "-c", "copy", "-c:v", "libx264", "-g", "10", "-crf", "30", path]);
+        });
+        var font = Path.Combine(_root, "notes.txt");
+        await File.WriteAllTextAsync(font, "kept");
+        await new MediaProcess().RunAsync(_tools.MkvPropEdit, [catalog.GetVideoPath(second.RelativePath), "--add-attachment", font], TimeSpan.FromSeconds(30));
+        await new MediaProcess().RunAsync(_tools.MkvPropEdit, [catalog.GetVideoPath(first.RelativePath), "--edit", "track:v1", "--set", "flag-default=0",
+            "--set", "colour-range=1"], TimeSpan.FromSeconds(30));
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var merged = Assert.Single(await editing.MergeAsync([first, second], "Composite"));
+        var trimmed = Assert.Single(await editing.TrimAsync(first, TimeSpan.FromSeconds(1.35), TimeSpan.FromSeconds(4.65), "Header"));
+
+        Assert.Equal(await TracksAsync(catalog, first), await TracksAsync(catalog, merged));
+        var mergedInfo = await IdentifyAsync(catalog.GetVideoPath(merged.RelativePath));
+        Assert.Contains(mergedInfo.GetProperty("attachments").EnumerateArray(), attachment => attachment.GetProperty("file_name").GetString() == "notes.txt");
+        var video = (await IdentifyAsync(catalog.GetVideoPath(trimmed.RelativePath))).GetProperty("tracks")[0].GetProperty("properties");
+        Assert.False(video.GetProperty("default_track").GetBoolean());
+        Assert.Equal(1, video.GetProperty("color_range").GetInt32());
+    }
+
+    [Fact]
+    public async Task OutputsGetRecordedDatesOnlyFromSourcesThatStateOneAndThumbnailsFromEveryClip()
+    {
+        var catalog = await CreateCatalogAsync();
+        var first = await CreateSimpleAsync(catalog, "first", "64x48", 10, 3, audio: false);
+        var second = await CreateSimpleAsync(catalog, "second", "64x48", 10, 3, audio: false);
+        var metadata = new MatroskaMetadataService(catalog, _tools);
+        var many = new List<VideoThumbnail>();
+        for (var index = 0; index < 20; index++) many.Add(await metadata.CaptureThumbnailAsync(first, TimeSpan.FromSeconds(index * 0.1)));
+        await metadata.SaveAsync(first, VideoMetadata.Empty with { Thumbnails = many });
+        await metadata.SaveAsync(second, VideoMetadata.Empty with { Thumbnails = [await metadata.CaptureThumbnailAsync(second, TimeSpan.FromSeconds(1))] });
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var merged = Assert.Single(await editing.MergeAsync([first, second], "Thumbnails"));
+
+        var text = await metadata.ReadTextAsync(catalog.GetVideoPath(merged.RelativePath));
+        Assert.Equal("", text.Metadata.RecordedAtText);
+        Assert.Equal(20, text.Thumbnails.Count);
+        Assert.Contains(text.Thumbnails, thumbnail => thumbnail.Position > TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
     public async Task InvalidBoundariesPublishNothing()
     {
         var catalog = await CreateCatalogAsync();
         var source = await CreateFixtureAsync(catalog, "bounds");
         var editing = new ClipEditingService(catalog, _tools);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.TrimAsync(source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1), ""));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.TrimAsync(source, TimeSpan.Zero, TimeSpan.FromSeconds(7), ""));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.SplitAsync(source, TimeSpan.Zero, ""));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.SplitAsync(source, TimeSpan.FromSeconds(6), ""));
         await Assert.ThrowsAsync<ArgumentException>(() => editing.MergeAsync([source], ""));
@@ -316,6 +499,44 @@ public sealed class ClipEditingTests : IDisposable
         if (audio) arguments.AddRange(["-c:a", "aac"]);
         return AddVideoAsync(catalog, name, TimeSpan.FromSeconds(seconds), arguments);
     }
+
+    private async Task<LibraryVideo> CreateInterlacedAsync(LibraryCatalog catalog, string name, string references) =>
+        await AddVideoAsync(catalog, name, TimeSpan.FromSeconds(2), ["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "2",
+            "-vf", "setfield=tff", "-flags", "+ilme+ildct", "-c:v", "libx264", "-refs", references, "-g", "25", "-pix_fmt", "yuv420p"]);
+
+    private async Task<LibraryVideo> AddFileAsync(LibraryCatalog catalog, string name, Func<string, Task> create)
+    {
+        var id = Guid.NewGuid();
+        var relative = LibraryPaths.VideoRelativePath(id);
+        Directory.CreateDirectory(_root);
+        await create(catalog.GetVideoPath(relative));
+        var video = new LibraryVideo(id, relative, name, TimeSpan.FromSeconds(6), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        await catalog.AddAsync(video);
+        return video;
+    }
+
+    private async Task RunFfmpegAsync(IEnumerable<string> arguments)
+    {
+        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-hide_banner", "-v", "error", "-y", .. arguments], TimeSpan.FromSeconds(30));
+        Assert.True(result.ExitCode == 0, result.StandardError);
+    }
+
+    private async Task<IReadOnlyList<byte[]>> GrayFramesAsync(string path)
+    {
+        var raw = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".gray");
+        await RunFfmpegAsync(["-i", path, "-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "gray", raw]);
+        return (await File.ReadAllBytesAsync(raw)).Chunk(160 * 120).ToArray();
+    }
+
+    private static double MeanDifference(byte[] first, byte[] second) => first.Zip(second, (a, b) => Math.Abs(a - b)).Average();
+
+    private async Task<double[]> VideoTimesAsync(string path) =>
+        (await new MediaProcess().RunAsync(_tools.Ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", path],
+            TimeSpan.FromSeconds(30))).StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => double.Parse(line.TrimEnd(','), CultureInfo.InvariantCulture)).Order().ToArray();
+
+    private async Task<JsonElement> IdentifyAsync(string path) =>
+        JsonDocument.Parse((await new MediaProcess().RunAsync(_tools.MkvMerge, ["-J", path], TimeSpan.FromSeconds(30))).StandardOutput).RootElement;
 
     private async Task<LibraryVideo> AddVideoAsync(LibraryCatalog catalog, string name, TimeSpan duration, IEnumerable<string> arguments)
     {

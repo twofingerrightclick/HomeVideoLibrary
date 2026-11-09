@@ -22,6 +22,8 @@ public sealed record VideoPageDependencies
     public required VideoPageSession Session { get; init; }
     /// <summary>Runs an action on the UI thread later.</summary>
     public required Action<Action> Post { get; init; }
+    /// <summary>Where playback starts (for example a chapter a search matched).</summary>
+    public TimeSpan StartAt { get; init; }
     /// <summary>Frames for the scrub bar's hover preview; null shows none.</summary>
     public PreviewCache? Previews { get; init; }
     /// <summary>Returns to the library through the shell's leave flow.</summary>
@@ -165,7 +167,7 @@ public sealed class VideoPageViewModel : PageViewModel
     public override async Task LoadAsync()
     {
         var token = _lifetime.Token;
-        var playback = Player.OpenAsync(TimeSpan.Zero, true, token);
+        var playback = Player.OpenAsync(_dependencies.StartAt, true, token);
         await Details.LoadAsync(token);
         if (Details.CanEdit) Report("M adds a chapter at the playhead. Save writes your changes into the video file.");
         try { await playback; }

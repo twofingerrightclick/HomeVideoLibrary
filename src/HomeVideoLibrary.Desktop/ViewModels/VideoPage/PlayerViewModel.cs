@@ -73,11 +73,12 @@ public sealed class PlayerViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand<double> ChangeVolumeCommand { get; }
     public RelayCommand ToggleMuteCommand { get; }
 
-    /// <summary>Creates the player, publishes it for the view to bind, then starts playback.</summary>
+    /// <summary>Creates the player, publishes it for the view to bind, then starts playback at <paramref name="position"/>.</summary>
     public async Task OpenAsync(TimeSpan position, bool play, CancellationToken cancellationToken)
     {
+        Position = Clamp(position);
         Player = await _playback.CreatePlayerAsync();
-        try { await _playback.StartAsync(_path, position, play, cancellationToken); }
+        try { await _playback.StartAsync(_path, Position, play, cancellationToken); }
         catch
         {
             await CloseAsync();

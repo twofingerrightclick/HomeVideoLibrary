@@ -109,4 +109,10 @@ internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInt
     }
 
     public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
+
+    public HomeVideoLibrary.Desktop.ViewModels.PickedFiles Picked { get; set; } = HomeVideoLibrary.Desktop.ViewModels.PickedFiles.None;
+    public Task<HomeVideoLibrary.Desktop.ViewModels.PickedFiles> PickVideosAsync() => Task.FromResult(Picked);
+    public string? Folder { get; set; }
+    public Task<string?> PickFolderAsync(string title) => Task.FromResult(Folder);
+    public Task ShowSettingsAsync(HomeVideoLibrary.Desktop.ViewModels.SettingsViewModel settings) => Task.CompletedTask;
 }

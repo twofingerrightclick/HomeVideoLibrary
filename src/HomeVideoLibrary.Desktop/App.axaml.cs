@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.Views;
+using HomeVideoLibrary.UI.Audio;
 
 namespace HomeVideoLibrary.Desktop;
 
@@ -21,6 +22,7 @@ public sealed partial class App : Application
             });
             AppErrors.Reported += viewModel.ShowError;
             desktop.MainWindow = new MainWindow { DataContext = viewModel };
+            desktop.Exit += (_, _) => (ClickSounds.Service as IDisposable)?.Dispose();
         }
 
         base.OnFrameworkInitializationCompleted();
