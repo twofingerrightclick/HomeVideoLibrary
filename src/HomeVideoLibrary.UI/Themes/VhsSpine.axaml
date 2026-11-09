@@ -14,6 +14,13 @@
   <SolidColorBrush x:Key="Vcr.Brush.Sticker.Rule" Color="#DAD5C6"/>
   <SolidColorBrush x:Key="Vcr.Brush.Sticker.GraphRule" Color="#B9C9E2"/>
   <SolidColorBrush x:Key="Vcr.Brush.Tape.DefaultAccent" Color="#7D2A35"/>
+  <!-- Printed sticker accents for hosts that vary spines (red, green, yellow, blue, purple, brown stock). -->
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Red" Color="#7D2A35"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Green" Color="#2F5D4A"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Yellow" Color="#B08A1E"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Blue" Color="#3F5F95"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Purple" Color="#52407A"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.Brown" Color="#7A5A2A"/>
 
   <!-- Printed sideways text on sticker bands; rotated -90deg so it reads bottom-to-top like a real spine. -->
   <ControlTheme x:Key="Vcr.Theme.SpinePrint" TargetType="TextBlock">
