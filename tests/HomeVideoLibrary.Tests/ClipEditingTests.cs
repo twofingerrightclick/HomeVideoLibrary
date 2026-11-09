@@ -369,6 +369,23 @@ public sealed class ClipEditingTests : IDisposable
     }
 
     [Fact]
+    public async Task ClipsOfOneSizeAtDifferentFrameRatesAreJoinedWithTheirOwnFrameTimes()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo[] clips = [await CreateSimpleAsync(catalog, "pal", "160x120", 25, 4, audio: true),
+            await CreateSimpleAsync(catalog, "ntsc", "160x120", 30, 2, audio: true)];
+
+        var output = Assert.Single(await new ClipEditingService(catalog, _tools).MergeAsync(clips, "Mixed rates"));
+
+        var path = catalog.GetVideoPath(output.RelativePath);
+        Assert.Equal((await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[0].RelativePath)))
+            .Concat(await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[1].RelativePath))), await DecodedFrameHashesAsync(path));
+        var times = await VideoTimesAsync(path);
+        Assert.InRange(times[99] - times[98], 0.039, 0.041);
+        Assert.InRange(times[101] - times[100], 0.033, 0.034);
+    }
+
+    [Fact]
     public async Task InvalidBoundariesPublishNothing()
     {
         var catalog = await CreateCatalogAsync();
@@ -564,7 +581,7 @@ public sealed class ClipEditingTests : IDisposable
 
     private async Task<IReadOnlyList<string>> DecodedFrameHashesAsync(string path)
     {
-        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-map", "0:v:0", "-f", "framemd5", "-"], TimeSpan.FromSeconds(30));
+        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "framemd5", "-"], TimeSpan.FromSeconds(30));
         return result.StandardOutput.Split('\n').Where(line => line.Length > 0 && !line.StartsWith('#')).Select(line => line.Split(',')[^1].Trim()).ToArray();
     }
 

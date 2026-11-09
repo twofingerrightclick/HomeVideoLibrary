@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure.Editing;
 
@@ -37,7 +38,7 @@ public sealed record DecodeWindow(string Path, TimeSpan Start, TimeSpan Length);
 public sealed record EditBoundary(TimeSpan Position, IReadOnlyList<DecodeWindow> Sources);
 
 /// <summary>Checks decoded completeness rather than trusting potentially stale container headers.</summary>
-public sealed class MediaValidator(MediaTools tools, MediaProcess process)
+public sealed partial class MediaValidator(MediaTools tools, MediaProcess process)
 {
     private static readonly TimeSpan EdgeWindow = TimeSpan.FromSeconds(3);
     /// <summary>How far on each side of a boundary decoding is checked.</summary>
@@ -105,6 +106,7 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
         var sourceTimelines = new Dictionary<string, MediaTimeline>();
         foreach (var boundary in boundaries)
         {
+            await EnsureTimestampsOrderedAsync(path, timeline.StartTime + boundary.Position, cancellationToken);
             var output = await DecodeAsync(path, timeline.Seek(timeline.StartTime + boundary.Position - BoundaryRadius), BoundaryRadius * 2,
                 BoundaryRadius * 2, null, cancellationToken);
             if (output.ErrorCount == 0) continue;
@@ -120,6 +122,48 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
             warnings.Add($"{output.ErrorCount} decoder error(s) near {Timecode.Format(boundary.Position)}, as in the original.");
         }
         return warnings;
+    }
+
+    /// <summary>Checks the container's timestamps around a join the way Matroska defines them: within each video and audio
+    /// track no two frames share a presentation time, and decode times, where the container has them, never go backwards. Frame
+    /// spacing may change at the join; Matroska stores a timestamp per block, so variable frame rates are valid.</summary>
+    private async Task EnsureTimestampsOrderedAsync(string path, TimeSpan position, CancellationToken cancellationToken)
+    {
+        var start = position - BoundaryRadius < TimeSpan.Zero ? TimeSpan.Zero : position - BoundaryRadius;
+        var presented = new Dictionary<int, HashSet<long>>();
+        var lastDecode = new Dictionary<int, long>();
+        string? problem = null;
+        var lines = new LineSplitter(line =>
+        {
+            var fields = line.Split(',');
+            if (problem is not null || fields.Length < 3 || !int.TryParse(fields[0], CultureInfo.InvariantCulture, out var stream)) return;
+            if (TryTicks(fields[1], out var pts) && !(presented.TryGetValue(stream, out var seen) ? seen : presented[stream] = []).Add(pts))
+                problem = $"two frames of stream {stream} share the time {Timecode.Format(TimeSpan.FromTicks(pts))}";
+            if (TryTicks(fields[2], out var dts))
+            {
+                if (lastDecode.TryGetValue(stream, out var previous) && dts < previous)
+                    problem = $"stream {stream}'s decode times go backwards at {Timecode.Format(TimeSpan.FromTicks(dts))}";
+                lastDecode[stream] = dts;
+            }
+        });
+        // Video and audio only: subtitle events may legitimately start together.
+        foreach (var type in new[] { "v", "a" })
+        {
+            await process.RunAsync(tools.Ffprobe, ["-v", "error", "-select_streams", type,
+                "-read_intervals", $"{MediaProbe.Seconds(start)}%+{MediaProbe.Seconds(BoundaryRadius * 2)}",
+                "-show_entries", "packet=stream_index,pts_time,dts_time", "-of", "csv=p=0", path], TimeSpan.FromMinutes(5), cancellationToken, lines.Append);
+            lines.Append("\n");
+        }
+        if (problem is not null)
+            throw new InvalidDataException($"The edited video's timestamps are invalid near {Timecode.Format(position)}: {problem}.");
+
+        static bool TryTicks(string text, out long ticks)
+        {
+            ticks = 0;
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)) return false;
+            ticks = (long)Math.Round(seconds * TimeSpan.TicksPerSecond);
+            return true;
+        }
     }
 
     /// <summary>Every audio and video stream must have packets in the first or last few seconds; reading only those
@@ -146,14 +190,21 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
     }
 
     /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
+    /// <summary>Decodes with ffmpeg and takes the error count from ffmpeg's own accounting rather than from the volume
+    /// of its log: the per-input-stream summary (<c>N decode errors</c>, packets the decoder rejected), the frames the
+    /// decoder flagged as corrupt (<c>corrupt decoded frame</c>, from the frame's error flags) and the packets the
+    /// demuxer flagged as corrupt. Frames go to the null sink with their own timestamps (<c>-fps_mode passthrough</c>,
+    /// demuxer time base) so variable frame rates, legitimate in Matroska, are not rounded onto one rate.</summary>
+    /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
     private async Task<DecodeReport> DecodeAsync(string path, string? seek, TimeSpan? length, TimeSpan expected,
         IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
+        var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "verbose" };
         if (seek is not null) arguments.AddRange(["-ss", seek]);
         arguments.AddRange(["-i", path]);
         if (length is { } duration) arguments.AddRange(["-t", MediaProbe.Seconds(duration)]);
-        arguments.AddRange(["-map", "0:v?", "-map", "0:a?", "-progress", "pipe:1", "-nostats", "-f", "null", "-"]);
+        arguments.AddRange(["-map", "0:v?", "-map", "0:a?", "-fps_mode", "passthrough", "-enc_time_base", "demux",
+            "-progress", "pipe:1", "-nostats", "-f", "null", "-"]);
         var decodedMicroseconds = 0L;
         var lines = new LineSplitter(line =>
         {
@@ -164,13 +215,30 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
                 progress?.Report(Math.Clamp(microseconds / (double)(expected.Ticks / 10), 0, 1));
         });
         var result = await process.RunAsync(tools.Ffmpeg, arguments, TimeSpan.FromHours(24), cancellationToken, lines.Append);
-        var errors = result.StandardError.Split('\n').Count(line => line.Trim().Length > 0);
+        var errors = CountDecodeErrors(result.StandardError);
         if (errors > 0)
-            Trace.TraceWarning($"Decoding {path} reported {errors} error line(s): {result.StandardError}");
+            Trace.TraceWarning($"Decoding {path} found {errors} damaged packet(s) or frame(s): {result.StandardError}");
         if (result.ExitCode != 0 && decodedMicroseconds == 0)
             throw new InvalidDataException("The video could not be decoded. " + MediaErrors.Summarize(result.StandardError));
         return new DecodeReport(TimeSpan.FromTicks(decodedMicroseconds * 10), errors);
     }
+
+    /// <summary>Damaged packets and frames in an ffmpeg <c>-v verbose</c> decode log; see <see cref="DecodeAsync"/>.
+    /// Per-frame and per-packet lines are a lower bound when the log was truncated.</summary>
+    internal static int CountDecodeErrors(string verboseLog) =>
+        DecodeErrorSummary().Matches(verboseLog).Sum(match => int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture)) +
+        CountOccurrences(verboseLog, "corrupt decoded frame") + CountOccurrences(verboseLog, "corrupt input packet in stream");
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    [GeneratedRegex(@"Input stream #\d+:\d+ \([a-z]+\): [^\n]*?(\d+) decode errors")]
+    private static partial Regex DecodeErrorSummary();
 
     private static string Key(ExpectedTrack track) => $"{track.Type} {track.Codec} ({track.Language})";
     private static TimeSpan Max(TimeSpan first, TimeSpan second) => first > second ? first : second;
