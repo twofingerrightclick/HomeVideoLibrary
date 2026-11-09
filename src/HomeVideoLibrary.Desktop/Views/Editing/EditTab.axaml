@@ -52,15 +52,36 @@
    <TextBlock Classes="meta" Text="Frame-accurate cuts" VerticalAlignment="Center"/>
   </StackPanel>
   <TextBlock Text="{Binding TrimPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding TrimPlan.IsPending}"/>
-  <c:PlasticButton Classes="primary" Content="SAVE AS NEW CLIP" Icon="{StaticResource Vcr.Icon.Scissors}" HorizontalAlignment="Left"
-   Command="{Binding TrimCommand}"/>
+  <StackPanel Orientation="Horizontal" Spacing="6">
+   <c:PlasticButton Classes="primary" Content="{Binding TrimPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Scissors}" MinWidth="110"
+    Command="{Binding TrimCommand}" ToolTip.Tip="Save the kept range as a new video"/>
+   <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Info}" VerticalAlignment="Center"
+    ToolTip.Tip="What the trim will do" AutomationProperties.Name="What the trim will do">
+    <c:PlasticButton.Flyout>
+     <Flyout Placement="BottomEdgeAlignedLeft">
+      <TextBlock Text="{Binding TrimPlan.Details}" TextWrapping="Wrap" MaxWidth="300"/>
+     </Flyout>
+    </c:PlasticButton.Flyout>
+   </c:PlasticButton>
+  </StackPanel>
 
   <c:SectionHeader Title="SPLIT AT PLAYHEAD" Margin="0,8,0,0"/>
   <StackPanel Orientation="Horizontal" Spacing="10">
    <c:LcdCounter Classes="small" Hours="Always" Value="{Binding SplitAt}" Caption="SPLIT"/>
   </StackPanel>
   <TextBlock Text="{Binding SplitPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding SplitPlan.IsPending}"/>
-  <c:PlasticButton Content="SAVE BOTH PARTS" Icon="{StaticResource Vcr.Icon.Slice}" HorizontalAlignment="Left" Command="{Binding SplitCommand}"/>
+  <StackPanel Orientation="Horizontal" Spacing="6">
+   <c:PlasticButton Content="{Binding SplitPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Slice}" MinWidth="110"
+    Command="{Binding SplitCommand}" ToolTip.Tip="Save both parts as new videos"/>
+   <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Info}" VerticalAlignment="Center"
+    ToolTip.Tip="What the split will do" AutomationProperties.Name="What the split will do">
+    <c:PlasticButton.Flyout>
+     <Flyout Placement="BottomEdgeAlignedLeft">
+      <TextBlock Text="{Binding SplitPlan.Details}" TextWrapping="Wrap" MaxWidth="300"/>
+     </Flyout>
+    </c:PlasticButton.Flyout>
+   </c:PlasticButton>
+  </StackPanel>
 
   <c:SectionHeader Title="NEW VIDEO" Margin="0,8,0,0"/>
   <TextBox Text="{Binding OutputTitle}" IsEnabled="{Binding !IsBusy}" Watermark="Title for the new clips" AutomationProperties.Name="New video title"/>

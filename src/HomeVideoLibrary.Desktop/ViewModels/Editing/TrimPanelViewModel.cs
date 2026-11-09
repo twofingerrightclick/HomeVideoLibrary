@@ -111,7 +111,7 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>What the trim will really keep and whether it is lossless, refreshed after input pauses.</summary>
+    /// <summary>What the trim will really keep, whether it copies or renders, and why; refreshed after input pauses.</summary>
     public PlanReadout TrimPlan { get; }
 
     public PlanReadout SplitPlan { get; }
@@ -201,23 +201,14 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         if (RangeStart is not { } start || RangeEnd is not { } end) { TrimPlan.Show("Set an in or out point to keep part of this video."); return; }
         if (RangeError is not null) { TrimPlan.Show(""); return; }
         var mode = Mode;
-        TrimPlan.Request(async token =>
-        {
-            var plan = await _editing.PlanTrimAsync(Source, start, end, mode, token);
-            return $"Keeps {Timecode.Format(plan.ActualStart)} – {Timecode.Format(plan.ActualEnd)} · " +
-                (plan.IsLossless ? "lossless" : "precise") + ". " + plan.Note;
-        });
+        TrimPlan.Request(async token => PlanDescription.Trim(await _editing.PlanTrimAsync(Source, start, end, mode, token)));
     }
 
     private void RefreshSplitPlan()
     {
         var position = SplitAt;
         if (!IsInside(position)) { SplitPlan.Show("Move the playhead to where the second part should start."); return; }
-        SplitPlan.Request(async token =>
-        {
-            var plan = await _editing.PlanSplitAsync(Source, position, token);
-            return $"Part 2 starts at {Timecode.Format(plan.ActualStart)} · lossless. " + plan.Note;
-        });
+        SplitPlan.Request(async token => PlanDescription.Split(await _editing.PlanSplitAsync(Source, position, token)));
     }
 
     private Task TrimAsync(CancellationToken cancellationToken)

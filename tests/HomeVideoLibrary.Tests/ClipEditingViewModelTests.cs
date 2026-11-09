@@ -39,6 +39,57 @@ public sealed class ClipEditingViewModelTests
         Assert.Equal(2, _editing.TrimPlans.Count);
     }
 
+    [Theory]
+    [InlineData(0, "SAVE", "copying the picture and sound exactly")]
+    [InlineData(1.3, "SAVE", "The 1.3 s next to the cuts is re-encoded")]
+    [InlineData(60, "RENDER", "all of it is re-encoded: 1 min 0 s of video to render")]
+    public async Task TheTrimButtonSavesCopiesAndSmartCutsAndRendersFullReencodes(double reencodedSeconds, string label, string explanation)
+    {
+        _editing.TrimPlan = (start, end) => new ClipCutPlan(start, end, reencodedSeconds == 0, "")
+            { ReencodedDuration = TimeSpan.FromSeconds(reencodedSeconds) };
+        var panel = Panel();
+
+        panel.InText = "1:00";
+        panel.OutText = "2:00";
+        _time.Advance(PlanReadout.Delay);
+        await panel.TrimPlan.Completion;
+
+        Assert.Equal(label, panel.TrimPlan.ActionLabel);
+        Assert.Contains(explanation, panel.TrimPlan.Details, StringComparison.Ordinal);
+        Assert.Contains("0:01:00.000 – 0:02:00.000", panel.TrimPlan.Details, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheMergeButtonFollowsThePlanAndExplainsEachReencodedClip()
+    {
+        var page = Merge(3);
+        var second = page.Sources[1];
+        _editing.MergePlan = sources => sources[1] == second.Video
+            ? new ClipMergePlan(false, 1, "Re-encodes 1 of 3 clips.")
+            {
+                Clips =
+                [
+                    new(false, false, sources[0].Duration, null),
+                    new(true, false, sources[1].Duration, "it is 720×480 and the merged video is 1920×1080"),
+                    new(false, false, sources[2].Duration, null),
+                ],
+            }
+            : new ClipMergePlan(true, 0, "Lossless.");
+        await page.LoadAsync();
+        await page.Plan.Completion;
+
+        Assert.Equal("RENDER", page.Plan.ActionLabel);
+        Assert.Contains("Clip 2 (Clip 2) is re-encoded because it is 720×480 and the merged video is 1920×1080.", page.Plan.Details,
+            StringComparison.Ordinal);
+        Assert.Contains("2 min 0 s of video to render", page.Plan.Details, StringComparison.Ordinal);
+
+        page.SelectedSource = second;
+        page.MoveUpCommand.Execute(null);
+        _time.Advance(PlanReadout.Delay);
+        await page.Plan.Completion;
+        Assert.Equal("SAVE", page.Plan.ActionLabel);
+    }
+
     [Fact]
     public async Task AnOutPointBeforeTheInPointShowsAMessageAndDoesNotPlan()
     {
@@ -233,6 +284,9 @@ public sealed class ClipEditingViewModelTests
         public List<IReadOnlyList<LibraryVideo>> MergePlans { get; } = [];
         public (TimeSpan Start, TimeSpan End, ClipCutMode Mode) LastTrim { get; private set; }
 
+        public Func<TimeSpan, TimeSpan, ClipCutPlan> TrimPlan { get; set; } = (start, end) => new ClipCutPlan(start, end, true, "Copied.");
+        public Func<IReadOnlyList<LibraryVideo>, ClipMergePlan> MergePlan { get; set; } =
+            sources => new ClipMergePlan(true, 0, $"Merge plan for {sources.Count} clips.");
         public Func<IProgress<ClipEditProgress>?, CancellationToken, Task<IReadOnlyList<LibraryVideo>>>? Trim { get; set; }
         public Func<IProgress<ClipEditProgress>?, CancellationToken, Task<IReadOnlyList<LibraryVideo>>>? Merge { get; set; }
 
@@ -240,7 +294,7 @@ public sealed class ClipEditingViewModelTests
             CancellationToken cancellationToken = default)
         {
             lock (TrimPlans) TrimPlans.Add((start, end));
-            return Task.FromResult(new ClipCutPlan(start, end, true, "Copied."));
+            return Task.FromResult(TrimPlan(start, end));
         }
 
         public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
@@ -249,7 +303,7 @@ public sealed class ClipEditingViewModelTests
         public Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default)
         {
             lock (MergePlans) MergePlans.Add(sources);
-            return Task.FromResult(new ClipMergePlan(true, 0, $"Merge plan for {sources.Count} clips."));
+            return Task.FromResult(MergePlan(sources));
         }
 
         public Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,

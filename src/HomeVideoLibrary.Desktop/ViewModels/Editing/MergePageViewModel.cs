@@ -117,8 +117,8 @@ public sealed class MergePageViewModel : PageViewModel
         Plan.Request(PlanAsync(Sources.Select(source => source.Video).ToArray()));
     }
 
-    private Func<CancellationToken, Task<string>> PlanAsync(IReadOnlyList<LibraryVideo> order) =>
-        async token => (await _editing.PlanMergeAsync(order, token)).Note;
+    private Func<CancellationToken, Task<PlanDescription>> PlanAsync(IReadOnlyList<LibraryVideo> order) =>
+        async token => PlanDescription.Merge(await _editing.PlanMergeAsync(order, token), order);
 
     private Task SaveAsync(CancellationToken cancellationToken)
     {
