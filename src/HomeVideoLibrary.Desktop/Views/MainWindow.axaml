@@ -104,7 +104,7 @@
       VerticalAlignment="Center" ToolTip.Tip="Show or hide the sidebar" AutomationProperties.Name="Sidebar"/>
      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
       <TextBlock Classes="title" Text="{Binding Albums.ViewTitle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-      <TextBlock Classes="meta" Text="{Binding LibraryCount}" VerticalAlignment="Center"/>
+      <TextBlock Classes="meta" Text="{Binding Shelf.CountLabel}" VerticalAlignment="Center"/>
       <c:PlasticButton Classes="toolbar" Content="ADD VIDEOS…" Command="{Binding Albums.StartAddingCommand}"
        IsVisible="{Binding Albums.CanStartAdding}" VerticalAlignment="Center"/>
      </StackPanel>

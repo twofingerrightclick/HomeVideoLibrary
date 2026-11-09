@@ -65,7 +65,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
-        Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.SearchText)) NotifyViewState(); };
+        Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
         Import.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ImportViewModel.IsImporting)) UpdateCommands(); };
 
         ToggleDrawerCommand = new RelayCommand(() => IsDrawerOpen = !IsDrawerOpen);
@@ -115,7 +115,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         : Shelf.SearchText.Trim().Length > 0 ? "Try another description, tag or chapter, or clear your search to see the collection."
         : !Albums.IsAllVideos ? "Use Add videos to find videos outside this album, or return to All videos."
         : "Import your first videos to start your chronological collection. Your originals stay untouched.";
-    public string LibraryCount => $"{Shelf.Tapes.Count} {(Shelf.Tapes.Count == 1 ? "video" : "videos")} · newest first";
     public int TotalCount => _shown.Videos.Count;
 
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
@@ -386,13 +385,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         _shown = snapshot;
         Albums.Apply(snapshot);
         Shelf.Apply(snapshot, Albums.Filter);
-        NotifyViewState();
         OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
 
     private void NotifyViewState()
     {
-        foreach (var name in new[] { nameof(LibraryCount), nameof(EmptyTitle), nameof(EmptyMessage) })
+        foreach (var name in new[] { nameof(EmptyTitle), nameof(EmptyMessage) })
             OnPropertyChanged(name);
     }
 

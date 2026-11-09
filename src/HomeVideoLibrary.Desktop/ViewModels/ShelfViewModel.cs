@@ -38,6 +38,7 @@ public sealed class ShelfViewModel : ViewModelBase
     public PatchableCollection<TapeViewModel> Tapes { get; } = [];
 
     public bool IsEmpty => Tapes.Count == 0;
+    public string CountLabel => $"{Tapes.Count} {(Tapes.Count == 1 ? "video" : "videos")} · newest first";
 
     public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) Apply(_snapshot, _filter); } }
 
@@ -105,7 +106,7 @@ public sealed class ShelfViewModel : ViewModelBase
         }
         _visibleIds.Clear(); _visibleIds.UnionWith(desired.Select(tape => tape.Id));
         if (_topVisible is { } top && !_visibleIds.Contains(top.Id)) _topVisible = null;
-        OnPropertyChanged(nameof(StickyMonth)); OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(StickyMonth)); OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(CountLabel));
         SelectAllCommand.RaiseCanExecuteChanged(); ClearCommand.RaiseCanExecuteChanged(); ClearSearchCommand.RaiseCanExecuteChanged();
         RecountHidden();
     }

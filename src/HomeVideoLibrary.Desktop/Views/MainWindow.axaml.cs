@@ -127,11 +127,17 @@ public sealed partial class MainWindow : Window
         _pressPoint = args.GetPosition(TapeList);
     }
 
-    private async void TapePointerMoved(object? sender, PointerEventArgs args)
+    private void TapePointerMoved(object? sender, PointerEventArgs args)
     {
         if (_dragging || _pressedTape is not { } tape || !args.GetCurrentPoint(TapeList).Properties.IsLeftButtonPressed) return;
         var delta = args.GetPosition(TapeList) - _pressPoint;
         if (Math.Abs(delta.X) + Math.Abs(delta.Y) < DragThreshold) return;
+        // The drag must start inside this pointer event; the returned task ends when the drop does.
+        _ = DragTapesAsync(args, tape);
+    }
+
+    private async Task DragTapesAsync(PointerEventArgs args, TapeViewModel tape)
+    {
         _dragging = true;
         ViewModel.IsDraggingTapes = true;
         try

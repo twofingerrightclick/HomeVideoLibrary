@@ -62,7 +62,7 @@ public sealed partial class TapeView : UserControl
         public void OnError(Exception error) { }
     }
 
-    private async void PreviewMoved(object? sender, PointerEventArgs args)
+    private void PreviewMoved(object? sender, PointerEventArgs args)
     {
         if (DataContext is not TapeViewModel tape || args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) { StopPreview(); return; }
         var width = Spine.Bounds.Width;
@@ -75,7 +75,12 @@ public sealed partial class TapeView : UserControl
         _bucket = bucket;
         _request?.Cancel();
         var cancellation = new CancellationTokenSource(); _request = cancellation;
-        var version = ++_version;
+        _ = ShowFrameAsync(tape, bucket, ++_version, cancellation);
+    }
+
+    /// <summary>Loads, decodes and fades in one preview frame; never throws (failures hide the popup).</summary>
+    private async Task ShowFrameAsync(TapeViewModel tape, int bucket, long version, CancellationTokenSource cancellation)
+    {
         try
         {
             if (_session is null)

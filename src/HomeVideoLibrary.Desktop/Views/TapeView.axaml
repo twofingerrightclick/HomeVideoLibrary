@@ -1,6 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:c="using:HomeVideoLibrary.UI.Controls" xmlns:views="using:HomeVideoLibrary.Desktop.Views"
- x:Class="HomeVideoLibrary.Desktop.Views.TapeView" x:DataType="vm:TapeViewModel">
+ x:Class="HomeVideoLibrary.Desktop.Views.TapeView" x:DataType="vm:TapeViewModel" ClipToBounds="False">
  <!-- A spine on the shelf plus its hover preview. The list item, not the spine, takes keyboard focus. -->
  <Panel>
   <c:VhsSpine x:Name="Spine" Focusable="False" IsTabStop="False"
