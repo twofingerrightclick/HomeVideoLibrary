@@ -52,7 +52,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             if (Math.Abs(result.Duration.TotalSeconds - source.Duration.TotalSeconds) > tolerance || result.VideoStreams != source.VideoStreams)
                 throw new InvalidDataException("The converted video failed duration or video stream validation. The original was preserved.");
             progress?.Report(new ImportProgress("Checking complete video and audio playback"));
-            await ValidateDecodedMediaAsync(staging, source.Duration, cancellationToken);
+            await new MediaValidator(tools, _process).ValidateDecodedAsync(staging, source.Duration, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(staging, destination, overwrite: false);
             published = true;
@@ -69,25 +69,6 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             if (published)
                 File.Delete(destination);
         }
-    }
-
-    private async Task ValidateDecodedMediaAsync(string path, TimeSpan expectedDuration, CancellationToken cancellationToken)
-    {
-        // Container headers can retain their original duration after a file is truncated. Decode every
-        // video/audio stream, then compare the observed timeline instead of trusting those headers.
-        var decoded = await _process.RunAsync(tools.Ffmpeg,
-            ["-hide_banner", "-nostdin", "-v", "error", "-xerror", "-err_detect", "explode", "-i", path,
-                "-map", "0:v?", "-map", "0:a?", "-progress", "pipe:1", "-nostats", "-f", "null", "-"],
-            TimeSpan.FromHours(24), cancellationToken);
-        if (decoded.ExitCode != 0)
-            throw new InvalidDataException($"The video could not be decoded completely. The original was preserved. {decoded.StandardError}");
-        var decodedSeconds = decoded.StandardOutput.Split('\n')
-            .Where(line => line.StartsWith("out_time_us=", StringComparison.Ordinal))
-            .Select(line => long.TryParse(line.AsSpan(12).Trim(), CultureInfo.InvariantCulture, out var value) ? value / 1_000_000d : 0)
-            .DefaultIfEmpty(0).Max();
-        var tolerance = Math.Max(0.25, expectedDuration.TotalSeconds * 0.01);
-        if (decodedSeconds <= 0 || Math.Abs(decodedSeconds - expectedDuration.TotalSeconds) > tolerance)
-            throw new InvalidDataException("The decoded playback duration does not match the complete video. The file may be truncated; the original was preserved.");
     }
 
     private Task<MediaProcessResult> ConvertAsync(string source, string output, TimeSpan duration, bool transcode,

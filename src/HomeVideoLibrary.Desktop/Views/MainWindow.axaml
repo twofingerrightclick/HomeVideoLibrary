@@ -38,6 +38,7 @@
         <StackPanel Orientation="Horizontal" Spacing="12">
           <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}" />
           <Button Content="Open selected video" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" IsVisible="{Binding !HasEditor}" />
+          <Button Content="Edit selected clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" IsVisible="{Binding !HasEditor}" />
           <Button Content="Back to library" Click="BackClicked" IsVisible="{Binding HasEditor}" />
           <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}" />
         </StackPanel>
@@ -79,10 +80,13 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
-      <ContentControl Grid.Row="1" Content="{Binding Editor}" IsVisible="{Binding HasEditor}">
+      <ContentControl Grid.Row="1" Content="{Binding Editor}" IsVisible="{Binding HasVideoEditor}">
         <ContentControl.ContentTemplate>
           <DataTemplate x:DataType="vm:VideoEditorViewModel"><views:VideoEditorView /></DataTemplate>
         </ContentControl.ContentTemplate>
+      </ContentControl>
+      <ContentControl Grid.Row="1" Content="{Binding ClipEditor}" IsVisible="{Binding HasClipEditor}">
+        <ContentControl.ContentTemplate><DataTemplate x:DataType="vm:ClipEditorViewModel"><views:ClipEditorView /></DataTemplate></ContentControl.ContentTemplate>
       </ContentControl>
       <StackPanel Grid.Row="2" Spacing="12" Margin="0,20,0,0">
         <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" IsVisible="{Binding IsBusy}" />

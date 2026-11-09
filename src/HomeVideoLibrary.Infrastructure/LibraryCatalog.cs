@@ -88,19 +88,24 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         return videos;
     }
 
-    public async Task AddAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+    public Task AddAsync(LibraryVideo video, CancellationToken cancellationToken = default) => AddBatchAsync([video], cancellationToken);
+
+    public async Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, CancellationToken cancellationToken = default)
     {
-        _ = GetVideoPath(video.RelativePath);
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO videos VALUES ($id,$path,$name,$duration,$imported,$recorded)";
-        command.Parameters.AddWithValue("$id", video.Id.ToString());
-        command.Parameters.AddWithValue("$path", video.RelativePath);
-        command.Parameters.AddWithValue("$name", video.DisplayName);
-        command.Parameters.AddWithValue("$duration", video.Duration.Ticks);
-        command.Parameters.AddWithValue("$imported", video.ImportedAt.ToString("O"));
-        command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToString("O"));
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        foreach (var video in videos)
+        {
+            _ = GetVideoPath(video.RelativePath);
+            await using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = "INSERT INTO videos VALUES ($id,$path,$name,$duration,$imported,$recorded)";
+            command.Parameters.AddWithValue("$id", video.Id.ToString()); command.Parameters.AddWithValue("$path", video.RelativePath);
+            command.Parameters.AddWithValue("$name", video.DisplayName); command.Parameters.AddWithValue("$duration", video.Duration.Ticks);
+            command.Parameters.AddWithValue("$imported", video.ImportedAt.ToString("O")); command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToString("O"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        await transaction.CommitAsync(cancellationToken);
     }
 
     internal async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)

@@ -24,7 +24,19 @@ Install FFmpeg and ffprobe for import (`brew install ffmpeg` on macOS; use your 
 
 Import probes actual media, remuxes video/audio/subtitle/attachment streams to MKV with metadata and chapters, and falls back to H.264/AAC/SRT conversion when stream copying fails. Bitmap subtitles or other unsupported streams can still cause conversion to fail; the source is preserved and the failed output is removed. Existing Matroska files are copied byte-for-byte to preserve all embedded tags and attachments. Before publication, import checks output duration and stream count, then decodes all video/audio streams and compares the observed playback duration to the source duration. This catches truncated files whose headers still declare their original length, and adds a full playback scan to import time. Conversion and playback validation each have a 24-hour timeout; probe has a 60-second timeout. All stages support cancellation.
 
-The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite owns catalog paths and albums; metadata/search projections are rebuildable from MKV. Clip editing and the final VHS interface are added in subsequent stages.
+The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite owns catalog paths and albums; metadata/search projections are rebuildable from MKV. The final VHS interface is added in the next visual stage.
+
+## Trim, split, and merge
+
+Select one or more library videos and choose **Edit selected clips**. With one video, enter start/end positions in seconds and save a trimmed MKV, or choose a split position and save both parts. Ranges must be ordered, within the source duration, and at least 0.1 seconds long. With two or more videos, use **Move selected up/down** to set their explicit output order, then **Save merged MKV**. The editor shows the output format and supports progress/cancellation.
+
+Every operation creates new library videos; originals are never modified. Single-source trim/split preserves source dimensions, display aspect, and frame timing, adjusting odd dimensions only as required for H.264. Merge uses the first ordered clip's dimensions/sample aspect/frame rate, scales down or pads other clips to preserve display aspect, and avoids enlarging smaller sources. Video is reencoded as H.264 CRF 18 for accurate cuts; audio becomes stereo 48 kHz AAC. Silent clips receive silence. This is a primary video/audio workflow: additional tracks, subtitles, external attachments, and alternative chapter editions remain in the originals rather than being copied into derivatives.
+
+Descriptions, arbitrary tags, recording date, default-edition chapters, and chosen JPEG thumbnails are retained and shifted to the output timeline. A chapter active at the cut point starts at zero; later chapters/thumbnail timestamps shift with the cut or merge offset. Merge chapter UID collisions receive new UIDs. Each derivative retains up to the first twenty chosen thumbnails on its timeline.
+
+Outputs are staged, fully decoded/validated, and receive their remapped embedded metadata before publication. Split pairs register in one SQLite transaction; cancellation or failure removes every uncommitted output. Successful outputs are indexed automatically. Closing during an operation is deferred until it finishes or is cancelled.
+
+Run focused editing tests with `dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~ClipEditingTests`.
 
 ## Albums and search
 

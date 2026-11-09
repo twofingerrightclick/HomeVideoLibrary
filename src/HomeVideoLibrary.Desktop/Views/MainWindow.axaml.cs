@@ -38,9 +38,9 @@ public sealed partial class MainWindow : Window
         {
             if (_allowClose) return;
             if (ViewModel.IsBusy) { ViewModel.CancelImport(); args.Cancel = true; return; }
-            if (ViewModel.Editor is null) return;
+            if (!ViewModel.HasEditor) return;
             args.Cancel = true;
-            if (ViewModel.Editor.IsBusy) return;
+            if (ViewModel.Editor?.IsBusy == true || ViewModel.ClipEditor?.IsBusy == true) return;
             CloseWindowIfRequested(await ViewModel.RequestCloseEditorAsync(closeWindow: true));
         };
         Closed += (_, _) => ViewModel.CancelIndex();
@@ -130,6 +130,7 @@ public sealed partial class MainWindow : Window
         }
     }
     private async void OpenSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenSelectedAsync();
+    private async void EditClipsClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenClipEditorAsync();
     private async void BackClicked(object? sender, RoutedEventArgs args) => await ViewModel.RequestCloseEditorAsync();
     private async void DiscardClicked(object? sender, RoutedEventArgs args)
     {

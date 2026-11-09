@@ -30,6 +30,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _searchText = "", _albumName = "", _indexStatus = "";
     private VideoAlbum? _currentAlbum, _targetAlbum;
     private IReadOnlyList<LibraryVideo> _selectedVideos = [];
+    private ClipEditorViewModel? _clipEditor;
 
     public ObservableCollection<LibraryVideo> Videos { get; } = [];
     public ObservableCollection<VideoAlbum> Albums { get; } = [];
@@ -54,21 +55,25 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string CurrentViewTitle => IsChoosingAlbumVideos ? $"Add videos to {CurrentAlbum?.Name}" : CurrentAlbum?.Name ?? "All videos";
     public IReadOnlyList<LibraryVideo> SelectedVideos => _selectedVideos;
     public bool CanAddSelected => TargetAlbum is not null && SelectedVideos.Count > 0 && !IsBusy;
-    public void SetSelectedVideos(IEnumerable<LibraryVideo> videos) { _selectedVideos = videos.ToArray(); OnPropertyChanged(nameof(CanAddSelected)); }
+    public void SetSelectedVideos(IEnumerable<LibraryVideo> videos) { _selectedVideos = videos.ToArray(); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); }
     public string LibraryRoot { get => _libraryRoot; private set => SetProperty(ref _libraryRoot, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
-    public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanAddSelected)); } }
+    public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
     public bool CanImport => _catalog is not null && !IsBusy;
     public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
-    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(CanOpenSelected)); } }
+    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(HasVideoEditor)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
+    public ClipEditorViewModel? ClipEditor { get => _clipEditor; private set { SetProperty(ref _clipEditor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(HasClipEditor)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
+    public bool HasVideoEditor => Editor is not null;
+    public bool HasClipEditor => ClipEditor is not null;
+    public bool CanEditClips => SelectedVideos.Count > 0 && !HasEditor && !IsBusy;
     public LibraryVideo? SelectedVideo { get => _selectedVideo; set { SetProperty(ref _selectedVideo, value); OnPropertyChanged(nameof(CanOpenSelected)); } }
     public bool CanOpenSelected => SelectedVideo is not null && !IsBusy && !HasEditor;
-    public bool HasEditor => Editor is not null;
+    public bool HasEditor => Editor is not null || ClipEditor is not null;
     public bool CloseWarning { get => _closeWarning; private set => SetProperty(ref _closeWarning, value); }
 
     public async Task OpenVideoAsync(LibraryVideo video)
     {
-        if (_catalog is null || IsBusy || Editor is not null) return;
+        if (_catalog is null || IsBusy || HasEditor) return;
         var metadata = new MatroskaMetadataService(_catalog, MediaTools.Discover());
         IVideoMetadataService service = metadata;
         if (_searchIndex is { } index)
@@ -82,6 +87,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     public Task OpenSelectedAsync() => SelectedVideo is { } video ? OpenVideoAsync(video) : Task.CompletedTask;
+    public async Task OpenClipEditorAsync()
+    {
+        if (!CanEditClips || _catalog is null) return;
+        ClipEditor = new ClipEditorViewModel(SelectedVideos.ToArray(), new ClipEditingService(_catalog, MediaTools.Discover()), _searchIndex);
+        await ClipEditor.LoadFormatAsync();
+    }
 
     public Task<EditorExitDestination> RequestCloseEditorAsync(bool closeWindow = false)
     {
@@ -93,6 +104,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task<EditorExitDestination> CloseEditorAsync(bool discard)
     {
+        if (ClipEditor is { } clips)
+        {
+            if (clips.IsBusy) return EditorExitDestination.Stay;
+            clips.Dispose(); ClipEditor = null; await RefreshVideosAsync();
+            return _exitState.Complete();
+        }
         if (Editor is not { } editor) return _exitState.Complete();
         if (editor.IsBusy || _editorClosing) return EditorExitDestination.Stay;
         if (editor.IsDirty && !discard) { CloseWarning = true; return EditorExitDestination.Stay; }
