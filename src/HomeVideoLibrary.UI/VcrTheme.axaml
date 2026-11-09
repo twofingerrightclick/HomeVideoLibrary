@@ -19,6 +19,7 @@
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/ScrubBar.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/TagChipInput.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/VhsSpine.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Chapters.axaml"/>
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>

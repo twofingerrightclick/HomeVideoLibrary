@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             x:Class="HomeVideoLibrary.Gallery.Sections.ChaptersSection">
+  <StackPanel>
+    <TextBlock Classes="gallery-title" Text="CHAPTERS" Margin="0,0,0,14"/>
+    <Border Classes="gallery-plate">
+      <Grid ColumnDefinitions="340,32,*">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="gallery-note" Text="Row states: current (under playhead), hover, placeholder (yellow), inline editing, focus, untitled"/>
+          <Border Classes="bezel" Padding="8">
+            <StackPanel Spacing="2">
+              <c:SectionHeader Title="CHAPTERS" Margin="4,0,4,6">
+                <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Chapter}" Content="Add  M"/>
+              </c:SectionHeader>
+              <c:ChapterListItem Start="0:00:00" Title="Opening presents"/>
+              <c:ChapterListItem Start="0:04:12" Title="Grandma arrives" IsCurrent="True"/>
+              <c:ChapterListItem Start="0:06:30" IsPlaceholder="True" TitleWatermark="New chapter at 6:30"/>
+              <c:ChapterListItem Start="0:09:05" Title="Sledding on Miller Hill" g:ForcedState.States=":pointerover">
+                <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" ToolTip.Tip="Remove chapter"/>
+              </c:ChapterListItem>
+              <c:ChapterListItem Start="0:17:44" Title="Hot cocoa" IsEditing="True"/>
+              <c:ChapterListItem Start="0:23:10" Title="Snowball fight in the dark" g:ForcedState.States=":focus-visible"/>
+              <c:ChapterListItem Start="1:02:15" Title=""/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Spacing="8">
+          <TextBlock Classes="gallery-note" Text="Live: scrub the bar (or Left/Right) and the yellow placeholder row moves through the list; ADD commits a chapter at the playhead and opens its title for editing (also M). Double-click or F2 renames; Enter commits, Esc cancels."/>
+          <c:ScrubBar x:Name="LiveScrub" Margin="6,8"/>
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+            <c:PlasticButton x:Name="AddChapter" Icon="{StaticResource Vcr.Icon.Chapter}" Content="ADD CHAPTER"/>
+            <TextBlock x:Name="LiveStatus" Classes="meta" VerticalAlignment="Center"/>
+          </StackPanel>
+          <Border Classes="bezel" Padding="8">
+            <StackPanel x:Name="LiveRows" Spacing="2"/>
+          </Border>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </StackPanel>
+</UserControl>

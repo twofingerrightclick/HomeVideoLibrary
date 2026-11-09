@@ -1,0 +1,132 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <ControlTheme x:Key="{x:Type c:ChapterListItem}" TargetType="c:ChapterListItem">
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="MinHeight" Value="38"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Border Name="PART_Row"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="Transparent"
+                  BorderThickness="1"
+                  CornerRadius="3">
+            <Grid ColumnDefinitions="3,Auto,*,Auto">
+              <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
+              <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+                <TextBlock Name="PART_Ghost"
+                           Text="{TemplateBinding StartGhostText}"
+                           FontFamily="{DynamicResource Vcr.Font.Segment}"
+                           FontSize="11"
+                           Foreground="{DynamicResource Vcr.Brush.Amber.Ghost}"
+                           HorizontalAlignment="Right"/>
+                <TextBlock Name="PART_Time"
+                           Text="{TemplateBinding StartText}"
+                           FontFamily="{DynamicResource Vcr.Font.Segment}"
+                           FontSize="11"
+                           Foreground="{DynamicResource Vcr.Brush.Amber}"
+                           HorizontalAlignment="Right"/>
+              </Panel>
+              <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
+                <StackPanel Name="PART_TitleRow" Orientation="Horizontal" Spacing="6">
+                  <PathIcon Name="PART_PlaceholderIcon"
+                            Data="{DynamicResource Vcr.Icon.Slice}"
+                            Width="12" Height="12"
+                            Foreground="{DynamicResource Vcr.Brush.Yellow}"
+                            IsVisible="False"/>
+                  <TextBlock Name="PART_TitleText"
+                             Text="{TemplateBinding Title}"
+                             TextTrimming="CharacterEllipsis"
+                             VerticalAlignment="Center"/>
+                  <TextBlock Name="PART_Watermark"
+                             Text="{TemplateBinding TitleWatermark}"
+                             FontStyle="Italic"
+                             Foreground="{DynamicResource Vcr.Brush.Legend.Dim}"
+                             TextTrimming="CharacterEllipsis"
+                             VerticalAlignment="Center"
+                             IsVisible="{TemplateBinding Title, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+                </StackPanel>
+                <TextBox Name="PART_TitleBox"
+                         Margin="-9,0,0,0"
+                         MinHeight="28"
+                         Padding="8,3"
+                         Watermark="{TemplateBinding TitleWatermark}"
+                         IsVisible="False"/>
+              </Panel>
+              <ContentPresenter Name="PART_ContentPresenter"
+                                Grid.Column="3"
+                                Margin="0,0,4,0"
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+          <Border Name="PART_FocusRing"
+                  BorderThickness="2"
+                  CornerRadius="4"
+                  BorderBrush="{DynamicResource Vcr.Brush.Focus}"
+                  IsVisible="False"/>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="#12FFFFFF"/>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="#08FFFFFF"/>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_FocusRing">
+      <Setter Property="IsVisible" Value="True"/>
+    </Style>
+
+    <!-- The chapter under the playhead: red played bar and a brighter title. -->
+    <Style Selector="^:current">
+      <Setter Property="Background" Value="#0FFFFFFF"/>
+      <Style Selector="^ /template/ Border#PART_Bar">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Red}"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_TitleText">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+      </Style>
+    </Style>
+
+    <!-- Inline title editing: the title text swaps for a field in the same position. -->
+    <Style Selector="^:editing">
+      <Style Selector="^ /template/ StackPanel#PART_TitleRow"><Setter Property="IsVisible" Value="False"/></Style>
+      <Style Selector="^ /template/ TextBox#PART_TitleBox"><Setter Property="IsVisible" Value="True"/></Style>
+    </Style>
+
+    <!-- Where a chapter added at the playhead would land: yellow, matching the scrub bar's slice marker. -->
+    <Style Selector="^:placeholder">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Yellow.Soft}"/>
+      <Style Selector="^ /template/ Border#PART_Row">
+        <Setter Property="BorderBrush" Value="#80F2C521"/>
+      </Style>
+      <Style Selector="^ /template/ Border#PART_Bar">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Time">
+        <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Ghost">
+        <Setter Property="Foreground" Value="#3D3410"/>
+      </Style>
+      <Style Selector="^ /template/ PathIcon#PART_PlaceholderIcon">
+        <Setter Property="IsVisible" Value="True"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_TitleText">
+        <Setter Property="IsVisible" Value="False"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Watermark">
+        <Setter Property="IsVisible" Value="True"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>
