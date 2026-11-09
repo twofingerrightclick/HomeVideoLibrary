@@ -13,7 +13,7 @@
     <ScrollViewer Grid.Row="1" Margin="0,28,0,20">
      <StackPanel Spacing="12">
       <TextBlock Text="Albums" FontSize="13" FontWeight="SemiBold" Foreground="#B3BDC2"/>
-      <ListBox ItemsSource="{Binding Albums}" SelectedItem="{Binding CurrentAlbum, Mode=TwoWay}" Background="Transparent"
+      <ListBox ItemsSource="{Binding Albums}" SelectedItem="{Binding CurrentAlbum, Mode=OneWay}" SelectionChanged="AlbumSelectionChanged" Background="Transparent"
        DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.DragLeave="AlbumDragLeave" DragDrop.Drop="AlbumDrop" AutomationProperties.Name="Albums, drop selected videos onto an album">
        <ListBox.Styles><Style Selector="ListBoxItem.dropTarget /template/ ContentPresenter"><Setter Property="Background" Value="#4A6A76"/></Style></ListBox.Styles>
        <ListBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}" Padding="4,8" TextTrimming="CharacterEllipsis"/></DataTemplate></ListBox.ItemTemplate>
@@ -62,7 +62,7 @@
     <WrapPanel IsVisible="{Binding !HasEditor}">
      <Button Content="Play" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" Margin="0,0,8,8"/>
      <Button Content="Edit clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" Margin="0,0,16,8"/>
-     <ComboBox Width="155" PlaceholderText="Choose album" ItemsSource="{Binding Albums}" SelectedItem="{Binding TargetAlbum, Mode=TwoWay}" Margin="0,0,8,8" AutomationProperties.Name="Destination album">
+     <ComboBox Width="155" PlaceholderText="Choose album" ItemsSource="{Binding Albums}" SelectedItem="{Binding TargetAlbum, Mode=OneWay}" SelectionChanged="TargetAlbumSelectionChanged" Margin="0,0,8,8" AutomationProperties.Name="Destination album">
       <ComboBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate>
      </ComboBox>
      <Button Content="Add to album" Click="AddSelectedClicked" IsEnabled="{Binding CanAddSelected}" Margin="0,0,8,8"/>
@@ -70,7 +70,7 @@
      <Button Content="Add selected here" Click="AddSelectedHereClicked" IsVisible="{Binding IsChoosingAlbumVideos}" Margin="0,0,8,8"/>
      <Button Content="Remove from album" Click="RemoveSelectedClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,8,8"/>
     </WrapPanel>
-        <Border IsVisible="{Binding CloseWarning}" Padding="12" Background="#363023">
+        <Border IsVisible="{Binding IsAskingToLeave}" Padding="12" Background="#363023">
           <StackPanel Spacing="10">
             <TextBlock Text="This video has unsaved changes. Save them or discard them before leaving." TextWrapping="Wrap" />
             <WrapPanel>

@@ -8,16 +8,23 @@ namespace HomeVideoLibrary.Desktop.ViewModels;
 public sealed class TapeViewModel : ViewModelBase
 {
     private readonly Action<TapeViewModel, bool> _selectionToggled;
+    private readonly Func<TapeViewModel, TapePreviewSession?> _createPreview;
     private VideoRecord _record;
     private LibraryVideo _video;
     private bool _isSelected;
     private VideoChapterRecord? _matchedChapter;
 
     /// <param name="selectionToggled">Called when the user changes <see cref="IsSelected"/> (for example, its checkbox).</param>
-    public TapeViewModel(VideoRecord record, Action<TapeViewModel, bool> selectionToggled, bool isSelected = false)
+    /// <param name="createPreview">Starts a hover preview session, or returns null when previews are unavailable.</param>
+    public TapeViewModel(VideoRecord record, Action<TapeViewModel, bool> selectionToggled,
+        Func<TapeViewModel, TapePreviewSession?> createPreview, bool isSelected = false)
     {
-        _record = record; _video = record.ToLibraryVideo(); _selectionToggled = selectionToggled; _isSelected = isSelected;
+        _record = record; _video = record.ToLibraryVideo(); _selectionToggled = selectionToggled; _createPreview = createPreview;
+        _isSelected = isSelected;
     }
+
+    /// <summary>A hover preview for this tape's current record; the caller disposes it. Null when previews are off.</summary>
+    public TapePreviewSession? CreatePreviewSession() => _createPreview(this);
 
     public Guid Id => _record.Id;
     public VideoRecord Record => _record;

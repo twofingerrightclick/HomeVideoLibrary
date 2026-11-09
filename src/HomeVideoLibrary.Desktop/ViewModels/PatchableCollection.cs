@@ -4,14 +4,14 @@ using System.Collections.Specialized;
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
 /// <summary>An observable list that converges on a desired order of item instances with minimal Remove, Move and
-/// Insert notifications, so bound containers (and their scroll position and focus) survive small changes.</summary>
+/// Insert notifications, so bound containers (and their scroll position and focus) survive small changes. A large change
+/// (a new search, another album) is published as one Reset notification instead.</summary>
 public sealed class PatchableCollection<T> : ObservableCollection<T> where T : class
 {
     /// <summary>Beyond this many moves or inserts a single Reset is cheaper for the bound list than individual events.</summary>
     private const int MaxIncrementalChanges = 64;
 
-    /// <summary>Replaces the contents with one Reset notification.</summary>
-    public void Reset(IEnumerable<T> items)
+    private void ReplaceAll(IEnumerable<T> items)
     {
         Items.Clear();
         foreach (var item in items) Items.Add(item);
@@ -28,7 +28,7 @@ public sealed class PatchableCollection<T> : ObservableCollection<T> where T : c
         foreach (var item in Items) if (!wanted.Contains(item)) stale++;
         if (stale > MaxIncrementalChanges || Math.Abs(desired.Count - (Count - stale)) > MaxIncrementalChanges)
         {
-            Reset(desired);
+            ReplaceAll(desired);
             return;
         }
         for (var index = Count - 1; index >= 0; index--)
@@ -39,7 +39,7 @@ public sealed class PatchableCollection<T> : ObservableCollection<T> where T : c
             if (index < Count && ReferenceEquals(this[index], desired[index])) continue;
             if (++changes > MaxIncrementalChanges)
             {
-                Reset(desired);
+                ReplaceAll(desired);
                 return;
             }
             var existing = IndexOf(desired[index], index + 1);

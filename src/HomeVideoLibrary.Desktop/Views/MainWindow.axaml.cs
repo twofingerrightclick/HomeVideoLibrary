@@ -67,8 +67,12 @@ public sealed partial class MainWindow : Window
         }
         if (!ViewModel.HasEditor) return;
         args.Cancel = true;
-        if (ViewModel.Editor?.IsBusy == true || ViewModel.ClipEditor?.IsBusy == true) return;
-        AppErrors.Run(async () => CloseWindowIfRequested(await ViewModel.RequestCloseEditorAsync(closeWindow: true)), "Close window");
+        AppErrors.Run(async () =>
+        {
+            if (!await ViewModel.CloseEditorAsync()) return;
+            _allowClose = true;
+            Close();
+        }, "Close window");
     }
 
     private static TapeViewModel? TapeAt(object? source)
@@ -163,6 +167,16 @@ public sealed partial class MainWindow : Window
 
     private sealed record VideoDragPayload(string LibraryRoot, Guid[] Ids);
 
+    private void AlbumSelectionChanged(object? sender, SelectionChangedEventArgs args)
+    {
+        if (args.AddedItems is [VideoAlbum album]) ViewModel.ShowAlbum(album);
+    }
+
+    private void TargetAlbumSelectionChanged(object? sender, SelectionChangedEventArgs args)
+    {
+        if (args.AddedItems is [VideoAlbum album]) ViewModel.ChooseTargetAlbum(album);
+    }
+
     private void ChooseLibraryClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(async () =>
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Choose your video library folder", AllowMultiple = false });
@@ -219,22 +233,10 @@ public sealed partial class MainWindow : Window
 
     private void OpenSelectedClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenSelectedAsync, "Open video");
     private void EditClipsClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenClipEditorAsync, "Edit clips");
-    private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(() => ViewModel.RequestCloseEditorAsync(), "Back to library");
-    private void DiscardClicked(object? sender, RoutedEventArgs args) =>
-        AppErrors.Run(async () => CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: true)), "Discard changes");
-    private void SaveAndLeaveClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(async () =>
-    {
-        if (ViewModel.Editor is { } editor) await editor.SaveAsync();
-        if (ViewModel.Editor?.IsDirty == false) CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: false));
-    }, "Save and leave");
-    private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.KeepEditing();
-
-    private void CloseWindowIfRequested(EditorExitDestination destination)
-    {
-        if (destination != EditorExitDestination.Window) return;
-        _allowClose = true;
-        Close();
-    }
+    private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.CloseEditorAsync, "Back to library");
+    private void SaveAndLeaveClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Save);
+    private void DiscardClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.Discard);
+    private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.LeavePrompt?.Answer(LeaveChoice.KeepEditing);
 
     private void MarkerKeyDown(object? sender, KeyEventArgs args)
     {

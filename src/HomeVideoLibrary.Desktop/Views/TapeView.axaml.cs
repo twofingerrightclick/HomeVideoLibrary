@@ -70,7 +70,7 @@ public sealed partial class TapeView : UserControl
         {
             if (_session is null)
             {
-                _session = (this.FindAncestorOfType<MainWindow>()?.DataContext as MainWindowViewModel)?.CreatePreviewSession(tape);
+                _session = tape.CreatePreviewSession();
                 if (_session is null) return;
             }
             var frame = await _session.GetAsync(bucket, cancellation.Token);

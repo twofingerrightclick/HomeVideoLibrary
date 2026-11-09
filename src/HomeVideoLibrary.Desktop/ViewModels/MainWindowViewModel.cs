@@ -24,15 +24,26 @@ public sealed record MainWindowDependencies
         cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
     public Func<LibraryPaths, CancellationToken, Task> SweepScratch { get; init; } = (paths, cancellationToken) =>
         ScratchSweeper.SweepAsync(paths, Process.GetCurrentProcess().StartTime.ToUniversalTime(), cancellationToken);
+    public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
+}
+
+public enum LeaveChoice { Save, Discard, KeepEditing }
+
+/// <summary>An open "unsaved changes" question. The view shows it while <see cref="MainWindowViewModel.LeavePrompt"/>
+/// is set and answers it once; the close flow awaits <see cref="Choice"/>.</summary>
+public sealed class LeavePrompt
+{
+    private readonly TaskCompletionSource<LeaveChoice> _choice = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<LeaveChoice> Choice => _choice.Task;
+    public void Answer(LeaveChoice choice) => _choice.TrySetResult(choice);
 }
 
 public sealed class MainWindowViewModel : ViewModelBase
 {
     private static readonly TimeSpan ActivationStatInterval = TimeSpan.FromSeconds(10);
     private readonly MainWindowDependencies _dependencies;
-    private readonly EditorExitState _exitState = new();
     private readonly Dictionary<Guid, TapeViewModel> _tapeIndex = [];
     private readonly Dictionary<Guid, TapeRow> _rowIndex = [];
     private readonly HashSet<Guid> _selection = [];
@@ -40,7 +51,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibraryServices? _services;
     private PreviewCache? _previews;
     private LibrarySnapshot _shown = LibrarySnapshot.Empty;
-    private bool _syncQueued, _syncingAlbums;
     private Guid? _anchorId;
     private CancellationTokenSource? _importCancellation, _indexCancellation;
     private TaskCompletionSource? _importFinished;
@@ -51,7 +61,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _libraryRoot = "Choose a library folder to begin";
     private string _status = "Your original files stay untouched.";
     private string _searchText = "", _albumName = "", _indexStatus = "", _toolWarning = "", _toast = "";
-    private bool _isBusy, _isImporting, _isProgressIndeterminate, _isIndexing, _isChoosingAlbumVideos, _closeWarning, _editorClosing;
+    private bool _isBusy, _isImporting, _isProgressIndeterminate, _isIndexing, _isChoosingAlbumVideos;
     private bool _isDrawerOpen = true, _isDraggingTapes;
     private double _progress;
     private int _tapeColumns = 1;
@@ -59,6 +69,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private ClipEditorViewModel? _clipEditor;
     private LibraryVideo? _selectedVideo;
     private VideoAlbum? _currentAlbum, _targetAlbum;
+    private LeavePrompt? _leavePrompt;
 
     public MainWindowViewModel() : this(new MainWindowDependencies()) { }
 
@@ -84,7 +95,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string EmptyMessage => !HasLibrary ? "Choose a library folder, then import your videos. Your originals stay untouched." : !string.IsNullOrWhiteSpace(SearchText) ? "Try another description, tag or chapter, or clear your search to see the collection." : HasAlbum ? "Use Add videos to find videos outside this album, or return to All videos." : "Import your first videos to start your chronological collection. Your originals stay untouched.";
     public string LibraryCount => $"{Tapes.Count} {(Tapes.Count == 1 ? "video" : "videos")} · newest first";
 
-    public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) RefreshView(resetList: true); } }
+    public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) RefreshView(); } }
     public string AlbumName { get => _albumName; set => SetProperty(ref _albumName, value); }
     public string IndexStatus { get => _indexStatus; private set => SetProperty(ref _indexStatus, value); }
     /// <summary>Per-file problems from the last library refresh.</summary>
@@ -99,30 +110,29 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string Toast { get => _toast; private set { if (SetProperty(ref _toast, value)) OnPropertyChanged(nameof(HasToast)); } }
     public bool HasToast => Toast.Length > 0;
 
-    public VideoAlbum? CurrentAlbum
+    /// <summary>The album being shown, or null for the whole library. Change it with <see cref="ShowAlbum"/>.</summary>
+    public VideoAlbum? CurrentAlbum => _currentAlbum;
+    /// <summary>The destination for "Add to album". Change it with <see cref="ChooseTargetAlbum"/>.</summary>
+    public VideoAlbum? TargetAlbum => _targetAlbum;
+
+    /// <summary>Shows an album (null: the whole library), leaving add-mode. Choosing the shown album again does nothing.</summary>
+    public void ShowAlbum(VideoAlbum? album)
     {
-        get => _currentAlbum;
-        set
-        {
-            // Album list updates replace items in place; the ListBox briefly pushes null or a renamed copy back.
-            if (_syncingAlbums) return;
-            if (value?.Id == _currentAlbum?.Id)
-            {
-                if (!Equals(value, _currentAlbum)) { _currentAlbum = value; OnPropertyChanged(); }
-                return;
-            }
-            _currentAlbum = value;
-            OnPropertyChanged();
-            AlbumName = value?.Name ?? ""; _isChoosingAlbumVideos = false;
-            OnPropertyChanged(nameof(IsChoosingAlbumVideos)); OnPropertyChanged(nameof(HasAlbum)); OnPropertyChanged(nameof(CurrentViewTitle));
-            RefreshView(resetList: true);
-        }
+        if (album?.Id == _currentAlbum?.Id) return;
+        _currentAlbum = album;
+        AlbumName = album?.Name ?? ""; _isChoosingAlbumVideos = false;
+        foreach (var name in new[] { nameof(CurrentAlbum), nameof(IsChoosingAlbumVideos), nameof(HasAlbum), nameof(CurrentViewTitle) })
+            OnPropertyChanged(name);
+        RefreshView();
     }
-    public VideoAlbum? TargetAlbum
+
+    public void ChooseTargetAlbum(VideoAlbum? album)
     {
-        get => _targetAlbum;
-        set { if (!_syncingAlbums && SetProperty(ref _targetAlbum, value)) OnPropertyChanged(nameof(CanAddSelected)); }
+        if (album is null || album.Id == _targetAlbum?.Id) return;
+        _targetAlbum = album;
+        OnPropertyChanged(nameof(TargetAlbum)); OnPropertyChanged(nameof(CanAddSelected));
     }
+
     public bool HasAlbum => CurrentAlbum is not null;
     public bool IsChoosingAlbumVideos => _isChoosingAlbumVideos;
     public string CurrentViewTitle => IsChoosingAlbumVideos ? $"Add videos to {CurrentAlbum?.Name}" : CurrentAlbum?.Name ?? "All videos";
@@ -160,7 +170,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool CanEditClips => _selection.Count > 0 && !HasEditor && !IsBusy && ToolsReady;
     public bool CanOpenSelected => SelectedVideo is not null && !IsBusy && !HasEditor;
     public bool HasEditor => Editor is not null || ClipEditor is not null;
-    public bool CloseWarning { get => _closeWarning; private set => SetProperty(ref _closeWarning, value); }
+    /// <summary>The unsaved-changes question being asked, or null.</summary>
+    public LeavePrompt? LeavePrompt { get => _leavePrompt; private set { if (SetProperty(ref _leavePrompt, value)) OnPropertyChanged(nameof(IsAskingToLeave)); } }
+    public bool IsAskingToLeave => LeavePrompt is not null;
 
     private void NotifyCommandState()
     {
@@ -231,7 +243,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips));
     }
 
-    public TapePreviewSession? CreatePreviewSession(TapeViewModel tape)
+    private TapePreviewSession? CreatePreviewSession(TapeViewModel tape)
     {
         if (_model is not { } model || _services is not { } services || _previews is not { } previews || !ToolsReady || tape.IsMissing) return null;
         return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
@@ -244,8 +256,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (record is null) return;
         if (record.State == VideoRecordState.Missing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return; }
         var indexed = new IndexedMetadataService(services.Metadata, model);
-        indexed.IndexingFailed += warning => _dependencies.Post(() => Status = warning);
-        Editor = new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed, new LibVlcPlayback(), record.ToMetadata());
+        indexed.IndexingFailed += warning => Status = warning;
+        Editor = new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed, _dependencies.CreatePlayback(), record.ToMetadata());
         await Editor.LoadAsync();
     }
 
@@ -270,33 +282,45 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (errors.Count > 0) throw new InvalidOperationException(string.Join(" ", errors));
     }
 
-    public Task<EditorExitDestination> RequestCloseEditorAsync(bool closeWindow = false)
-    {
-        _exitState.Request(closeWindow ? EditorExitDestination.Window : EditorExitDestination.Library);
-        return CloseEditorAsync(discard: false);
-    }
-
-    public Task<EditorExitDestination> ConfirmCloseEditorAsync(bool discard) => CloseEditorAsync(discard);
-
-    private async Task<EditorExitDestination> CloseEditorAsync(bool discard)
+    /// <summary>Closes the open editor, asking first when it has unsaved changes. Returns false when it stays open (busy,
+    /// Keep editing, a failed save, or a newer close request superseding this one).</summary>
+    public async Task<bool> CloseEditorAsync()
     {
         if (ClipEditor is { } clips)
         {
-            if (clips.IsBusy) return EditorExitDestination.Stay;
-            clips.Dispose(); ClipEditor = null;
-            return _exitState.Complete();
+            if (clips.IsBusy) return false;
+            ClipEditor = null; clips.Dispose();
+            return true;
         }
-        if (Editor is not { } editor) return _exitState.Complete();
-        if (editor.IsBusy || _editorClosing) return EditorExitDestination.Stay;
-        if (editor.IsDirty && !discard) { CloseWarning = true; return EditorExitDestination.Stay; }
-        CloseWarning = false;
-        _editorClosing = true;
-        try { await editor.DisposeAsync(); Editor = null; }
-        finally { _editorClosing = false; }
-        return _exitState.Complete();
+        if (Editor is not { } editor) return true;
+        if (editor.IsBusy) return false;
+        if (editor.IsDirty)
+        {
+            switch (await AskToLeaveAsync())
+            {
+                case LeaveChoice.KeepEditing: return false;
+                case LeaveChoice.Save:
+                    await editor.SaveAsync();
+                    if (editor.IsDirty) return false;
+                    break;
+            }
+        }
+        if (Editor != editor) return Editor is null;
+        Editor = null;
+        await editor.DisposeAsync();
+        return true;
     }
 
-    public void KeepEditing() { CloseWarning = false; _exitState.Cancel(); }
+    /// <summary>Asks the unsaved-changes question. A newer request supersedes an unanswered one as Keep editing, so only
+    /// the latest close intent (Back or closing the window) acts on the answer.</summary>
+    private async Task<LeaveChoice> AskToLeaveAsync()
+    {
+        LeavePrompt?.Answer(LeaveChoice.KeepEditing);
+        var prompt = LeavePrompt = new LeavePrompt();
+        var choice = await prompt.Choice;
+        if (LeavePrompt == prompt) LeavePrompt = null;
+        return choice;
+    }
 
     public async Task RestoreLibraryAsync()
     {
@@ -346,17 +370,13 @@ public sealed class MainWindowViewModel : ViewModelBase
         ToolWarning = DescribeUnavailable(unavailable);
         LibraryRoot = model.Catalog.Paths.RootDirectory;
         _tapeIndex.Clear(); _rowIndex.Clear(); _selection.Clear(); _anchorId = null; _shown = LibrarySnapshot.Empty;
-        Tapes.Reset([]); TapeRows.Reset([]);
-        _syncingAlbums = true;
-        try { Albums.Clear(); _currentAlbum = null; _targetAlbum = null; }
-        finally { _syncingAlbums = false; }
-        _isChoosingAlbumVideos = false; _searchText = "";
+        _currentAlbum = null; _targetAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";
         foreach (var name in new[] { nameof(CurrentAlbum), nameof(TargetAlbum), nameof(HasAlbum), nameof(CurrentViewTitle), nameof(IsChoosingAlbumVideos),
                      nameof(SearchText), nameof(HasLibrary), nameof(Model) })
             OnPropertyChanged(name);
         SelectedVideo = null;
         model.Changed += OnModelChanged;
-        RefreshView(resetList: true);
+        RefreshView();
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = RefreshIndexAsync();
@@ -514,30 +534,31 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private void OnModelChanged(LibraryDelta delta) => _dependencies.Post(() =>
     {
-        if (_syncQueued) return;
-        _syncQueued = true;
-        _dependencies.Post(() => { _syncQueued = false; RefreshView(resetList: false); });
+        // Deltas queue up while the UI is busy; the first posted refresh shows the latest snapshot and the rest find
+        // nothing new.
+        if (_model is { } model && !ReferenceEquals(model.Snapshot, _shown)) RefreshView();
     });
 
-    private void RefreshView(bool resetList)
+    /// <summary>Shows the model's current snapshot under the current search and album, patching tapes in place.</summary>
+    private void RefreshView()
     {
-        if (_model is not { } model) return;
-        var snapshot = model.Snapshot;
-        if (!snapshot.Albums.Equals(_shown.Albums) || !ReferenceEquals(snapshot.AlbumMembers, _shown.AlbumMembers) || resetList) SyncAlbums(snapshot);
+        var snapshot = _model?.Snapshot ?? LibrarySnapshot.Empty;
+        SyncAlbums(snapshot);
         var filter = CurrentAlbum is { } album ? new AlbumFilter(album.Id, IsChoosingAlbumVideos) : AlbumFilter.All;
         var hits = LibrarySearch.Run(snapshot, SearchText, filter);
         var desired = new List<TapeViewModel>(hits.Count);
         foreach (var hit in hits)
         {
             if (_tapeIndex.TryGetValue(hit.Video.Id, out var tape)) tape.Update(hit.Video);
-            else _tapeIndex[hit.Video.Id] = tape = new TapeViewModel(hit.Video, (item, selected) => SetSelection(item, selected), _selection.Contains(hit.Video.Id));
+            else _tapeIndex[hit.Video.Id] = tape = new TapeViewModel(hit.Video, (item, selected) => SetSelection(item, selected),
+                CreatePreviewSession, _selection.Contains(hit.Video.Id));
             tape.MatchedChapter = hit.Chapter;
             desired.Add(tape);
         }
         foreach (var id in _tapeIndex.Keys.Where(id => !snapshot.Videos.ContainsKey(id)).ToArray()) _tapeIndex.Remove(id);
         _selection.RemoveWhere(id => !snapshot.Videos.ContainsKey(id));
         foreach (var (id, tape) in _tapeIndex) if (snapshot.Find(id) is { } record) tape.Update(record);
-        if (resetList) Tapes.Reset(desired); else Tapes.Patch(desired);
+        Tapes.Patch(desired);
         _shown = snapshot;
         RebuildRows();
         if (SelectedVideo is { } focused && !snapshot.Videos.ContainsKey(focused.Id)) SelectedVideo = null;
@@ -562,36 +583,29 @@ public sealed class MainWindowViewModel : ViewModelBase
         TapeRows.Patch(rows);
     }
 
-    /// <summary>Updates <see cref="Albums"/> in place by id so the album list keeps its selection and add-mode.</summary>
+    /// <summary>Updates <see cref="Albums"/> in place by id and re-points the shown and target albums at the current
+    /// instances. Both are bound one way, so the list's transient selection changes never feed back into them.</summary>
     private void SyncAlbums(LibrarySnapshot snapshot)
     {
         var albums = snapshot.Albums;
-        _syncingAlbums = true;
-        try
+        for (var index = Albums.Count - 1; index >= 0; index--)
+            if (!albums.Any(album => album.Id == Albums[index].Id)) Albums.RemoveAt(index);
+        for (var index = 0; index < albums.Length; index++)
         {
-            for (var index = Albums.Count - 1; index >= 0; index--)
-                if (!albums.Any(album => album.Id == Albums[index].Id)) Albums.RemoveAt(index);
-            for (var index = 0; index < albums.Length; index++)
-            {
-                var existing = Albums.Select((album, position) => (album, position)).FirstOrDefault(pair => pair.album.Id == albums[index].Id);
-                if (existing.album is null) Albums.Insert(index, albums[index]);
-                else
-                {
-                    if (existing.position != index) Albums.Move(existing.position, index);
-                    if (!Equals(Albums[index], albums[index])) Albums[index] = albums[index];
-                }
-            }
+            var id = albums[index].Id;
+            var existing = Albums.Select(album => album.Id).ToList().IndexOf(id);
+            if (existing < 0) Albums.Insert(index, albums[index]);
+            else if (existing != index) Albums.Move(existing, index);
+            if (!Equals(Albums[index], albums[index])) Albums[index] = albums[index];
         }
-        finally { _syncingAlbums = false; }
-        var current = _currentAlbum is { } selected ? albums.FirstOrDefault(album => album.Id == selected.Id) : null;
-        var target = _targetAlbum is { } chosen ? albums.FirstOrDefault(album => album.Id == chosen.Id) : null;
-        target ??= albums.FirstOrDefault();
+        var current = _currentAlbum is { } shown ? albums.FirstOrDefault(album => album.Id == shown.Id) : null;
         if (_currentAlbum is not null && current is null)
         {
-            _currentAlbum = null; _isChoosingAlbumVideos = false; AlbumName = "";
+            _isChoosingAlbumVideos = false; AlbumName = "";
             OnPropertyChanged(nameof(HasAlbum)); OnPropertyChanged(nameof(IsChoosingAlbumVideos));
         }
-        _currentAlbum = current; _targetAlbum = target;
+        _currentAlbum = current;
+        _targetAlbum = (_targetAlbum is { } chosen ? albums.FirstOrDefault(album => album.Id == chosen.Id) : null) ?? albums.FirstOrDefault();
         OnPropertyChanged(nameof(CurrentAlbum)); OnPropertyChanged(nameof(TargetAlbum));
         OnPropertyChanged(nameof(CurrentViewTitle)); OnPropertyChanged(nameof(CanAddSelected));
     }
@@ -605,21 +619,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         return AlbumActionAsync(async model =>
         {
             var album = await Task.Run(() => model.CreateAlbumAsync(name, ids));
-            RefreshView(resetList: false);
-            CurrentAlbum = Albums.First(item => item.Id == album.Id);
+            RefreshView();
+            ShowAlbum(album);
             Status = ids.Length == 0 ? $"Created album “{album.Name}”." : $"Created album “{album.Name}” with {ids.Length} video(s).";
         });
     }
 
     public Task RenameAlbumAsync() => CurrentAlbum is { } album
-        ? AlbumActionAsync(async model => { await Task.Run(() => model.RenameAlbumAsync(album.Id, AlbumName)); RefreshView(resetList: false); })
+        ? AlbumActionAsync(async model => { await Task.Run(() => model.RenameAlbumAsync(album.Id, AlbumName)); RefreshView(); })
         : Task.CompletedTask;
 
     public Task DeleteAlbumAsync() => CurrentAlbum is { } album
         ? AlbumActionAsync(async model =>
         {
             await Task.Run(() => model.DeleteAlbumAsync(album.Id));
-            RefreshView(resetList: false);
+            RefreshView();
             Status = "Album removed. All video files remain in the library.";
         })
         : Task.CompletedTask;
@@ -634,7 +648,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         return AlbumActionAsync(async model =>
         {
             var change = await Task.Run(() => model.RemoveFromAlbumAsync(album.Id, ids));
-            RefreshView(resetList: false);
+            RefreshView();
             ShowToast($"Removed {change.Changed} video(s) from “{change.Album.Name}”.");
         });
     }
@@ -646,7 +660,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         return AlbumActionAsync(async model =>
         {
             var change = await Task.Run(() => model.AddToAlbumAsync(albumId, ids));
-            RefreshView(resetList: false);
+            RefreshView();
             ShowToast($"Added {change.Changed} video(s) to “{change.Album.Name}”" + (change.Unchanged > 0 ? $"; {change.Unchanged} already there." : "."));
         });
     }
@@ -654,7 +668,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public void ShowLibrary()
     {
         _isChoosingAlbumVideos = false; OnPropertyChanged(nameof(IsChoosingAlbumVideos));
-        if (CurrentAlbum is null) RefreshView(resetList: true); else CurrentAlbum = null;
+        if (CurrentAlbum is null) RefreshView(); else ShowAlbum(null);
     }
 
     public void ToggleAlbumAddMode()
@@ -662,7 +676,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (!HasAlbum) return;
         _isChoosingAlbumVideos = !_isChoosingAlbumVideos;
         OnPropertyChanged(nameof(IsChoosingAlbumVideos)); OnPropertyChanged(nameof(CurrentViewTitle));
-        RefreshView(resetList: true);
+        RefreshView();
     }
 
     private async Task AlbumActionAsync(Func<LibraryModel, Task> action)
