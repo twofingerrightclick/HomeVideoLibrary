@@ -78,11 +78,16 @@ public sealed class ClipEditingService : IClipEditingService
             var plan = await _cuts.PlanTrimAsync(probe, start, end, mode, scratch, cancellationToken);
             EnsureFreeSpace(scratch, probe, plan.Duration, plan.IsLossless ? 1.1 : 2.2);
             var staged = Path.Combine(scratch, "trim.mkv");
+            var tracks = probe.Mkv.Tracks.Select(track => track.Expected).ToArray();
             report.Begin(plan.IsLossless ? "Copying the trimmed range" : "Cutting at the exact frames", RenderWeight);
-            try { await _cuts.RenderTrimAsync(probe, plan, staged, scratch, local => report.Report(local), cancellationToken); }
+            try
+            {
+                await _cuts.RenderTrimAsync(probe, plan, staged, scratch, local => report.Report(local), cancellationToken);
+                if (!plan.IsLossless) await _validator.ValidateStructureAsync(staged, tracks, plan.Duration, plan.Joins, cancellationToken);
+            }
             catch (InvalidDataException exception) when (!plan.IsLossless)
             {
-                // A smart cut that the encoder or muxer rejects still has a safe lossless alternative.
+                // A smart cut that fails to render or to decode cleanly at its joins still has a safe lossless alternative.
                 Trace.TraceWarning($"Frame-accurate trim of {probe.Path} failed; using keyframes. {exception}");
                 plan = await _cuts.PlanTrimAsync(probe, start, end, ClipCutMode.Fast, scratch, cancellationToken);
                 ScratchFiles.TryDelete(staged);
@@ -90,7 +95,7 @@ public sealed class ClipEditingService : IClipEditingService
                 report.Warn("A frame-accurate cut was not possible; the cuts snap to keyframes instead.");
             }
             return [new RenderedOutput(name, staged, [new Segment(source, plan.ActualStart, plan.ActualEnd, TimeSpan.Zero)], plan.Duration,
-                probe.Mkv.Tracks.Select(track => track.Expected).ToArray(), plan.Joins, [], false)];
+                tracks, plan.Joins, [], false)];
         }, cancellationToken);
     }
 
@@ -165,8 +170,9 @@ public sealed class ClipEditingService : IClipEditingService
     {
         var video = plan.Clips.FirstOrDefault(clip => clip.CopyVideo)?.Source.VideoTrack.Codec ?? (plan.Video!.CodecName == "hevc" ? "HEVC/H.265/MPEG-H" : "AVC/H.264/MPEG-4p10");
         return [new ExpectedTrack("video", video, plan.Clips[0].Source.VideoTrack.Language),
-            .. plan.Audio.Select(target => new ExpectedTrack("audio",
-                VideoEncoding.AudioEncoder(target.Reference) is null ? "AAC" : target.Reference.Codec, target.Reference.Language))];
+            .. plan.Audio.Select((target, index) => new ExpectedTrack("audio",
+                VideoEncoding.AudioEncoder(target.Reference) is not null || plan.Clips.All(clip => clip.Audio[index].Kind == AudioSourceKind.Copy)
+                    ? target.Reference.Codec : "AAC", target.Reference.Language))];
     }
 
     /// <summary>Renders into a private scratch directory, rewrites and validates each output's metadata, then publishes
