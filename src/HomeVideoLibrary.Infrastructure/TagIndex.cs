@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
@@ -12,8 +13,8 @@ public sealed record TagSuggestion(string Tag, int VideoCount, int ChapterCount,
     public int Uses => VideoCount + ChapterCount;
 }
 
-/// <summary>An immutable index of every tag in the library with usage counts, maintained by diffing records.
-/// Tags are matched case- and diacritic-insensitively ("Été" and "ete" are the same tag).</summary>
+/// <summary>An immutable index of every tag in the library with usage counts, maintained by diffing records. Tag identity
+/// and prefix matching are <see cref="TagRules"/>'s; this type only counts and ranks.</summary>
 public sealed class TagIndex
 {
     private readonly ImmutableDictionary<string, Entry> _entries;
@@ -52,7 +53,7 @@ public sealed class TagIndex
         return builder is null ? this : new TagIndex(builder.ToImmutable());
     }
 
-    public TagSuggestion? Find(string tag) => _entries.TryGetValue(Key(tag), out var entry) ? entry.ToSuggestion() : null;
+    public TagSuggestion? Find(string tag) => _entries.TryGetValue(TagRules.Key(tag), out var entry) ? entry.ToSuggestion() : null;
 
     /// <summary>Every tag, most used first.</summary>
     public IReadOnlyList<TagSuggestion> All() => Order(_entries.Values.Select(entry => entry.ToSuggestion())).ToArray();
@@ -63,9 +64,8 @@ public sealed class TagIndex
     public IReadOnlyList<TagSuggestion> Suggest(string? prefix, int limit = 8, IEnumerable<string>? exclude = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
-        var folded = Key(prefix ?? "");
-        var excluded = (exclude ?? []).Select(Key).ToHashSet(StringComparer.Ordinal);
-        var matches = _entries.Where(pair => !excluded.Contains(pair.Key) && StartsWord(pair.Key, folded))
+        var excluded = (exclude ?? []).Select(TagRules.Key).ToHashSet(StringComparer.Ordinal);
+        var matches = _entries.Where(pair => !excluded.Contains(pair.Key) && TagRules.MatchesPrefix(pair.Key, prefix))
             .Select(pair => pair.Value.ToSuggestion());
         return Order(matches).Take(limit).ToArray();
     }
@@ -75,18 +75,6 @@ public sealed class TagIndex
         .ThenByDescending(suggestion => suggestion.LastUsedUtc)
         .ThenBy(suggestion => suggestion.Tag, StringComparer.OrdinalIgnoreCase)
         .ThenBy(suggestion => suggestion.Tag, StringComparer.Ordinal);
-
-    private static bool StartsWord(string key, string prefix)
-    {
-        if (prefix.Length == 0) return true;
-        for (var index = key.IndexOf(prefix, StringComparison.Ordinal); index >= 0;
-             index = key.IndexOf(prefix, index + 1, StringComparison.Ordinal))
-            if (index == 0 || !char.IsLetterOrDigit(key[index - 1])) return true;
-        return false;
-    }
-
-    /// <summary>The identity of a tag: trimmed, case- and diacritic-folded.</summary>
-    public static string Key(string tag) => LibrarySearch.Fold(tag.Trim());
 
     private sealed record Usage(int Videos, int Chapters, ImmutableDictionary<string, int> Variants)
     {
@@ -99,9 +87,9 @@ public sealed class TagIndex
 
             void Count(IEnumerable<string> tags, bool video)
             {
-                foreach (var group in tags.Where(tag => !string.IsNullOrWhiteSpace(tag)).GroupBy(Key))
+                foreach (var group in tags.Select(TagRules.Normalize).OfType<string>().GroupBy(TagRules.Key))
                 {
-                    var spelling = group.First().Trim();
+                    var spelling = group.First();
                     var current = result.GetValueOrDefault(group.Key) ?? new Usage(0, 0, ImmutableDictionary<string, int>.Empty);
                     result[group.Key] = new Usage(current.Videos + (video ? 1 : 0), current.Chapters + (video ? 0 : 1),
                         current.Variants.SetItem(spelling, current.Variants.GetValueOrDefault(spelling) + 1));

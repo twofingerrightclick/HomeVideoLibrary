@@ -1,7 +1,6 @@
-using System.Globalization;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.RegularExpressions;
+using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
@@ -37,16 +36,8 @@ public static partial class LibrarySearch
         return hits.Count > 0 || parsed.Words.Length == 0 ? hits : Match(candidates, parsed, substrings: true);
     }
 
-    /// <summary>Lowercases and strips diacritics and compatibility forms, so "Été" and "ete" compare equal.</summary>
-    public static string Fold(string text)
-    {
-        var decomposed = text.Normalize(NormalizationForm.FormKD);
-        var builder = new StringBuilder(decomposed.Length);
-        foreach (var character in decomposed)
-            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-                builder.Append(char.ToLowerInvariant(character));
-        return builder.ToString();
-    }
+    /// <summary>Text folds exactly like tag identity, so a word query and a <c>tag:</c> filter agree on "Été" = "ete".</summary>
+    private static string Fold(string text) => TagRules.Key(text);
 
     private static IEnumerable<VideoRecord> Filter(LibrarySnapshot snapshot, AlbumFilter filter)
     {
@@ -80,7 +71,7 @@ public static partial class LibrarySearch
         var tags = new List<string>();
         foreach (Match match in QueryRegex().Matches(query))
         {
-            if (match.Groups["tag"].Success) Add(tags, TagIndex.Key(match.Groups["tag"].Value));
+            if (match.Groups["tag"].Success) Add(tags, TagRules.Key(match.Groups["tag"].Value));
             else if (match.Groups["phrase"].Success)
             {
                 var phrase = Fold(match.Groups["phrase"].Value).Trim();
@@ -124,7 +115,7 @@ public static partial class LibrarySearch
         {
             _text = Fold(text);
             _words = WordRegex().Matches(_text).Select(match => match.Value).Distinct().ToArray();
-            _tags = tags.Select(TagIndex.Key).Where(tag => tag.Length > 0).ToArray();
+            _tags = tags.Select(TagRules.Key).Where(tag => tag.Length > 0).ToArray();
         }
 
         public bool Matches(string word, bool substring) => substring
