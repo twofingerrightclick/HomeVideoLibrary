@@ -7,7 +7,7 @@
              x:DataType="vp:VideoPageViewModel">
   <UserControl.Styles>
     <Style Selector="c|ChapterListItem.selected">
-      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
     </Style>
     <!-- Row keys show on hover and keyboard focus only, so titles keep the row's width. -->
     <Style Selector="c|ChapterListItem StackPanel.rowActions">
