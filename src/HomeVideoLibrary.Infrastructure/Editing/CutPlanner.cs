@@ -13,8 +13,10 @@ internal sealed record CutPlan(TimeSpan ActualStart, TimeSpan ActualEnd, IReadOn
     public bool IsLossless => Pieces.All(piece => piece.Kind == PieceKind.Copy);
     public TimeSpan Duration => ActualEnd - ActualStart;
 
-    /// <summary>Output positions where re-encoded and copied pieces meet.</summary>
-    public IReadOnlyList<TimeSpan> Joins => Pieces.Skip(1).Select(piece => piece.Start - ActualStart).ToArray();
+    /// <summary>Output positions where re-encoded and copied pieces meet, with the source span each one replaces.</summary>
+    public IReadOnlyList<EditBoundary> Boundaries(string sourcePath) => Pieces.Skip(1).Select(piece => new EditBoundary(
+        piece.Start - ActualStart,
+        [new DecodeWindow(sourcePath, piece.Start - MediaValidator.BoundaryRadius, MediaValidator.BoundaryRadius * 2)])).ToArray();
 
     public ClipCutPlan ToPublic() => new(ActualStart, ActualEnd, IsLossless, Note);
 }
@@ -46,10 +48,10 @@ internal static class CutPlanner
     }
 
     /// <summary>Frame-accurate trim: re-encode from the first frame at or after <paramref name="start"/> up to the next
-    /// keyframe, copy whole GOPs, and re-encode from the last keyframe before <paramref name="end"/>. Requires constant
-    /// frame duration <paramref name="frame"/>.</summary>
+    /// keyframe, copy whole GOPs, and re-encode from the last keyframe before <paramref name="end"/>. The cut keeps the
+    /// frames presented in [start, end), so it ends where the first excluded frame begins.</summary>
     public static CutPlan PlanPreciseTrim(IReadOnlyList<VideoPacket> nearStart, IReadOnlyList<VideoPacket> nearEnd,
-        TimeSpan start, TimeSpan end, TimeSpan videoEnd, TimeSpan frame)
+        TimeSpan start, TimeSpan end, TimeSpan videoEnd)
     {
         var firstFrame = nearStart.Where(packet => packet.Pts >= start - Epsilon).Select(packet => (TimeSpan?)packet.Pts).FirstOrDefault()
             ?? throw new InvalidDataException("No video frame was found at the trim start.");
@@ -60,9 +62,7 @@ internal static class CutPlanner
         else
         {
             copyEnd = KeyAtOrBefore(nearEnd, end) ?? TimeSpan.Zero;
-            var lastFrame = nearEnd.Where(packet => packet.Pts < end - Epsilon).Select(packet => (TimeSpan?)packet.Pts).LastOrDefault()
-                ?? throw new InvalidDataException("No video frame was found before the trim end.");
-            actualEnd = lastFrame + frame;
+            actualEnd = nearEnd.Where(packet => packet.Pts >= end - Epsilon).Select(packet => (TimeSpan?)packet.Pts).FirstOrDefault() ?? videoEnd;
         }
         var pieces = new List<CutPiece>();
         if (copyStart >= copyEnd)
@@ -84,7 +84,4 @@ internal static class CutPlanner
     public static TimeSpan? PlanSplit(IReadOnlyList<VideoPacket> nearPosition, TimeSpan position, TimeSpan videoEnd) =>
         nearPosition.Where(packet => packet.IsKey && packet.Pts > Epsilon && packet.Pts < videoEnd - Epsilon)
             .OrderBy(packet => (packet.Pts - position).Duration()).Select(packet => (TimeSpan?)packet.Pts).FirstOrDefault();
-
-    public static int FrameCount(TimeSpan start, TimeSpan end, TimeSpan frame) =>
-        (int)Math.Round((end - start).Ticks / (double)frame.Ticks);
 }

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -51,11 +52,90 @@ public sealed class ImportTests : IDisposable
         var first = await importer.ImportAsync(source);
         File.SetLastWriteTimeUtc(source, DateTime.UtcNow.AddDays(-3));
 
+        var renamed = Path.Combine(_root, "renamed copy.mp4");
+        File.Copy(source, renamed);
+
         var second = await importer.ImportAsync(source);
+        var third = await importer.ImportAsync(renamed);
 
         Assert.Equal(ImportOutcome.AlreadyInLibrary, second.Outcome);
+        Assert.Equal(ImportOutcome.AlreadyInLibrary, third.Outcome);
         Assert.Equal(first.Video.Id, second.Video.Id);
         Assert.Single(await catalog.ListAsync());
+        Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
+    }
+
+    [Fact]
+    public async Task FingerprintTellsApartFilesThatDifferOnlyInTheMiddle()
+    {
+        Directory.CreateDirectory(_root);
+        var bytes = new byte[8 << 20];
+        new Random(2).NextBytes(bytes);
+        var first = Path.Combine(_root, "capture.bin");
+        await File.WriteAllBytesAsync(first, bytes);
+        // A different recording of the same length with the same lead-in and tail differs throughout its middle.
+        var middle = bytes.AsSpan(bytes.Length / 2 - (512 << 10), 1 << 20);
+        var original = middle.ToArray();
+        new Random(3).NextBytes(middle);
+        var second = Path.Combine(_root, "other", "capture.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(second)!);
+        await File.WriteAllBytesAsync(second, bytes);
+        original.CopyTo(bytes.AsSpan(bytes.Length / 2 - (512 << 10)));
+        var copy = Path.Combine(_root, "renamed.bin");
+        await File.WriteAllBytesAsync(copy, bytes);
+
+        var fingerprint = await VideoImporter.ComputeFingerprintAsync(first, CancellationToken.None);
+
+        Assert.NotEqual(fingerprint, await VideoImporter.ComputeFingerprintAsync(second, CancellationToken.None));
+        Assert.Equal(fingerprint, await VideoImporter.ComputeFingerprintAsync(copy, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task MatroskaThatIsWebMOrStartsLateIsRewrittenLosslesslyOnImport()
+    {
+        Directory.CreateDirectory(_root);
+        var webm = Path.Combine(_root, "clip.webm");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libvpx", "-b:v", "200k", webm]);
+        var plain = Path.Combine(_root, "plain.mkv");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "4", "-c:v", "libx264", "-g", "10", "-pix_fmt", "yuv420p", plain]);
+        var chapters = Path.Combine(_root, "chapters.txt");
+        await File.WriteAllTextAsync(chapters, "CHAPTER01=00:00:03.000\nCHAPTER01NAME=Late\n");
+        var late = Path.Combine(_root, "late.mkv");
+        Assert.Equal(0, (await new MediaProcess().RunAsync(_tools.MkvMerge, ["-q", "-o", late, "--sync", "0:1500", "--chapters", chapters, plain],
+            TimeSpan.FromSeconds(30))).ExitCode);
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+
+        var webmResult = await importer.ImportAsync(webm);
+        var lateResult = await importer.ImportAsync(late);
+
+        var webmBytes = await File.ReadAllBytesAsync(catalog.GetVideoPath(webmResult.Video.RelativePath));
+        Assert.Contains("matroska", System.Text.Encoding.ASCII.GetString(webmBytes, 0, 64), StringComparison.Ordinal);
+        Assert.Contains(webmResult.Warnings, warning => warning.Contains("WebM", StringComparison.Ordinal));
+        var latePath = catalog.GetVideoPath(lateResult.Video.RelativePath);
+        var probe = await new MediaProcess().RunAsync(_tools.Ffprobe, ["-v", "error", "-show_entries", "format=start_time:chapter=start_time",
+            "-of", "json", latePath], TimeSpan.FromSeconds(30));
+        using var json = JsonDocument.Parse(probe.StandardOutput);
+        Assert.Equal("0.000000", json.RootElement.GetProperty("format").GetProperty("start_time").GetString());
+        Assert.Equal("1.500000", json.RootElement.GetProperty("chapters")[0].GetProperty("start_time").GetString());
+    }
+
+    [Fact]
+    public async Task RecoveryFinishesPublicationsCommittedBeforeACrashAndDiscardsTheRest()
+    {
+        var catalog = await CreateCatalogAsync();
+        var committed = new LibraryVideo(Guid.NewGuid(), "", "committed", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        committed = committed with { RelativePath = LibraryPaths.VideoRelativePath(committed.Id) };
+        await catalog.AddAsync(committed);
+        var pendingCommitted = Path.Combine(catalog.Paths.VideosDirectory, $".{committed.Id:N}.pending.mkv");
+        var pendingOrphan = Path.Combine(catalog.Paths.VideosDirectory, $".{Guid.NewGuid():N}.pending.mkv");
+        await File.WriteAllTextAsync(pendingCommitted, "video");
+        await File.WriteAllTextAsync(pendingOrphan, "video");
+        using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
+
+        await LibraryPublisher.RecoverAsync(catalog, owner);
+
+        Assert.Equal("video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
     }
 
@@ -334,12 +414,12 @@ public sealed class ImportTests : IDisposable
     }
 
     /// <summary>Overwrites the payload of a few transport packets, like dropouts on a digitized tape.</summary>
-    internal static void CorruptTransportPackets(string path)
+    internal static void CorruptTransportPackets(string path, IReadOnlyList<double>? fractions = null)
     {
         var bytes = File.ReadAllBytes(path);
         var packets = bytes.Length / 188;
         var random = new Random(1);
-        foreach (var fraction in new[] { 0.3, 0.5, 0.7 })
+        foreach (var fraction in fractions ?? [0.3, 0.5, 0.7])
             for (var packet = (int)(packets * fraction); packet < (int)(packets * fraction) + 3; packet++)
                 random.NextBytes(bytes.AsSpan(packet * 188 + 4, 184));
         File.WriteAllBytes(path, bytes);

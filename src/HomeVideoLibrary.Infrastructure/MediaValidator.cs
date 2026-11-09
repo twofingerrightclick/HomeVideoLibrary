@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure.Editing;
 
 namespace HomeVideoLibrary.Infrastructure;
@@ -28,11 +29,20 @@ public sealed record DecodeReport(TimeSpan Decoded, int ErrorCount);
 /// <summary>A track an edit output must contain. Codec is mkvmerge's codec name.</summary>
 public sealed record ExpectedTrack(string Type, string Codec, string Language);
 
+/// <summary>A span of a file in its own absolute timestamps.</summary>
+public sealed record DecodeWindow(string Path, TimeSpan Start, TimeSpan Length);
+
+/// <summary>A position in an edit output where the edit joined or cut streams, with the source spans that end up
+/// around it. Decoder errors the sources already had there are not the edit's fault.</summary>
+public sealed record EditBoundary(TimeSpan Position, IReadOnlyList<DecodeWindow> Sources);
+
 /// <summary>Checks decoded completeness rather than trusting potentially stale container headers.</summary>
 public sealed class MediaValidator(MediaTools tools, MediaProcess process)
 {
     private static readonly TimeSpan EdgeWindow = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan BoundaryRadius = TimeSpan.FromSeconds(2);
+    /// <summary>How far on each side of a boundary decoding is checked.</summary>
+    public static readonly TimeSpan BoundaryRadius = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PacketWindow = TimeSpan.FromSeconds(5);
 
     /// <summary>Decodes every video and audio stream without stopping at errors, which are counted instead, so a
     /// tape with a few damaged packets still passes. Throws <see cref="InvalidDataException"/> when nothing decodes
@@ -48,78 +58,101 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
         return report;
     }
 
-    /// <summary>Decodes [<paramref name="start"/>, <paramref name="start"/> + <paramref name="length"/>) like
+    /// <summary>Decodes <paramref name="window"/> like
     /// <see cref="ValidateDecodedAsync(string, TimeSpan, DecodeTolerance, IProgress{double}?, CancellationToken)"/>.</summary>
-    public async Task<DecodeReport> ValidateDecodedRangeAsync(string path, TimeSpan start, TimeSpan length, DecodeTolerance tolerance,
-        CancellationToken cancellationToken = default)
+    public async Task<DecodeReport> ValidateDecodedRangeAsync(DecodeWindow window, DecodeTolerance tolerance, CancellationToken cancellationToken = default)
     {
-        var report = await DecodeAsync(path, start, length, length, null, cancellationToken);
-        if (length - report.Decoded > tolerance.For(length))
-            throw new InvalidDataException($"The edited video does not decode completely after {Core.Timecode.Format(start)}.");
+        var timeline = await MediaProbe.ReadTimelineAsync(process, tools, window.Path, cancellationToken);
+        var report = await DecodeAsync(window.Path, timeline.Seek(window.Start), window.Length, window.Length, null, cancellationToken);
+        if (window.Length - report.Decoded > tolerance.For(window.Length))
+            throw new InvalidDataException($"The edited video does not decode completely after {Timecode.Format(window.Start)}.");
         return report;
     }
 
-    /// <summary>Cheap validation for stream-copied edit outputs: track layout, the video's length, packets on every
-    /// audio and video track (a cut can leave a subtitle track empty), and clean decodes around the edges and around
-    /// every boundary the edit created. Throws
-    /// <see cref="InvalidDataException"/> on any mismatch; returns warnings about errors near the file's edges.</summary>
-    /// <param name="boundaries">Output positions where the edit joined or cut streams. Any decoder error near one fails.</param>
+    /// <summary>Cheap validation for edit outputs: track layout, the video's length, packets on every audio and video
+    /// track near both ends, and decodes around the edges and around every boundary. Throws
+    /// <see cref="InvalidDataException"/> when the layout or length is wrong or a boundary decodes with more errors
+    /// than its sources had; returns warnings about errors near the file's edges.</summary>
+    /// <param name="plannedDuration">The planned video length; the output's video must end within
+    /// <c>max(2 frames, 0.25 s)</c> of it.</param>
     public async Task<IReadOnlyList<string>> ValidateStructureAsync(string path, IReadOnlyList<ExpectedTrack> expectedTracks,
-        TimeSpan plannedDuration, IReadOnlyList<TimeSpan> boundaries, CancellationToken cancellationToken = default)
+        TimeSpan plannedDuration, IReadOnlyList<EditBoundary> boundaries, CancellationToken cancellationToken = default)
     {
         var identify = await process.RunAsync(tools.MkvMerge, ["-J", path], TimeSpan.FromMinutes(5), cancellationToken);
         if (identify.ExitCode > 1)
             throw new InvalidDataException("The edited video is not a readable MKV. " + MediaErrors.Summarize(identify.StandardOutput));
-        var actual = ReadTracks(identify.StandardOutput);
-        var missing = expectedTracks.Select(Key).ToList();
-        foreach (var track in actual.Select(Key))
-            if (!missing.Remove(track))
-                throw new InvalidDataException($"The edited video has an unexpected {track} track.");
-        if (missing.Count > 0)
-            throw new InvalidDataException($"The edited video lost its {missing[0]} track.");
+        var actual = MkvInfo.Parse(identify.StandardOutput).Tracks.Select(track => Key(track.Expected)).ToList();
+        foreach (var track in expectedTracks.Select(Key))
+            if (!actual.Remove(track))
+                throw new InvalidDataException($"The edited video lost its {track} track.");
+        if (actual.Count > 0)
+            throw new InvalidDataException($"The edited video has an unexpected {actual[0]} track.");
 
-        var packets = await process.RunAsync(tools.Ffprobe,
-            ["-v", "error", "-count_packets", "-show_entries", "stream=index,codec_type,nb_read_packets", "-of", "json", path],
-            TimeSpan.FromMinutes(10), cancellationToken);
-        if (packets.ExitCode != 0)
-            throw new InvalidDataException("The edited video could not be scanned. " + MediaErrors.Summarize(packets.StandardError));
-        using (var json = JsonDocument.Parse(packets.StandardOutput))
-            foreach (var stream in json.RootElement.GetProperty("streams").EnumerateArray()
-                         .Where(stream => stream.TryGetProperty("codec_type", out var type) && type.GetString() is "video" or "audio"))
-                if (!stream.TryGetProperty("nb_read_packets", out var count) || count.GetString() is "0" or null)
-                    throw new InvalidDataException($"The edited video's stream {stream.GetProperty("index").GetInt32()} is empty.");
-
-        var video = await MediaProbe.ReadVideoEndAsync(process, tools, path, cancellationToken);
-        var tolerance = DecodeTolerance.ForEdit(video.FrameDuration).For(plannedDuration);
-        if ((video.End - plannedDuration).Duration() > tolerance)
+        var timeline = await MediaProbe.ReadTimelineAsync(process, tools, path, cancellationToken);
+        var length = timeline.VideoEnd - Max(TimeSpan.Zero, timeline.StartTime);
+        if ((length - plannedDuration).Duration() > DecodeTolerance.ForEdit(timeline.FrameDuration).For(plannedDuration))
             throw new InvalidDataException(
-                $"The edited video is {video.End.TotalSeconds:0.###} s long; {plannedDuration.TotalSeconds:0.###} s was planned.");
+                $"The edited video is {length.TotalSeconds:0.###} s long; {plannedDuration.TotalSeconds:0.###} s was planned.");
+        await EnsurePacketsNearEndsAsync(path, timeline, cancellationToken);
 
         var warnings = new List<string>();
-        var edges = new[] { (Start: TimeSpan.Zero, Length: EdgeWindow), (Start: video.End - EdgeWindow, Length: EdgeWindow) };
-        foreach (var (start, length) in edges)
+        foreach (var start in new[] { timeline.StartTime, Max(timeline.StartTime, timeline.VideoEnd - EdgeWindow) }.Distinct())
         {
-            var edge = await DecodeAsync(path, Clamp(start, video.End), length, length, null, cancellationToken);
+            var edge = await DecodeAsync(path, timeline.Seek(start), EdgeWindow, EdgeWindow, null, cancellationToken);
             if (edge.ErrorCount > 0)
-                warnings.Add($"{edge.ErrorCount} decoder error(s) near {Core.Timecode.Format(Clamp(start, video.End))}.");
+                warnings.Add($"{edge.ErrorCount} decoder error(s) near {Timecode.Format(start - timeline.StartTime)}.");
         }
+        var sourceTimelines = new Dictionary<string, MediaTimeline>();
         foreach (var boundary in boundaries)
         {
-            var start = Clamp(boundary - BoundaryRadius, video.End);
-            var report = await DecodeAsync(path, start, BoundaryRadius * 2, BoundaryRadius * 2, null, cancellationToken);
-            if (report.ErrorCount > 0)
-                throw new InvalidDataException($"The edited video does not decode cleanly at {Core.Timecode.Format(boundary)}.");
+            var output = await DecodeAsync(path, timeline.Seek(timeline.StartTime + boundary.Position - BoundaryRadius), BoundaryRadius * 2,
+                BoundaryRadius * 2, null, cancellationToken);
+            if (output.ErrorCount == 0) continue;
+            var inherited = 0;
+            foreach (var window in boundary.Sources)
+            {
+                if (!sourceTimelines.TryGetValue(window.Path, out var source))
+                    sourceTimelines[window.Path] = source = await MediaProbe.ReadTimelineAsync(process, tools, window.Path, cancellationToken);
+                inherited += (await DecodeAsync(window.Path, source.Seek(window.Start), window.Length, window.Length, null, cancellationToken)).ErrorCount;
+            }
+            if (output.ErrorCount > inherited)
+                throw new InvalidDataException($"The edited video does not decode cleanly at {Timecode.Format(boundary.Position)}.");
+            warnings.Add($"{output.ErrorCount} decoder error(s) near {Timecode.Format(boundary.Position)}, as in the original.");
         }
         return warnings;
     }
 
-    private async Task<DecodeReport> DecodeAsync(string path, TimeSpan? start, TimeSpan? length, TimeSpan expected,
+    /// <summary>Every audio and video stream must have packets in the first or last few seconds; reading only those
+    /// windows keeps the check independent of the file's length.</summary>
+    private async Task EnsurePacketsNearEndsAsync(string path, MediaTimeline timeline, CancellationToken cancellationToken)
+    {
+        var streams = await process.RunAsync(tools.Ffprobe, ["-v", "error", "-show_entries", "stream=index,codec_type", "-of", "json", path],
+            TimeSpan.FromMinutes(5), cancellationToken);
+        using var json = JsonDocument.Parse(streams.StandardOutput);
+        var required = json.RootElement.GetProperty("streams").EnumerateArray()
+            .Where(stream => stream.TryGetProperty("codec_type", out var type) && type.GetString() is "video" or "audio")
+            .Select(stream => stream.GetProperty("index").GetInt32()).ToHashSet();
+        var lines = new LineSplitter(line =>
+        {
+            if (int.TryParse(line.Split(',')[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var index)) required.Remove(index);
+        });
+        var intervals = $"{MediaProbe.Seconds(timeline.StartTime)}%+{MediaProbe.Seconds(PacketWindow)}," +
+            $"{MediaProbe.Seconds(Max(timeline.StartTime, timeline.ContainerEnd - PacketWindow))}%";
+        await process.RunAsync(tools.Ffprobe, ["-v", "error", "-read_intervals", intervals, "-show_entries", "packet=stream_index",
+            "-of", "csv=p=0", path], TimeSpan.FromMinutes(5), cancellationToken, lines.Append);
+        lines.Append("\n");
+        if (required.Count > 0)
+            throw new InvalidDataException($"The edited video's stream {required.Min()} is empty.");
+    }
+
+    /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
+    private async Task<DecodeReport> DecodeAsync(string path, string? seek, TimeSpan? length, TimeSpan expected,
         IProgress<double>? progress, CancellationToken cancellationToken)
     {
         var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
-        if (start is { } from) arguments.AddRange(["-ss", Seconds(from)]);
+        if (seek is not null) arguments.AddRange(["-ss", seek]);
         arguments.AddRange(["-i", path]);
-        if (length is { } duration) arguments.AddRange(["-t", Seconds(duration)]);
+        if (length is { } duration) arguments.AddRange(["-t", MediaProbe.Seconds(duration)]);
         arguments.AddRange(["-map", "0:v?", "-map", "0:a?", "-progress", "pipe:1", "-nostats", "-f", "null", "-"]);
         var decodedMicroseconds = 0L;
         var lines = new LineSplitter(line =>
@@ -139,17 +172,6 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
         return new DecodeReport(TimeSpan.FromTicks(decodedMicroseconds * 10), errors);
     }
 
-    private static IEnumerable<ExpectedTrack> ReadTracks(string mkvmergeJson)
-    {
-        using var json = JsonDocument.Parse(mkvmergeJson);
-        return json.RootElement.GetProperty("tracks").EnumerateArray().Select(track => new ExpectedTrack(
-            track.GetProperty("type").GetString() ?? "",
-            track.GetProperty("codec").GetString() ?? "",
-            track.TryGetProperty("properties", out var properties) && properties.TryGetProperty("language", out var language)
-                ? language.GetString() ?? "und" : "und")).ToArray();
-    }
-
     private static string Key(ExpectedTrack track) => $"{track.Type} {track.Codec} ({track.Language})";
-    private static TimeSpan Clamp(TimeSpan value, TimeSpan end) => value < TimeSpan.Zero ? TimeSpan.Zero : value > end ? end : value;
-    private static string Seconds(TimeSpan value) => value.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture);
+    private static TimeSpan Max(TimeSpan first, TimeSpan second) => first > second ? first : second;
 }

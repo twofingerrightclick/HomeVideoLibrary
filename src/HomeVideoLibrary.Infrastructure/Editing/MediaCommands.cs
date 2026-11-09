@@ -35,6 +35,18 @@ internal sealed class MediaCommands(MediaTools tools, MediaProcess process)
         return warnings;
     }
 
+    /// <summary>Sets the first video track's nominal frame duration in the header of a file this process owns.
+    /// mkvmerge derives it from a timestamp file's millisecond values (83 ms for 12 fps), which players then show as
+    /// the frame rate; the frames' own timestamps are not touched.</summary>
+    public async Task SetVideoFrameDurationAsync(string path, TimeSpan frameDuration, CancellationToken cancellationToken)
+    {
+        if (frameDuration <= TimeSpan.Zero) return;
+        var result = await process.RunAsync(tools.MkvPropEdit, [path, "--edit", "track:v1", "--set",
+            "default-duration=" + (frameDuration.Ticks * 100).ToString(CultureInfo.InvariantCulture)], TimeSpan.FromMinutes(1), cancellationToken);
+        if (result.ExitCode > 1)
+            throw new InvalidDataException("Video editing failed; originals unchanged. " + MediaErrors.Summarize(result.StandardOutput));
+    }
+
     public static bool RefusesToAppend(IEnumerable<string> warnings) =>
         warnings.Any(warning => warning.Contains(AppendWarning, StringComparison.OrdinalIgnoreCase));
 

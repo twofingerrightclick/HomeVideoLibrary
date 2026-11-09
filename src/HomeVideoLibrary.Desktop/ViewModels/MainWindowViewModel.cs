@@ -380,6 +380,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
+            try { await LibraryPublisher.RecoverAsync(catalog, owner); }
+            catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
             try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
             catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
             services = _dependencies.CreateServices(catalog);
