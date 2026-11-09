@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.DS_Store
+TestResults/
+*.user
+*.suo

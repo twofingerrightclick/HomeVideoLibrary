@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../HomeVideoLibrary.Core/HomeVideoLibrary.Core.csproj" />
+  </ItemGroup>
+</Project>

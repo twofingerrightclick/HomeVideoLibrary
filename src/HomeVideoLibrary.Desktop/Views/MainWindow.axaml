@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
+        x:Class="HomeVideoLibrary.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding Title}"
+        Width="1280" Height="820" MinWidth="900" MinHeight="600"
+        Background="#17191C">
+  <Grid ColumnDefinitions="220,*">
+    <Border Background="#1E2024" BorderBrush="#303239" BorderThickness="0,0,1,0" Padding="24,32">
+      <StackPanel Spacing="24">
+        <TextBlock Text="HOME VIDEO LIBRARY" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock Text="Library" FontSize="16" Foreground="#D8DCE3" />
+        <TextBlock Text="Albums" Foreground="#9299A5" />
+      </StackPanel>
+    </Border>
+    <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+      <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
+      <TextBlock Text="{Binding WelcomeMessage}" Foreground="#A3AAB5" />
+    </StackPanel>
+  </Grid>
+</Window>
