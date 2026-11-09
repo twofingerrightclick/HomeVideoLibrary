@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using HomeVideoLibrary.Core;
 
@@ -6,6 +7,9 @@ namespace HomeVideoLibrary.Infrastructure;
 
 public sealed partial class LibrarySearchIndex(LibraryCatalog catalog, IVideoMetadataService metadata)
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> VideoUpdates = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     public async Task RefreshAsync(bool force = false, IProgress<IndexProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var videos = await catalog.ListAsync(cancellationToken);
@@ -22,6 +26,15 @@ public sealed partial class LibrarySearchIndex(LibraryCatalog catalog, IVideoMet
     }
 
     public async Task UpdateVideoAsync(LibraryVideo video, bool force = true, CancellationToken cancellationToken = default)
+    {
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var gate = VideoUpdates.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try { await UpdateVideoCoreAsync(video, force, cancellationToken); }
+        finally { gate.Release(); }
+    }
+
+    private async Task UpdateVideoCoreAsync(LibraryVideo video, bool force, CancellationToken cancellationToken)
     {
         var path = catalog.GetVideoPath(video.RelativePath);
         var before = new FileInfo(path);

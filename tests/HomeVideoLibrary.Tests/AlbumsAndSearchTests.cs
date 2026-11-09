@@ -67,6 +67,51 @@ public sealed class AlbumsAndSearchTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentIndexInstancesCannotCommitAnOlderReadAfterTheNewerSaveUpdate()
+    {
+        var catalog = await CreateCatalogAsync();
+        var video = await AddVideoAsync(catalog, "concurrent indexing");
+        var oldReadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOldRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newReadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newAttemptReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldMetadata = new FakeMetadata
+        {
+            Content = VideoMetadata.Empty with { Description = "older snapshot" },
+            BeforeRead = async token => { oldReadStarted.SetResult(); await releaseOldRead.Task.WaitAsync(token); }
+        };
+        var newMetadata = new FakeMetadata
+        {
+            Content = VideoMetadata.Empty with { Description = "newer saved metadata" },
+            BeforeRead = _ => { newReadStarted.SetResult(); return Task.CompletedTask; }
+        };
+        var backgroundIndex = new LibrarySearchIndex(catalog, oldMetadata);
+        var savedVideoIndex = new LibrarySearchIndex(new LibraryCatalog(catalog.Paths), newMetadata);
+        var backgroundUpdate = Task.Run(() => backgroundIndex.UpdateVideoAsync(video));
+        await oldReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var newerUpdate = Task.Run(async () =>
+        {
+            var updating = savedVideoIndex.UpdateVideoAsync(video);
+            newAttemptReturned.SetResult();
+            await updating;
+        });
+        bool newerReadOverlapped;
+        try
+        {
+            await newAttemptReturned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // SQLite's async operations complete synchronously. Without the cross-instance gate,
+            // this second operation reads/commits "newer" before the paused old read resumes.
+            newerReadOverlapped = newReadStarted.Task.IsCompleted;
+        }
+        finally { releaseOldRead.SetResult(); }
+        await Task.WhenAll(backgroundUpdate, newerUpdate).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(newerReadOverlapped);
+        Assert.True(newReadStarted.Task.IsCompleted);
+        Assert.Empty(await savedVideoIndex.SearchAsync("older"));
+        Assert.Equal(video.Id, Assert.Single(await savedVideoIndex.SearchAsync("newer")).Id);
+    }
+
+    [Fact]
     public async Task ClearingEmbeddedDateUsesOriginalCatalogDateRatherThanAnOldCachedProjection()
     {
         var catalog = await CreateCatalogAsync();
