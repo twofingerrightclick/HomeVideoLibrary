@@ -96,6 +96,70 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public async Task FailedPlaybackStartReleasesThePlayer()
+    {
+        var playback = new FakePlayback { StartError = new InvalidOperationException("The video could not be played.") };
+        await using var editor = CreateEditor(new FakeMetadata(), playback);
+
+        await editor.LoadAsync();
+
+        Assert.Equal(["create", "start", "close"], playback.Calls);
+        Assert.Null(editor.Player);
+        Assert.False(editor.IsPlaying);
+        Assert.True(editor.CanEdit);
+        Assert.Contains("could not be played", editor.Status);
+    }
+
+    [Fact]
+    public async Task DirtyIsTheDifferenceFromTheLoadedState()
+    {
+        var metadata = new FakeMetadata
+        {
+            Stored = VideoMetadata.Empty with { Title = "Beach", Tags = ["sun"], Chapters = [new VideoChapter(9, TimeSpan.FromTicks(12_345_678), "Swim", "", [])] },
+        };
+        await using var editor = CreateEditor(metadata, new FakePlayback());
+        await editor.LoadAsync();
+        Assert.False(editor.IsDirty);
+
+        editor.Title = "Lake";
+        Assert.True(editor.IsDirty);
+        editor.Title = "Beach";
+        Assert.False(editor.IsDirty);
+
+        editor.Tags = "sun, Sun";
+        Assert.False(editor.IsDirty);
+        editor.Chapters[0].Title = "Dive";
+        Assert.True(editor.IsDirty);
+        editor.Chapters[0].Title = "Swim";
+        Assert.False(editor.IsDirty);
+        Assert.Equal(TimeSpan.FromTicks(12_345_678), editor.Chapters[0].ToChapter().Position);
+    }
+
+    [Fact]
+    public async Task SaveKeepsUnchangedRowsAndAdoptsTheStoredForm()
+    {
+        var thumbnail = new VideoThumbnail(Guid.NewGuid(), TimeSpan.FromSeconds(1), "/unused/thumb.jpg");
+        var metadata = new FakeMetadata
+        {
+            Stored = VideoMetadata.Empty with { Chapters = [new VideoChapter(9, TimeSpan.FromSeconds(2), "Swim", "", [])], Thumbnails = [thumbnail] },
+        };
+        await using var editor = CreateEditor(metadata, new FakePlayback());
+        await editor.LoadAsync();
+        var chapterRow = editor.Chapters[0];
+        var thumbnailRow = editor.Thumbnails[0];
+        var reads = metadata.Reads;
+        editor.Title = "  Beach  ";
+
+        await editor.SaveAsync();
+
+        Assert.Same(chapterRow, Assert.Single(editor.Chapters));
+        Assert.Same(thumbnailRow, Assert.Single(editor.Thumbnails));
+        Assert.Equal(reads, metadata.Reads);
+        Assert.Equal("Beach", editor.Title);
+        Assert.False(editor.IsDirty);
+    }
+
+    [Fact]
     public async Task MissingTitleStaysBlankWithTheFileNameAsPlaceholder()
     {
         await using var editor = CreateEditor(new FakeMetadata(), new FakePlayback());
@@ -172,14 +236,14 @@ public sealed class EditorTests
         await using var editor = CreateEditor(metadata, playback, releasePlayback: true);
         await editor.LoadAsync();
         editor.AddChapter();
-        editor.Chapters[0].Position = "1:60";
+        editor.Chapters[0].StartText = "1:60";
         await editor.SaveAsync();
         Assert.Null(metadata.Saved);
         Assert.False(playback.Closed);
         Assert.True(editor.IsDirty);
         Assert.Contains("\"New chapter\" has an invalid start time", editor.Status);
 
-        editor.Chapters[0].Position = "11";
+        editor.Chapters[0].StartText = "11";
         await editor.SaveAsync();
         Assert.Null(metadata.Saved);
         Assert.False(playback.Closed);
@@ -215,8 +279,12 @@ public sealed class EditorTests
         public Exception? ReadError { get; init; }
         public VideoMetadata Stored { get; set; } = VideoMetadata.Empty;
         public VideoMetadata? Saved { get; private set; }
-        public Task<VideoMetadata> ReadAsync(LibraryVideo video, CancellationToken cancellationToken = default) =>
-            ReadError is null ? Task.FromResult(Stored) : Task.FromException<VideoMetadata>(ReadError);
+        public int Reads { get; private set; }
+        public Task<VideoMetadata> ReadAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            return ReadError is null ? Task.FromResult(Stored) : Task.FromException<VideoMetadata>(ReadError);
+        }
         public async Task SaveAsync(LibraryVideo video, VideoMetadata metadata, CancellationToken cancellationToken = default)
         {
             OnSave?.Invoke();
@@ -231,17 +299,23 @@ public sealed class EditorTests
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 1;
-        public MediaPlayer? NativePlayer => null;
+        public List<string> Calls { get; } = [];
         public bool Closed { get; private set; }
         public int Opens { get; private set; }
         public bool LastPlay { get; private set; }
         public TimeSpan LastPosition { get; private set; }
         public Task OpenGate { get; init; } = Task.CompletedTask;
-        public Task OpenAsync(string path, TimeSpan position, bool play, Func<Task> attachPlayer, CancellationToken cancellationToken)
+        public Exception? StartError { get; init; }
+        // A real MediaPlayer needs the native runtime; the editor only passes it through to the view.
+        public Task<MediaPlayer> CreatePlayerAsync() { Calls.Add("create"); return Task.FromResult<MediaPlayer>(null!); }
+        public async Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken)
         {
-            Opens++; Closed = false; LastPosition = position; LastPlay = play; return OpenGate;
+            Calls.Add("start");
+            Opens++; Closed = false; LastPosition = position; LastPlay = play;
+            await OpenGate;
+            if (StartError is not null) throw StartError;
         }
-        public Task CloseAsync(Func<Task> detachPlayer) { Closed = true; return Task.CompletedTask; }
+        public Task CloseAsync() { Calls.Add("close"); Closed = true; return Task.CompletedTask; }
         public Task SetPlayingAsync(bool play) { LastPlay = play; return Task.CompletedTask; }
         public Task SeekAsync(TimeSpan position) { LastPosition = position; return Task.CompletedTask; }
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;

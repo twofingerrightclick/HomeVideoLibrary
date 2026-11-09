@@ -46,7 +46,7 @@
             <DataTemplate x:DataType="vm:ChapterEditorViewModel">
               <StackPanel Spacing="8" Margin="0,0,0,20">
                 <TextBlock Text="Chapter start · seconds, m:ss or h:mm:ss"/>
-                <TextBox Text="{Binding Position, Mode=TwoWay}" Watermark="0:00:00.000" AutomationProperties.Name="Chapter start time" />
+                <TextBox Text="{Binding StartText, Mode=TwoWay}" Watermark="0:00:00.000" AutomationProperties.Name="Chapter start time" />
                 <TextBlock Text="Chapter title"/>
                 <TextBox Text="{Binding Title, Mode=TwoWay}" AutomationProperties.Name="Chapter title" />
                 <TextBlock Text="Chapter description"/>
