@@ -1,21 +1,31 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
 public sealed partial class MainWindow : Window
 {
+    private bool _allowClose;
+    private bool _closeRequested;
     public MainWindow()
     {
         InitializeComponent();
         Opened += async (_, _) => await ViewModel.RestoreLibraryAsync();
-        Closing += (_, args) =>
+        AddHandler(KeyDownEvent, MarkerKeyDown, RoutingStrategies.Bubble);
+        Closing += async (_, args) =>
         {
-            if (!ViewModel.IsBusy) return;
-            ViewModel.CancelImport();
+            if (_allowClose) return;
+            if (ViewModel.IsBusy) { ViewModel.CancelImport(); args.Cancel = true; return; }
+            if (ViewModel.Editor is null) return;
             args.Cancel = true;
+            if (ViewModel.Editor.IsBusy) return;
+            _closeRequested = true;
+            if (await ViewModel.CloseEditorAsync()) { _allowClose = true; Close(); }
         };
     }
 
@@ -37,4 +47,36 @@ public sealed partial class MainWindow : Window
     }
 
     private void CancelClicked(object? sender, RoutedEventArgs args) => ViewModel.CancelImport();
+    private async void VideoDoubleTapped(object? sender, TappedEventArgs args)
+    {
+        if (sender is ListBox { SelectedItem: LibraryVideo video }) await ViewModel.OpenVideoAsync(video);
+    }
+    private async void VideoListKeyDown(object? sender, KeyEventArgs args)
+    {
+        if (args.Key == Key.Enter && sender is ListBox { SelectedItem: LibraryVideo video })
+        {
+            args.Handled = true;
+            await ViewModel.OpenVideoAsync(video);
+        }
+    }
+    private async void BackClicked(object? sender, RoutedEventArgs args) => await ViewModel.CloseEditorAsync();
+    private async void DiscardClicked(object? sender, RoutedEventArgs args)
+    {
+        if (await ViewModel.CloseEditorAsync(discard: true) && _closeRequested) { _allowClose = true; Close(); }
+    }
+    private async void SaveAndLeaveClicked(object? sender, RoutedEventArgs args)
+    {
+        if (ViewModel.Editor is { } editor) await editor.SaveAsync();
+        if (ViewModel.Editor?.IsDirty == false && await ViewModel.CloseEditorAsync() && _closeRequested) { _allowClose = true; Close(); }
+    }
+    private void KeepEditingClicked(object? sender, RoutedEventArgs args) { _closeRequested = false; ViewModel.KeepEditing(); }
+    private void MarkerKeyDown(object? sender, KeyEventArgs args)
+    {
+        if (ViewModel.Editor is not { } editor) return;
+        var focused = FocusManager?.GetFocusedElement() as Control;
+        var textInput = focused is TextBox || focused?.FindAncestorOfType<TextBox>() is not null;
+        if (!VideoEditorViewModel.ShouldAddMarker(args.Key == Key.M, args.KeyModifiers != KeyModifiers.None, textInput, editor.IsBusy)) return;
+        editor.AddChapter();
+        args.Handled = true;
+    }
 }

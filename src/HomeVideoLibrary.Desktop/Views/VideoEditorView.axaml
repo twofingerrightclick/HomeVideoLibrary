@@ -1,0 +1,78 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
+             xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoEditorView"
+             x:DataType="vm:VideoEditorViewModel">
+  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="20">
+    <Grid RowDefinitions="*,Auto,Auto" RowSpacing="12">
+      <Border Background="Black" MinHeight="180">
+        <vlc:VideoView MediaPlayer="{Binding Player}" />
+      </Border>
+      <StackPanel Grid.Row="1" Spacing="12">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <Slider x:Name="SeekSlider" Minimum="0" Maximum="{Binding Duration}" Value="{Binding SeekPosition, Mode=TwoWay}" AutomationProperties.Name="Video seek position in seconds" />
+          <Button Grid.Column="1" Content="Seek" Click="SeekClicked" IsEnabled="{Binding !IsBusy}" />
+        </Grid>
+        <WrapPanel>
+          <Button Content="{Binding PlayLabel}" Click="PlayClicked" IsEnabled="{Binding !IsBusy}" Margin="0,0,12,8" />
+          <Button Content="Add chapter (M)" Click="AddChapterClicked" IsEnabled="{Binding CanEdit}" Margin="0,0,12,8" />
+          <ToggleButton Content="Video details" IsChecked="{Binding IsInspectorOpen, Mode=TwoWay}" Margin="0,0,12,8" />
+          <TextBlock Text="{Binding TimeLabel}" VerticalAlignment="Center" Margin="0,0,12,8" />
+          <TextBlock Text="Volume" VerticalAlignment="Center" Margin="0,0,8,8" />
+          <Slider Width="110" Minimum="0" Maximum="100" Value="{Binding Volume, Mode=TwoWay}" PropertyChanged="VolumeChanged" AutomationProperties.Name="Playback volume" />
+        </WrapPanel>
+      </StackPanel>
+      <StackPanel Grid.Row="2" Spacing="8">
+        <Button Content="Cancel current operation" Click="CancelOperationClicked" IsVisible="{Binding IsBusy}" />
+        <ScrollViewer MaxHeight="140"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#CBD0D8" /></ScrollViewer>
+      </StackPanel>
+    </Grid>
+    <ScrollViewer Grid.Column="1" Width="340" IsVisible="{Binding IsInspectorOpen}">
+      <StackPanel Spacing="10" IsEnabled="{Binding CanEdit}">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="Video details" FontSize="22" FontWeight="SemiBold" />
+          <TextBlock Grid.Column="1" Text="Unsaved" IsVisible="{Binding IsDirty}" Foreground="#F0CE8B" VerticalAlignment="Center" />
+        </Grid>
+        <TextBlock Text="Title" /><TextBox Text="{Binding Title, Mode=TwoWay}" AutomationProperties.Name="Video title" />
+        <TextBlock Text="Description" /><TextBox Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap" AutomationProperties.Name="Video description" />
+        <TextBlock Text="Tags · one per line" /><TextBox Text="{Binding Tags, Mode=TwoWay}" AcceptsReturn="True" MinHeight="62" AutomationProperties.Name="Video tags, one per line" />
+        <TextBlock Text="Recorded date (ISO, optional)" /><TextBox Text="{Binding RecordedAt, Mode=TwoWay}" Watermark="1997-07-03" AutomationProperties.Name="Recorded date" />
+        <Button Content="Save changes to MKV" Click="SaveClicked" HorizontalAlignment="Stretch" Margin="0,4,0,16" />
+        <TextBlock Text="Chapters" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Text="Add a chapter while watching, then describe it here." TextWrapping="Wrap" Foreground="#B8BEC8" />
+        <ItemsControl ItemsSource="{Binding Chapters}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ChapterEditorViewModel">
+              <StackPanel Spacing="8" Margin="0,0,0,20">
+                <TextBox Text="{Binding Position, Mode=TwoWay}" Watermark="00:00:00" AutomationProperties.Name="Chapter start time" />
+                <TextBox Text="{Binding Title, Mode=TwoWay}" AutomationProperties.Name="Chapter title" />
+                <TextBox Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" AutomationProperties.Name="Chapter description" />
+                <TextBox Text="{Binding Tags, Mode=TwoWay}" AcceptsReturn="True" Watermark="Tags, one per line" AutomationProperties.Name="Chapter tags, one per line" />
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Content="Go to chapter" Click="ChapterSeekClicked" />
+                  <Button Content="Remove" Click="ChapterRemoveClicked" />
+                </StackPanel>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <TextBlock Text="Chosen thumbnails" FontSize="20" FontWeight="SemiBold" />
+        <Button Content="Capture current frame (up to 20)" Click="CaptureClicked" IsEnabled="{Binding CanCapture}" />
+        <ItemsControl ItemsSource="{Binding Thumbnails}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ThumbnailEditorViewModel">
+              <StackPanel Spacing="8" Margin="0,0,0,16">
+                <Image Source="{Binding Image}" Height="130" Stretch="Uniform" />
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="{Binding Position}" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="Remove" Click="ThumbnailRemoveClicked" />
+                </Grid>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

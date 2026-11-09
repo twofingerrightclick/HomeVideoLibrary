@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure;
+using HomeVideoLibrary.Desktop.Playback;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
@@ -15,6 +16,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _status = "Your original files stay untouched.";
     private bool _isBusy;
     private double _progress;
+    private VideoEditorViewModel? _editor;
+    private bool _closeWarning;
+    private bool _editorClosing;
 
     public ObservableCollection<LibraryVideo> Videos { get; } = [];
     public string LibraryRoot { get => _libraryRoot; private set => SetProperty(ref _libraryRoot, value); }
@@ -22,6 +26,31 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); } }
     public bool CanImport => _catalog is not null && !IsBusy;
     public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
+    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); } }
+    public bool HasEditor => Editor is not null;
+    public bool CloseWarning { get => _closeWarning; private set => SetProperty(ref _closeWarning, value); }
+
+    public async Task OpenVideoAsync(LibraryVideo video)
+    {
+        if (_catalog is null || IsBusy || Editor is not null) return;
+        Editor = new VideoEditorViewModel(video, _catalog.GetVideoPath(video.RelativePath),
+            new MatroskaMetadataService(_catalog, MediaTools.Discover()), new LibVlcPlayback());
+        await Editor.LoadAsync();
+    }
+
+    public async Task<bool> CloseEditorAsync(bool discard = false)
+    {
+        if (Editor is not { } editor) return true;
+        if (editor.IsBusy || _editorClosing) return false;
+        if (editor.IsDirty && !discard) { CloseWarning = true; return false; }
+        CloseWarning = false;
+        _editorClosing = true;
+        try { await editor.DisposeAsync(); Editor = null; }
+        finally { _editorClosing = false; }
+        return true;
+    }
+
+    public void KeepEditing() => CloseWarning = false;
 
     public async Task RestoreLibraryAsync()
     {
@@ -40,7 +69,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public async Task OpenLibraryAsync(string root)
     {
-        if (IsBusy) return;
+        if (IsBusy || HasEditor) return;
         IsBusy = true;
         try
         {

@@ -9,5 +9,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
     <ProjectReference Include="../../src/HomeVideoLibrary.Core/HomeVideoLibrary.Core.csproj" />
     <ProjectReference Include="../../src/HomeVideoLibrary.Infrastructure/HomeVideoLibrary.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/HomeVideoLibrary.Desktop/HomeVideoLibrary.Desktop.csproj" />
   </ItemGroup>
 </Project>

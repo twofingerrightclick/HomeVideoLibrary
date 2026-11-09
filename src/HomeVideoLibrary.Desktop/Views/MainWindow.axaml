@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
         xmlns:core="using:HomeVideoLibrary.Core"
+        xmlns:views="using:HomeVideoLibrary.Desktop.Views"
         x:Class="HomeVideoLibrary.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding Title}"
@@ -9,7 +10,7 @@
         Background="#17191C">
   <Grid ColumnDefinitions="220,*">
     <Border Background="#1E2024" BorderBrush="#303239" BorderThickness="0,0,1,0" Padding="24,32">
-      <StackPanel Spacing="24">
+      <StackPanel Spacing="24" IsEnabled="{Binding !HasEditor}">
         <TextBlock Text="HOME VIDEO LIBRARY" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock Text="Library" FontSize="16" Foreground="#D8DCE3" />
         <Button Content="Choose library folder" Click="ChooseLibraryClicked" IsEnabled="{Binding !IsBusy}" />
@@ -20,11 +21,22 @@
       <StackPanel Spacing="14" Margin="0,0,0,24">
         <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
         <StackPanel Orientation="Horizontal" Spacing="12">
-          <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" />
+          <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}" />
+          <Button Content="Back to library" Click="BackClicked" IsVisible="{Binding HasEditor}" />
           <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}" />
         </StackPanel>
+        <Border IsVisible="{Binding CloseWarning}" Padding="12" Background="#363023">
+          <StackPanel Spacing="10">
+            <TextBlock Text="This video has unsaved changes. Save them or discard them before leaving." TextWrapping="Wrap" />
+            <WrapPanel>
+              <Button Content="Save and leave" Click="SaveAndLeaveClicked" Margin="0,0,10,0" />
+              <Button Content="Discard and leave" Click="DiscardClicked" Margin="0,0,10,0" />
+              <Button Content="Keep editing" Click="KeepEditingClicked" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
       </StackPanel>
-      <ListBox Grid.Row="1" ItemsSource="{Binding Videos}" Background="Transparent">
+      <ListBox Grid.Row="1" ItemsSource="{Binding Videos}" Background="Transparent" IsVisible="{Binding !HasEditor}" DoubleTapped="VideoDoubleTapped" KeyDown="VideoListKeyDown">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="core:LibraryVideo">
             <Border Padding="16" Margin="0,0,0,8" Background="#25282D" CornerRadius="6">
@@ -37,6 +49,11 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
+      <ContentControl Grid.Row="1" Content="{Binding Editor}" IsVisible="{Binding HasEditor}">
+        <ContentControl.ContentTemplate>
+          <DataTemplate x:DataType="vm:VideoEditorViewModel"><views:VideoEditorView /></DataTemplate>
+        </ContentControl.ContentTemplate>
+      </ContentControl>
       <StackPanel Grid.Row="2" Spacing="12" Margin="0,20,0,0">
         <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" IsVisible="{Binding IsBusy}" />
         <ScrollViewer MaxHeight="140"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#A3AAB5" /></ScrollViewer>
