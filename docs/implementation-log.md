@@ -59,3 +59,11 @@ Focused verification passed the two new real-MKV regressions (collection/season/
 - Native discovery honors `HOME_VIDEO_LIBRARY_LIBVLC` and startup `VLC_PLUGIN_PATH`; macOS can use an installed app's runtime as a development fallback. The VLC GUI is optional; only the native engine/plugins are required.
 - Applied the diagnosing-bugs skill to a reproducible native startup failure: LibVLC searched the absent `MacOS/lib/vlc/plugins` directory. A shell plugin path made the same harness pass; managed environment changes alone did not. Minimal platform-specific native `setenv` now configures the discovered macOS plugins before LibVLC initialization. Another harness finding fixed stop-before-detach ordering, removing native no-drawable errors.
 - Verification: affected Desktop build passed with zero warnings/errors; fifteen focused `EditorTests` passed (dirty state, chapter edits, save release/resume ordering, failure/cancellation retention, shortcut rules, seek bounds). An actual Avalonia VideoView smoke harness on macOS ARM64 confirmed a nonzero native view, displayed video frame statistics, advancing playback, seek, chapter add, frame capture, metadata save, and displayed frames after reopening. No unrelated tests rerun. Windows/Linux native UI still require verification.
+
+### Stage 4 review fixes: scoped exit intent and discoverable playback
+
+Terra found that a deferred window-close intent could survive leaving an editor through Back and later close the application from another video's confirmation. Exit destination now belongs to the view model's editor navigation state. A fresh Back request overrides a window request; Keep editing cancels it; completed editor closure consumes and clears it. The view closes the window only for an explicit returned Window destination.
+
+The library now exposes a visible, keyboard-accessible **Open selected video** action, enabled only with a selection. Selection remains separate from playback for the upcoming album multi-selection flow. Double-click and Enter remain shortcuts.
+
+Three focused `EditorNavigationTests` passed, covering the reported cross-editor close sequence, completed/cancelled exit reset, and selected-action availability. The affected Desktop compiled with zero warnings/errors as part of this run. No unrelated tests were rerun.

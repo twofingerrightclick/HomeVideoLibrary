@@ -28,7 +28,7 @@ The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.ca
 
 ## Play and annotate
 
-Double-click a video, or select it and press Enter, to open the embedded player. Play/pause, seek with the timeline (or the Seek button), adjust volume, and toggle **Video details**. Press **M** outside a text field to add a chapter at the current position. The inspector edits video title/description, tags (one per line), optional ISO recording date, and chapter start/title/description/tags. Chapters have **Go to chapter** and **Remove** actions.
+Select a video and choose **Open selected video**, double-click it, or press Enter to open the embedded player. Play/pause, seek with the timeline (or the Seek button), adjust volume, and toggle **Video details**. Press **M** outside a text field to add a chapter at the current position. The inspector edits video title/description, tags (one per line), optional ISO recording date, and chapter start/title/description/tags. Chapters have **Go to chapter** and **Remove** actions.
 
 **Capture current frame** chooses a thumbnail at the playback position, up to twenty. **Save changes to MKV** embeds the edits and images in the video. Save stops/releases playback before replacing the file, then restores position and the prior play/pause state. Errors retain dirty edits. **Cancel current operation** cancels loading, saving, or frame extraction. Returning to the library or closing with unsaved changes offers Save, Discard, or Keep editing.
 

@@ -19,14 +19,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     private VideoEditorViewModel? _editor;
     private bool _closeWarning;
     private bool _editorClosing;
+    private readonly EditorExitState _exitState = new();
+    private LibraryVideo? _selectedVideo;
 
     public ObservableCollection<LibraryVideo> Videos { get; } = [];
     public string LibraryRoot { get => _libraryRoot; private set => SetProperty(ref _libraryRoot, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
-    public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); } }
+    public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(CanOpenSelected)); } }
     public bool CanImport => _catalog is not null && !IsBusy;
     public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
-    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); } }
+    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(CanOpenSelected)); } }
+    public LibraryVideo? SelectedVideo { get => _selectedVideo; set { SetProperty(ref _selectedVideo, value); OnPropertyChanged(nameof(CanOpenSelected)); } }
+    public bool CanOpenSelected => SelectedVideo is not null && !IsBusy && !HasEditor;
     public bool HasEditor => Editor is not null;
     public bool CloseWarning { get => _closeWarning; private set => SetProperty(ref _closeWarning, value); }
 
@@ -38,19 +42,29 @@ public sealed class MainWindowViewModel : ViewModelBase
         await Editor.LoadAsync();
     }
 
-    public async Task<bool> CloseEditorAsync(bool discard = false)
+    public Task OpenSelectedAsync() => SelectedVideo is { } video ? OpenVideoAsync(video) : Task.CompletedTask;
+
+    public Task<EditorExitDestination> RequestCloseEditorAsync(bool closeWindow = false)
     {
-        if (Editor is not { } editor) return true;
-        if (editor.IsBusy || _editorClosing) return false;
-        if (editor.IsDirty && !discard) { CloseWarning = true; return false; }
+        _exitState.Request(closeWindow ? EditorExitDestination.Window : EditorExitDestination.Library);
+        return CloseEditorAsync(discard: false);
+    }
+
+    public Task<EditorExitDestination> ConfirmCloseEditorAsync(bool discard) => CloseEditorAsync(discard);
+
+    private async Task<EditorExitDestination> CloseEditorAsync(bool discard)
+    {
+        if (Editor is not { } editor) return _exitState.Complete();
+        if (editor.IsBusy || _editorClosing) return EditorExitDestination.Stay;
+        if (editor.IsDirty && !discard) { CloseWarning = true; return EditorExitDestination.Stay; }
         CloseWarning = false;
         _editorClosing = true;
         try { await editor.DisposeAsync(); Editor = null; }
         finally { _editorClosing = false; }
-        return true;
+        return _exitState.Complete();
     }
 
-    public void KeepEditing() => CloseWarning = false;
+    public void KeepEditing() { CloseWarning = false; _exitState.Cancel(); }
 
     public async Task RestoreLibraryAsync()
     {
@@ -80,6 +94,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             _catalog = catalog;
             LibraryRoot = catalog.Paths.RootDirectory;
             Videos.Clear();
+            SelectedVideo = null;
             foreach (var video in videos) Videos.Add(video);
             Status = $"{Videos.Count} videos in your library";
         }

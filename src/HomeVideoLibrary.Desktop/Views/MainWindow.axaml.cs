@@ -11,7 +11,6 @@ namespace HomeVideoLibrary.Desktop.Views;
 public sealed partial class MainWindow : Window
 {
     private bool _allowClose;
-    private bool _closeRequested;
     public MainWindow()
     {
         InitializeComponent();
@@ -24,8 +23,7 @@ public sealed partial class MainWindow : Window
             if (ViewModel.Editor is null) return;
             args.Cancel = true;
             if (ViewModel.Editor.IsBusy) return;
-            _closeRequested = true;
-            if (await ViewModel.CloseEditorAsync()) { _allowClose = true; Close(); }
+            CloseWindowIfRequested(await ViewModel.RequestCloseEditorAsync(closeWindow: true));
         };
     }
 
@@ -59,17 +57,24 @@ public sealed partial class MainWindow : Window
             await ViewModel.OpenVideoAsync(video);
         }
     }
-    private async void BackClicked(object? sender, RoutedEventArgs args) => await ViewModel.CloseEditorAsync();
+    private async void OpenSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenSelectedAsync();
+    private async void BackClicked(object? sender, RoutedEventArgs args) => await ViewModel.RequestCloseEditorAsync();
     private async void DiscardClicked(object? sender, RoutedEventArgs args)
     {
-        if (await ViewModel.CloseEditorAsync(discard: true) && _closeRequested) { _allowClose = true; Close(); }
+        CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: true));
     }
     private async void SaveAndLeaveClicked(object? sender, RoutedEventArgs args)
     {
         if (ViewModel.Editor is { } editor) await editor.SaveAsync();
-        if (ViewModel.Editor?.IsDirty == false && await ViewModel.CloseEditorAsync() && _closeRequested) { _allowClose = true; Close(); }
+        if (ViewModel.Editor?.IsDirty == false) CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: false));
     }
-    private void KeepEditingClicked(object? sender, RoutedEventArgs args) { _closeRequested = false; ViewModel.KeepEditing(); }
+    private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.KeepEditing();
+    private void CloseWindowIfRequested(EditorExitDestination destination)
+    {
+        if (destination != EditorExitDestination.Window) return;
+        _allowClose = true;
+        Close();
+    }
     private void MarkerKeyDown(object? sender, KeyEventArgs args)
     {
         if (ViewModel.Editor is not { } editor) return;

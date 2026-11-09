@@ -22,6 +22,7 @@
         <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
         <StackPanel Orientation="Horizontal" Spacing="12">
           <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}" />
+          <Button Content="Open selected video" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" IsVisible="{Binding !HasEditor}" />
           <Button Content="Back to library" Click="BackClicked" IsVisible="{Binding HasEditor}" />
           <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}" />
         </StackPanel>
@@ -36,7 +37,7 @@
           </StackPanel>
         </Border>
       </StackPanel>
-      <ListBox Grid.Row="1" ItemsSource="{Binding Videos}" Background="Transparent" IsVisible="{Binding !HasEditor}" DoubleTapped="VideoDoubleTapped" KeyDown="VideoListKeyDown">
+      <ListBox Grid.Row="1" ItemsSource="{Binding Videos}" SelectedItem="{Binding SelectedVideo, Mode=TwoWay}" Background="Transparent" IsVisible="{Binding !HasEditor}" DoubleTapped="VideoDoubleTapped" KeyDown="VideoListKeyDown">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="core:LibraryVideo">
             <Border Padding="16" Margin="0,0,0,8" Background="#25282D" CornerRadius="6">
