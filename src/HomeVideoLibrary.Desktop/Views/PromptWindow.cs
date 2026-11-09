@@ -53,23 +53,3 @@ public sealed class PromptWindow<TAnswer> : Window
         return result is TAnswer answer ? answer : Dismissed;
     }
 }
-
-/// <summary>The app's <see cref="IInteraction"/>: modal <see cref="PromptWindow{TAnswer}"/>s over the main window.</summary>
-public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
-{
-    public Task<LeaveChoice> AskLeaveAsync(string title)
-    {
-        if (owner() is not { } window) return Task.FromResult(LeaveChoice.KeepEditing);
-        return new PromptWindow<LeaveChoice>("UNSAVED CHANGES",
-            $"“{title}” has changes that are not saved in the video file yet.", LeaveChoice.KeepEditing,
-            [
-                new("KEEP EDITING", LeaveChoice.KeepEditing, IsCancel: true),
-                new("DISCARD", LeaveChoice.Discard, "destructive"),
-                new("SAVE AND LEAVE", LeaveChoice.Save, "primary", IsDefault: true),
-            ]).AskAsync(window);
-    }
-
-    public Task ShowErrorAsync(string title, string message) => owner() is { } window
-        ? new PromptWindow<bool>(title, message, true, [new("OK", true, "primary", IsDefault: true, IsCancel: true)]).AskAsync(window)
-        : Task.CompletedTask;
-}
