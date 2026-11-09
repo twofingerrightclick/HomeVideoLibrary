@@ -9,5 +9,7 @@ public sealed record GallerySection(string Key, string Title, Func<Control> Crea
     public static IReadOnlyList<GallerySection> All { get; } =
     [
         new("buttons", "Buttons", () => new ButtonsSection()),
+        new("inputs", "Inputs & surfaces", () => new InputsSection()),
+        new("tabs", "Inspector tabs", () => new TabsSection()),
     ];
 }

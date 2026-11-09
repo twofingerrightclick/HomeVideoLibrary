@@ -1,0 +1,141 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Fluent resource keys re-pointed at VCR tokens. VcrTheme is included after FluentTheme, and Styles
+    search their resources last-to-first, so these win for stock TextBox, CheckBox, ToggleSwitch,
+    ScrollBar, menus, and tooltips without replacing their templates.
+  -->
+
+  <!-- Text fields: a recessed dark window with light text and a clear focus edge. -->
+  <StaticResource x:Key="TextControlBackground" ResourceKey="Vcr.Brush.Field"/>
+  <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#16191C"/>
+  <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="Vcr.Brush.Field.Focused"/>
+  <StaticResource x:Key="TextControlBackgroundDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <SolidColorBrush x:Key="TextControlBorderBrush" Color="#08090A"/>
+  <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#3A4046"/>
+  <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="Vcr.Brush.Focus"/>
+  <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="#08090A"/>
+  <StaticResource x:Key="TextControlForeground" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="TextControlForegroundPointerOver" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="TextControlForegroundFocused" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="TextControlForegroundDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="TextControlPlaceholderForeground" ResourceKey="Vcr.Brush.Field.Placeholder"/>
+  <StaticResource x:Key="TextControlPlaceholderForegroundPointerOver" ResourceKey="Vcr.Brush.Field.Placeholder"/>
+  <StaticResource x:Key="TextControlPlaceholderForegroundFocused" ResourceKey="Vcr.Brush.Field.Placeholder"/>
+  <StaticResource x:Key="TextControlPlaceholderForegroundDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="TextControlSelectionHighlightColor" ResourceKey="Vcr.Brush.Selection"/>
+  <StaticResource x:Key="TextControlButtonForeground" ResourceKey="Vcr.Brush.Legend.Dim"/>
+  <StaticResource x:Key="TextControlButtonForegroundPointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <Thickness x:Key="TextControlBorderThemeThickness">1</Thickness>
+  <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
+  <Thickness x:Key="TextControlThemePadding">10,7,10,7</Thickness>
+  <x:Double x:Key="TextControlThemeMinHeight">34</x:Double>
+
+  <!-- Check boxes: a recessed square whose check lights like a green LED. -->
+  <StaticResource x:Key="CheckBoxForegroundUnchecked" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundUncheckedPointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundUncheckedPressed" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundUncheckedDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="CheckBoxForegroundChecked" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundCheckedPointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundCheckedPressed" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundCheckedDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="CheckBoxForegroundIndeterminate" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundIndeterminatePointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundIndeterminatePressed" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="CheckBoxForegroundIndeterminateDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillUnchecked" ResourceKey="Vcr.Brush.Field"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillUncheckedPointerOver" Color="#191C1F"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillUncheckedPressed" ResourceKey="Vcr.Brush.Chassis.Deep"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillUncheckedDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillChecked" ResourceKey="Vcr.Brush.Field"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="#191C1F"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillCheckedPressed" ResourceKey="Vcr.Brush.Chassis.Deep"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillCheckedDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillIndeterminate" ResourceKey="Vcr.Brush.Field"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillIndeterminatePointerOver" Color="#191C1F"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillIndeterminatePressed" ResourceKey="Vcr.Brush.Chassis.Deep"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundFillIndeterminateDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked" Color="#454B51"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver" Color="#5C646B"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed" Color="#5C646B"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled" Color="#2C3034"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeChecked" ResourceKey="Vcr.Brush.Green"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" ResourceKey="Vcr.Brush.Green.Led"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" ResourceKey="Vcr.Brush.Green"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedDisabled" Color="#2C3034"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeIndeterminate" ResourceKey="Vcr.Brush.Amber"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePointerOver" ResourceKey="Vcr.Brush.Amber"/>
+  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePressed" ResourceKey="Vcr.Brush.Amber"/>
+  <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminateDisabled" Color="#2C3034"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundChecked" ResourceKey="Vcr.Brush.Green.Led"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" ResourceKey="Vcr.Brush.Green.Led"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" ResourceKey="Vcr.Brush.Green"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundCheckedDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminate" ResourceKey="Vcr.Brush.Amber"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver" ResourceKey="Vcr.Brush.Amber"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed" ResourceKey="Vcr.Brush.Amber"/>
+  <StaticResource x:Key="CheckBoxCheckGlyphForegroundIndeterminateDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+
+  <!-- Toggle switches: the slide selector from the remote's TV/VIDEO switch, lit green when on. -->
+  <StaticResource x:Key="ToggleSwitchContentForeground" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="ToggleSwitchFillOff" ResourceKey="Vcr.Brush.Field"/>
+  <SolidColorBrush x:Key="ToggleSwitchFillOffPointerOver" Color="#191C1F"/>
+  <StaticResource x:Key="ToggleSwitchFillOffPressed" ResourceKey="Vcr.Brush.Chassis.Deep"/>
+  <StaticResource x:Key="ToggleSwitchFillOffDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="#454B51"/>
+  <SolidColorBrush x:Key="ToggleSwitchStrokeOffPointerOver" Color="#5C646B"/>
+  <SolidColorBrush x:Key="ToggleSwitchStrokeOffPressed" Color="#5C646B"/>
+  <SolidColorBrush x:Key="ToggleSwitchStrokeOffDisabled" Color="#2C3034"/>
+  <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="#8F969B"/>
+  <SolidColorBrush x:Key="ToggleSwitchKnobFillOffPointerOver" Color="#B4BBBF"/>
+  <SolidColorBrush x:Key="ToggleSwitchKnobFillOffPressed" Color="#C9CED1"/>
+  <StaticResource x:Key="ToggleSwitchKnobFillOffDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#174D30"/>
+  <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#1B5C39"/>
+  <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="#13412A"/>
+  <StaticResource x:Key="ToggleSwitchFillOnDisabled" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <StaticResource x:Key="ToggleSwitchStrokeOn" ResourceKey="Vcr.Brush.Green"/>
+  <StaticResource x:Key="ToggleSwitchStrokeOnPointerOver" ResourceKey="Vcr.Brush.Green.Led"/>
+  <StaticResource x:Key="ToggleSwitchStrokeOnPressed" ResourceKey="Vcr.Brush.Green"/>
+  <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="#2C3034"/>
+  <StaticResource x:Key="ToggleSwitchKnobFillOn" ResourceKey="Vcr.Brush.Green.Led"/>
+  <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#7BF0AC"/>
+  <StaticResource x:Key="ToggleSwitchKnobFillOnPressed" ResourceKey="Vcr.Brush.Green"/>
+  <StaticResource x:Key="ToggleSwitchKnobFillOnDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+
+  <!-- Scroll bars: a dark groove with a plastic thumb. -->
+  <SolidColorBrush x:Key="ScrollBarTrackFill" Color="#0E1011"/>
+  <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="#0E1011"/>
+  <SolidColorBrush x:Key="ScrollBarTrackStroke" Color="Transparent"/>
+  <SolidColorBrush x:Key="ScrollBarTrackStrokePointerOver" Color="Transparent"/>
+  <Color x:Key="ScrollBarThumbBackgroundColor">#4D5359</Color>
+  <SolidColorBrush x:Key="ScrollBarPanningThumbBackground" Color="#4D5359"/>
+  <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#646B72"/>
+  <SolidColorBrush x:Key="ScrollBarThumbFillPressed" Color="#7A8289"/>
+  <SolidColorBrush x:Key="ScrollBarThumbFillDisabled" Color="#2C3034"/>
+  <StaticResource x:Key="ScrollBarButtonArrowForeground" ResourceKey="Vcr.Brush.Legend.Dim"/>
+  <StaticResource x:Key="ScrollBarButtonArrowForegroundPointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="ScrollBarButtonArrowForegroundPressed" ResourceKey="Vcr.Brush.Legend"/>
+
+  <!-- Menus and flyouts: a raised chassis plate; the hovered row takes the selection tint. -->
+  <StaticResource x:Key="MenuFlyoutPresenterBackground" ResourceKey="Vcr.Brush.Chassis.Raised"/>
+  <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#08090A"/>
+  <Thickness x:Key="MenuFlyoutPresenterThemePadding">4</Thickness>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent"/>
+  <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="Vcr.Brush.Selection"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPressed" Color="#33586A"/>
+  <SolidColorBrush x:Key="MenuFlyoutItemBackgroundDisabled" Color="Transparent"/>
+  <StaticResource x:Key="MenuFlyoutItemForeground" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="MenuFlyoutItemForegroundPointerOver" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="MenuFlyoutItemForegroundPressed" ResourceKey="Vcr.Brush.Field.Text"/>
+  <StaticResource x:Key="MenuFlyoutItemForegroundDisabled" ResourceKey="Vcr.Brush.Legend.Disabled"/>
+  <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" ResourceKey="Vcr.Brush.Legend.Dim"/>
+  <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Vcr.Brush.Legend"/>
+  <StaticResource x:Key="MenuFlyoutSubItemChevron" ResourceKey="Vcr.Brush.Legend.Dim"/>
+
+  <!-- Tooltips: a small smoked display window. -->
+  <StaticResource x:Key="ToolTipBackground" ResourceKey="Vcr.Brush.Glass"/>
+  <StaticResource x:Key="ToolTipForeground" ResourceKey="Vcr.Brush.Legend"/>
+  <SolidColorBrush x:Key="ToolTipBorderBrush" Color="#2C3136"/>
+</ResourceDictionary>

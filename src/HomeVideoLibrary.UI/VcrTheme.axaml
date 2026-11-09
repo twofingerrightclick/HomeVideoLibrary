@@ -4,7 +4,7 @@
     Entry point. Include after FluentTheme:
       <FluentTheme/>
       <StyleInclude Source="avares://HomeVideoLibrary.UI/VcrTheme.axaml"/>
-    Resources here are searched before Fluent's, so the Fluent keys overridden in FluentOverrides.axaml
+    Resources here are searched before Fluent's, so the Fluent keys overridden in FluentResources.axaml
     restyle stock controls, and the type-keyed ControlThemes supply this library's controls.
   -->
   <Styles.Resources>
@@ -12,7 +12,10 @@
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Tokens.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Icons.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/FluentResources.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Buttons.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Panels.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Tabs.axaml"/>
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>
@@ -23,4 +26,10 @@
   <Style Selector="ToggleButton">
     <Setter Property="Theme" Value="{StaticResource Vcr.Theme.LatchButton}"/>
   </Style>
+  <Style Selector="TabControl.inspector">
+    <Setter Property="Theme" Value="{StaticResource Vcr.Theme.InspectorTabControl}"/>
+  </Style>
+
+  <StyleInclude Source="avares://HomeVideoLibrary.UI/Themes/StockControls.axaml"/>
+  <StyleInclude Source="avares://HomeVideoLibrary.UI/Themes/Surfaces.axaml"/>
 </Styles>
