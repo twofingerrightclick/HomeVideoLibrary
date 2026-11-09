@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Infrastructure;
 using LibVLCSharp.Shared;
 using Xunit;
@@ -92,6 +93,30 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
+    public async Task MergeOpensItsPageAndClosingTheWindowCancelsARunningMerge()
+    {
+        var catalog = await CreateCatalogAsync(Library.RootDirectory);
+        await AddVideoAsync(catalog, "first");
+        await AddVideoAsync(catalog, "second");
+        var viewModel = NewViewModel();
+        await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
+        await viewModel.Settings.RefreshIndexAsync();
+        foreach (var tape in viewModel.Shelf.Tapes) tape.IsSelected = true;
+
+        await viewModel.MergeSelectedCommand.ExecuteAsync();
+        var merge = Assert.IsType<MergePageViewModel>(viewModel.Page);
+        Assert.Equal(2, merge.Sources.Count);
+        var run = merge.SaveCommand.ExecuteAsync();
+        Assert.True(merge.IsBusy);
+        Assert.False(await viewModel.NavigateAsync(() => null)); // Back keeps a running merge.
+
+        Assert.True(await viewModel.RequestCloseAsync());
+        await run;
+        Assert.Null(viewModel.Page);
+        Assert.Equal(ClipEditRun.CancelledStatus, merge.Run.Status);
+    }
+
+    [Fact]
     public async Task CleanEditorClosesWithoutAsking()
     {
         var viewModel = await OpenEditorAsync();
@@ -168,8 +193,12 @@ public sealed class EditorNavigationTests : IDisposable
         }
         public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
             IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public async Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return [];
+        }
     }
 
     private sealed class Metadata : IVideoMetadataService

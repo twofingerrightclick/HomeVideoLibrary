@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Audio;
 using HomeVideoLibrary.UI.Logic;
@@ -73,7 +74,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         PlaySelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record) : Task.CompletedTask,
             () => Shelf.HasSelection, context: "Open video");
         TrimSelectedCommand = new AsyncCommand(_ => OpenClipEditorAsync(), () => Shelf.SelectedCount == 1 && CanEditClips, context: "Trim or split");
-        MergeSelectedCommand = new AsyncCommand(_ => OpenClipEditorAsync(), () => Shelf.SelectedCount >= 2 && CanEditClips, context: "Merge");
+        MergeSelectedCommand = new AsyncCommand(_ => OpenMergeAsync(), () => Shelf.SelectedCount >= 2 && CanEditClips, context: "Merge");
         BackCommand = new AsyncCommand(_ => NavigateAsync(() => null), () => Page is not null, context: "Back to library");
         FocusSearchCommand = new AsyncCommand(_ => FocusSearchAsync(), context: "Search");
     }
@@ -175,6 +176,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         return NavigateAsync(() => new ClipEditorPage(new ClipEditorViewModel(sources, _dependencies.CreateClipEditing(model.Catalog),
             outputs => PublishOutputsAsync(model, outputs))));
     }
+
+    /// <summary>Opens the merge page for the selected videos, in shelf order.</summary>
+    public Task OpenMergeAsync()
+    {
+        if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
+        var sources = Shelf.SelectedRecords.Select(record => record.ToLibraryVideo()).ToArray();
+        return NavigateAsync(() => new MergePageViewModel(sources, _dependencies.CreateClipEditing(model.Catalog),
+            outputs => PublishOutputsAsync(model, outputs), OpenNewVideoAsync, () => NavigateAsync(() => null)));
+    }
+
+    /// <summary>Opens a video an edit just created, from its catalog record once the library has published it.</summary>
+    private Task OpenNewVideoAsync(LibraryVideo video) =>
+        _model?.Snapshot.Find(video.Id) is { } record ? OpenVideoAsync(record) : Task.CompletedTask;
 
     private static async Task PublishOutputsAsync(LibraryModel model, IReadOnlyList<LibraryVideo> videos)
     {
