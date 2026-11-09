@@ -5,8 +5,9 @@ using Avalonia.Media;
 namespace HomeVideoLibrary.UI.Controls;
 
 /// <summary>
-/// Soft matte remote-control key poking through a gasket. Style classes: <c>round</c> (circular),
-/// and dome colors <c>red</c>, <c>green</c>, <c>yellow</c>.
+/// Soft matte remote-control key poking through a gasket, for secondary player actions (chapter mark,
+/// menu, small numeric/stepper keys). Style classes: <c>round</c> (circular), and dome colors
+/// <c>red</c>, <c>green</c>, <c>yellow</c>.
 /// </summary>
 public class RubberButton : Button
 {

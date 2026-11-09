@@ -5,8 +5,9 @@ using Avalonia.Media;
 namespace HomeVideoLibrary.UI.Controls;
 
 /// <summary>
-/// Latching key that stays partly depressed and lights its LED while checked. Style class <c>red</c>
-/// switches the LED from green to red.
+/// Latching key for on/off modes (loop, mute, panel visibility) that stays partly depressed and lights
+/// its LED while checked. Stock <c>ToggleButton</c> gets the same look. Style classes: <c>red</c> LED
+/// for record/armed states (default green), sizes <c>toolbar</c> and <c>icon</c>.
 /// </summary>
 public class LatchButton : ToggleButton
 {

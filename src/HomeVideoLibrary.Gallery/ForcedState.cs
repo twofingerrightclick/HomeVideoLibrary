@@ -33,7 +33,19 @@ public sealed class ForcedState
             pseudoClasses.Remove(state);
         }
 
-        foreach (var state in Split(e.NewValue as string))
+        Apply(control);
+
+        // Button resets :pressed from IsPressed once it is loaded, so pin the states again afterwards.
+        control.Loaded -= OnLoaded;
+        control.Loaded += OnLoaded;
+    }
+
+    private static void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Apply((Control)sender!);
+
+    private static void Apply(Control control)
+    {
+        var pseudoClasses = (IPseudoClasses)control.Classes;
+        foreach (var state in Split(GetStates(control)))
         {
             pseudoClasses.Add(state);
         }
