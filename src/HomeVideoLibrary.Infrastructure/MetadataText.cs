@@ -35,14 +35,9 @@ public static class MetadataText
     /// <summary>A single-line label: normalized, with line breaks folded to spaces and surrounding whitespace trimmed.</summary>
     public static string NormalizeTitle(string? text) => Normalize(text).Replace('\n', ' ').Trim();
 
-    /// <summary>Splits on commas and line breaks (Matroska KEYWORDS are comma-separated), trims, drops empties and
-    /// removes case-insensitive duplicates, keeping the first spelling.</summary>
-    public static IReadOnlyList<string> NormalizeTags(IEnumerable<string> tags) => tags
-        .SelectMany(tag => Normalize(tag).Split([',', '\n']))
-        .Select(tag => tag.Trim())
-        .Where(tag => tag.Length > 0)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToArray();
+    /// <summary>XML-safe <see cref="TagRules.Canonicalize"/>: Matroska KEYWORDS are comma-separated, so stored and typed
+    /// values split the same way.</summary>
+    public static IReadOnlyList<string> NormalizeTags(IEnumerable<string> tags) => TagRules.Canonicalize(tags.Select(Normalize));
 
     public static VideoMetadata Normalize(VideoMetadata metadata) => metadata with
     {
