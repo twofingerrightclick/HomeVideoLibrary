@@ -17,6 +17,8 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     private const string ManifestName = "home-video-library.thumbnails.v1.json";
     private const int MaxThumbnails = 20;
     private static readonly TimeSpan ToolTimeout = TimeSpan.FromMinutes(10);
+    // mkvpropedit rewrites only metadata (well under a second on large files); a stall this long means it is stuck mid-write.
+    private static readonly TimeSpan WriteTimeout = TimeSpan.FromMinutes(1);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly MediaProcess _process = process ?? new MediaProcess();
 
@@ -35,7 +37,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             foreach (var warning in state.Warnings) Trace.TraceWarning($"{path}: {warning}");
             return state.Metadata with { Thumbnails = thumbnails };
         }
-        finally { DeleteScratch(scratch); }
+        finally { DeleteDirectory(scratch); }
     }
 
     public async Task<VideoTextMetadata> ReadTextAsync(string mkvPath, CancellationToken cancellationToken = default)
@@ -49,13 +51,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             var duration = state.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : TimeSpan.Zero;
             return new VideoTextMetadata(state.Metadata, state.Manifest.Select(ToRef).ToArray(), duration, state.Warnings);
         }
-        finally { DeleteScratch(scratch); }
+        finally { DeleteDirectory(scratch); }
     }
 
     public async Task SaveAsync(LibraryVideo video, VideoMetadata metadata, CancellationToken cancellationToken = default)
     {
         if (metadata.Thumbnails.Count > MaxThumbnails) throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
-        metadata = MetadataText.Normalize(metadata);
+        metadata = MetadataText.AsStored(metadata);
         var path = catalog.GetVideoPath(video.RelativePath);
         using var _ = await EnterGateAsync(path, cancellationToken);
         var scratch = CreateScratch();
@@ -64,32 +66,9 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             var original = await ReadStateAsync(path, scratch, cancellationToken);
             Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration);
             var plan = await PlanWriteAsync(original, metadata, null, keepThumbnails: false, scratch, cancellationToken);
-            var snapshot = await SnapshotAsync(path, original, plan, scratch, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            // Past this point the file is being modified: finish (sub-second) or roll back, but never stop half way.
-            var result = await RunAsync(tools.MkvPropEdit, [path, .. plan.Arguments], CancellationToken.None, throwOnError: false);
-            if (result.ExitCode >= 2)
-            {
-                Trace.TraceWarning($"In-place metadata write refused for {path}; retrying on a copy. {result.StandardError} {result.StandardOutput}");
-                // A refusal normally happens before anything is written; restore anyway in case it did not.
-                try { await RollBackAsync(path, snapshot, scratch); }
-                catch (InvalidDataException) { }
-                await WriteThroughCopyAsync(path, original, metadata, plan, scratch);
-                return;
-            }
-            try
-            {
-                if (AfterWriteForTesting is { } hook) await hook(path);
-                await VerifyAsync(path, original, metadata, plan, scratch, CancellationToken.None);
-            }
-            catch (Exception exception)
-            {
-                Trace.TraceError($"Metadata write to {path} failed verification; rolling back. {exception}");
-                await RollBackAsync(path, snapshot, scratch);
-                throw;
-            }
+            await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
         }
-        finally { DeleteScratch(scratch); }
+        finally { DeleteDirectory(scratch); }
     }
 
     public async Task WriteStagedAsync(string mkvPath, VideoMetadata metadata, MetadataWriteOptions? options = null,
@@ -98,7 +77,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         options ??= new MetadataWriteOptions();
         if (!options.KeepExistingThumbnails && metadata.Thumbnails.Count > MaxThumbnails)
             throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
-        metadata = MetadataText.Normalize(metadata);
+        metadata = MetadataText.AsStored(metadata);
         var extraTags = options.ExtraGlobalTags.ToDictionary(pair => pair.Key, pair => MetadataText.Normalize(pair.Value));
         var path = Path.GetFullPath(mkvPath);
         using var _ = await EnterGateAsync(path, cancellationToken);
@@ -109,11 +88,11 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             Validate(options.KeepExistingThumbnails ? metadata with { Thumbnails = [] } : metadata,
                 original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : TimeSpan.MaxValue);
             var plan = await PlanWriteAsync(original, metadata, extraTags, options.KeepExistingThumbnails, scratch, cancellationToken);
-            await RunAsync(tools.MkvPropEdit, [path, .. plan.Arguments], cancellationToken);
+            await RunAsync(tools.MkvPropEdit, [path, .. plan.Arguments], cancellationToken, WriteTimeout);
             if (AfterWriteForTesting is { } hook) await hook(path);
             await VerifyAsync(path, original, metadata, plan, scratch, cancellationToken);
         }
-        finally { DeleteScratch(scratch); }
+        finally { DeleteDirectory(scratch); }
     }
 
     public async Task<string> ExtractThumbnailAsync(string mkvPath, Guid videoId, VideoThumbnailRef thumbnail,
@@ -138,7 +117,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             File.Move(extracted, destination, overwrite: true);
             return destination;
         }
-        finally { DeleteScratch(scratch); }
+        finally { DeleteDirectory(scratch); }
     }
 
     public async Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960,
@@ -194,8 +173,6 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         long? duration = properties.ValueKind == JsonValueKind.Object && properties.TryGetProperty("duration", out var value) &&
             value.TryGetInt64(out var nanoseconds) ? nanoseconds : null;
         var title = properties.ValueKind == JsonValueKind.Object && properties.TryGetProperty("title", out var titleValue) ? titleValue.GetString() : null;
-        DateTimeOffset? dateUtc = properties.ValueKind == JsonValueKind.Object && properties.TryGetProperty("date_utc", out var dateValue) &&
-            DateTimeOffset.TryParse(dateValue.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date) ? date : null;
         var tracks = root.TryGetProperty("tracks", out var trackArray)
             ? trackArray.EnumerateArray().Select(track => track.GetRawText()).ToArray() : [];
         var attachments = root.TryGetProperty("attachments", out var attachmentArray)
@@ -205,7 +182,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
                 attachment.TryGetProperty("properties", out var attachmentProperties) && attachmentProperties.TryGetProperty("uid", out var uid)
                     ? uid.GetUInt64() : 0)).ToArray()
             : [];
-        return new ContainerInfo(duration, tracks, attachments, title, dateUtc);
+        return new ContainerInfo(duration, tracks, attachments, title);
     }
 
     /// <summary>One mkvmerge -J plus one mkvextract (tags, chapters and the manifest). Never extracts JPEGs.</summary>
@@ -227,7 +204,6 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         var written = MatroskaMetadataXml.Read(tags, chapters, warnings);
         var metadata = written;
         if (metadata.Title.Length == 0 && !string.IsNullOrEmpty(container.Title)) metadata = metadata with { Title = container.Title };
-        if (metadata.RecordedAt is null && container.DateUtc is { } dateUtc) metadata = metadata with { RecordedAt = dateUtc };
         var manifest = manifests.Length > 0 ? ReadManifest(manifestPath, container, warnings) : [];
         return new MetadataState(path, metadata, written, tags, chapters, File.Exists(tagsPath) ? tagsPath : null,
             File.Exists(chaptersPath) ? chaptersPath : null, container, manifest, warnings);
@@ -307,7 +283,8 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         await File.WriteAllTextAsync(chaptersPath, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + chapters, cancellationToken);
         List<string> arguments = ["--tags", "all:" + tagsPath, "--chapters", chapters.Descendants("ChapterAtom").Any() ? chaptersPath : ""];
         arguments.AddRange(metadata.Title.Length > 0 ? ["--edit", "info", "--set", "title=" + metadata.Title] : ["--edit", "info", "--delete", "title"]);
-        if (keepThumbnails) return new WritePlan(arguments, original.Manifest, [], extraTags ?? new Dictionary<string, string>());
+        extraTags ??= new Dictionary<string, string>();
+        if (keepThumbnails) return new WritePlan(arguments, original.Manifest, TouchesAttachments: false, extraTags);
 
         var manifest = new List<ThumbnailEntry>();
         var additions = new List<string>();
@@ -325,7 +302,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         var owned = OwnedAttachments(original);
         // Text-only edits leave the attachments alone, so they need no snapshot and no rewrite.
         if (manifest.SequenceEqual(original.Manifest) && owned.Length == (manifest.Count == 0 ? 0 : manifest.Count + 1))
-            return new WritePlan(arguments, original.Manifest, [], extraTags ?? new Dictionary<string, string>());
+            return new WritePlan(arguments, original.Manifest, TouchesAttachments: false, extraTags);
         foreach (var attachment in owned)
             arguments.AddRange(["--delete-attachment", attachment.DeleteSelector]);
         arguments.AddRange(additions);
@@ -335,67 +312,14 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest), cancellationToken);
             arguments.AddRange(["--attachment-name", ManifestName, "--attachment-mime-type", "application/json", "--add-attachment", manifestPath]);
         }
-        return new WritePlan(arguments, manifest, owned, extraTags ?? new Dictionary<string, string>());
+        return new WritePlan(arguments, manifest, TouchesAttachments: true, extraTags);
     }
 
     /// <summary>The manifest and the thumbnails the app attached. The <c>hvl-thumbnail-{guid}.jpg</c> naming is the app's own,
     /// so it also identifies thumbnails orphaned by a broken manifest; foreign attachments are never matched.</summary>
-    private static Attachment[] OwnedAttachments(MetadataState state) => state.Container.Attachments
-        .Where(attachment => attachment.Name == ManifestName || OwnedThumbnailName().IsMatch(attachment.Name)).ToArray();
+    private static Attachment[] OwnedAttachments(MetadataState state) => state.Container.Attachments.Where(IsOwned).ToArray();
 
-    private async Task<Snapshot> SnapshotAsync(string path, MetadataState original, WritePlan plan, string scratch, CancellationToken cancellationToken)
-    {
-        var directory = Directory.CreateDirectory(Path.Combine(scratch, "snapshot")).FullName;
-        var attachments = plan.DeletedAttachments
-            .Select(attachment => (attachment, File: Path.Combine(directory, attachment.Id.ToString(CultureInfo.InvariantCulture))))
-            .ToArray();
-        if (attachments.Length > 0)
-            await RunAsync(tools.MkvExtract, [path, "attachments", .. attachments.Select(item => $"{item.attachment.Id}:{item.File}")], cancellationToken);
-        return new Snapshot(original.TagsPath, original.ChaptersPath, original.Container.Title,
-            attachments.Select(item => new SavedAttachment(item.attachment.Name, item.attachment.ContentType, item.File)).ToArray());
-    }
-
-    /// <summary>Restores the snapshot in place. Runs to completion regardless of cancellation; a failure is reported with both errors.</summary>
-    private async Task RollBackAsync(string path, Snapshot snapshot, string scratch)
-    {
-        try
-        {
-            var emptyTags = Path.Combine(scratch, "empty-tags.xml");
-            await File.WriteAllTextAsync(emptyTags, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Tags />");
-            List<string> arguments = [path, "--tags", "all:" + (snapshot.TagsPath ?? emptyTags), "--chapters", snapshot.ChaptersPath ?? ""];
-            arguments.AddRange(string.IsNullOrEmpty(snapshot.Title)
-                ? ["--edit", "info", "--delete", "title"] : ["--edit", "info", "--set", "title=" + snapshot.Title]);
-            if (snapshot.Attachments.Count > 0)
-            {
-                var current = await IdentifyAsync(path, CancellationToken.None);
-                foreach (var attachment in current.Attachments.Where(attachment => attachment.Name == ManifestName || OwnedThumbnailName().IsMatch(attachment.Name)))
-                    arguments.AddRange(["--delete-attachment", attachment.DeleteSelector]);
-                foreach (var attachment in snapshot.Attachments)
-                    arguments.AddRange(["--attachment-name", attachment.Name, "--attachment-mime-type",
-                        attachment.ContentType.Length > 0 ? attachment.ContentType : "application/octet-stream", "--add-attachment", attachment.File]);
-            }
-            await RunAsync(tools.MkvPropEdit, arguments, CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            Trace.TraceError($"Rolling back metadata of {path} failed: {exception}");
-            throw new InvalidDataException("Saving metadata failed and the previous metadata could not be fully restored.", exception);
-        }
-    }
-
-    /// <summary>Fallback when mkvpropedit refuses the file in place: write a clone (cheap on APFS/btrfs), verify, then swap.</summary>
-    private async Task WriteThroughCopyAsync(string path, MetadataState original, VideoMetadata metadata, WritePlan plan, string scratch)
-    {
-        var staged = Path.Combine(catalog.Paths.ScratchDirectory, $"metadata-{Guid.NewGuid():N}.mkv");
-        try
-        {
-            File.Copy(path, staged);
-            await RunAsync(tools.MkvPropEdit, [staged, .. plan.Arguments], CancellationToken.None);
-            await VerifyAsync(staged, original, metadata, plan, scratch, CancellationToken.None);
-            File.Move(staged, path, overwrite: true);
-        }
-        finally { TryDelete(staged); }
-    }
+    private static bool IsOwned(Attachment attachment) => attachment.Name == ManifestName || OwnedThumbnailName().IsMatch(attachment.Name);
 
     private async Task VerifyAsync(string path, MetadataState original, VideoMetadata expected, WritePlan plan, string scratch,
         CancellationToken cancellationToken)
@@ -404,7 +328,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         var written = await ReadStateAsync(path, verifyScratch, cancellationToken);
         var actual = written.Written;
         if (expected.Title != actual.Title || expected.Description != actual.Description ||
-            RecordedDate.ToTagText(expected) != actual.RecordedAtText || !expected.Tags.SequenceEqual(actual.Tags) ||
+            RecordedDate.ToTagText(expected) != RecordedDate.ToTagText(actual) || !expected.Tags.SequenceEqual(actual.Tags) ||
             expected.Chapters.Count != actual.Chapters.Count)
             throw new InvalidDataException("Written metadata did not round-trip correctly.");
         foreach (var chapter in expected.Chapters)
@@ -425,14 +349,14 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     }
 
     private async Task<MediaProcessResult> RunAsync(string tool, IEnumerable<string> arguments, CancellationToken cancellationToken,
-        bool throwOnError = true)
+        TimeSpan? timeout = null)
     {
-        var result = await _process.RunAsync(tool, arguments, ToolTimeout, cancellationToken);
+        var result = await _process.RunAsync(tool, arguments, timeout ?? ToolTimeout, cancellationToken);
         // mkvtoolnix documents exit code 1 as "completed with warnings".
         var failed = Path.GetFileNameWithoutExtension(tool).StartsWith("mkv", StringComparison.OrdinalIgnoreCase) ? result.ExitCode >= 2 : result.ExitCode != 0;
         if (result.ExitCode != 0)
             Trace.TraceWarning($"{Path.GetFileName(tool)} exited with {result.ExitCode}: {result.StandardError} {result.StandardOutput}");
-        if (failed && throwOnError)
+        if (failed)
         {
             // mkvtoolnix reports errors on stdout.
             var summary = MediaErrors.Summarize(result.StandardError.Length > 0 ? result.StandardError : result.StandardOutput);
@@ -446,15 +370,6 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         var path = Path.Combine(catalog.Paths.ScratchDirectory, "metadata-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
-    }
-
-    private static void DeleteScratch(string path)
-    {
-        try { Directory.Delete(path, recursive: true); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            Trace.TraceWarning($"Could not delete metadata scratch {path}: {exception.Message}");
-        }
     }
 
     private static void TryDelete(string path)
@@ -513,13 +428,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         /// <summary>Selects by UID: positional IDs shift as earlier deletions in the same mkvpropedit run take effect.</summary>
         public string DeleteSelector => "=" + Uid.ToString(CultureInfo.InvariantCulture);
     }
-    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title, DateTimeOffset? DateUtc);
-    private sealed record SavedAttachment(string Name, string ContentType, string File);
-    private sealed record Snapshot(string? TagsPath, string? ChaptersPath, string? Title, IReadOnlyList<SavedAttachment> Attachments);
-    private sealed record WritePlan(IReadOnlyList<string> Arguments, IReadOnlyList<ThumbnailEntry> Manifest,
-        IReadOnlyList<Attachment> DeletedAttachments, IReadOnlyDictionary<string, string> ExtraTags);
+    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title);
+    /// <param name="Manifest">The thumbnail manifest the file must have after the write.</param>
+    /// <param name="TouchesAttachments">Whether the write deletes the owned attachments and adds the planned ones.</param>
+    private sealed record WritePlan(IReadOnlyList<string> Arguments, IReadOnlyList<ThumbnailEntry> Manifest, bool TouchesAttachments,
+        IReadOnlyDictionary<string, string> ExtraTags);
 
-    /// <param name="Metadata">What the app shows, with container fallbacks for title and recorded date.</param>
+    /// <param name="Metadata">What the app shows, with the segment title as a fallback for a missing TITLE.</param>
     /// <param name="Written">Exactly what the tags and chapters say; write verification compares against this.</param>
     private sealed record MetadataState(string Path, VideoMetadata Metadata, VideoMetadata Written, XDocument Tags, XDocument Chapters,
         string? TagsPath, string? ChaptersPath, ContainerInfo Container, ThumbnailEntry[] Manifest, IReadOnlyList<string> Warnings);

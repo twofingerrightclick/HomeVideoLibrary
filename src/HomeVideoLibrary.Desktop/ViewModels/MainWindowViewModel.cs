@@ -22,8 +22,7 @@ public sealed record MainWindowDependencies
     public Func<LibraryCatalog, IVideoImporter> CreateImporter { get; init; } = catalog => new VideoImporter(catalog, MediaTools.Discover());
     public Func<CancellationToken, Task<IReadOnlyList<string>>> FindUnavailableTools { get; init; } =
         cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
-    public Func<LibraryPaths, CancellationToken, Task> SweepScratch { get; init; } = (paths, cancellationToken) =>
-        ScratchSweeper.SweepAsync(paths, Process.GetCurrentProcess().StartTime.ToUniversalTime(), cancellationToken);
+    public Func<LibraryLock, CancellationToken, Task> SweepScratch { get; init; } = ScratchSweeper.SweepAsync;
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
@@ -352,7 +351,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(new LibraryPaths(root));
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try { await _dependencies.SweepScratch(catalog.Paths, CancellationToken.None); }
+            try
+            {
+                using var owner = LibraryLock.TryAcquire(catalog.Paths);
+                if (owner is not null) await _dependencies.SweepScratch(owner, CancellationToken.None);
+            }
             catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
             services = _dependencies.CreateServices(catalog);
             model = new LibraryModel(catalog, services.Files);

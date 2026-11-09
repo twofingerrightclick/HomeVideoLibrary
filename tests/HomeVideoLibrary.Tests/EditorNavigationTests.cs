@@ -121,9 +121,10 @@ public sealed class EditorNavigationTests : IDisposable
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 0;
-        public MediaPlayer? NativePlayer => null;
-        public Task OpenAsync(string path, TimeSpan position, bool play, Func<Task> attachPlayer, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task CloseAsync(Func<Task> detachPlayer) => Task.CompletedTask;
+        // A real MediaPlayer needs the native runtime; the editor only passes it through to the view.
+        public Task<MediaPlayer> CreatePlayerAsync() => Task.FromResult<MediaPlayer>(null!);
+        public Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task CloseAsync() => Task.CompletedTask;
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;
         public Task SeekAsync(TimeSpan position) => Task.CompletedTask;
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;

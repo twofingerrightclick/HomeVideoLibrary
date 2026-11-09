@@ -1,10 +1,9 @@
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-/// <summary>A chosen thumbnail whose preview decodes off the UI thread at inspector size.</summary>
+/// <summary>A chosen thumbnail whose preview decodes off the UI thread at inspector size. Create it on the UI thread.</summary>
 public sealed class ThumbnailEditorViewModel : ViewModelBase, IDisposable
 {
     private const int PreviewWidth = 320;
@@ -23,23 +22,18 @@ public sealed class ThumbnailEditorViewModel : ViewModelBase, IDisposable
 
     private async Task LoadImageAsync()
     {
-        Bitmap? bitmap = null;
         try
         {
-            bitmap = await Task.Run(() =>
+            var bitmap = await Task.Run(() =>
             {
                 using var stream = File.OpenRead(Thumbnail.ImagePath);
                 return Bitmap.DecodeToWidth(stream, PreviewWidth);
             });
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (_disposed) bitmap.Dispose();
-                else Image = bitmap;
-            });
+            if (_disposed) bitmap.Dispose();
+            else Image = bitmap;
         }
         catch (Exception exception)
         {
-            bitmap?.Dispose();
             System.Diagnostics.Trace.TraceWarning($"Thumbnail preview {Thumbnail.ImagePath} could not be shown: {exception.Message}");
         }
     }

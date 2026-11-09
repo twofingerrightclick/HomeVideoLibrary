@@ -17,10 +17,11 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     private readonly VideoMetadata? _initialMetadata;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly HashSet<string> _capturedImages = new(StringComparer.Ordinal);
-    private VideoMetadata _loadedMetadata = VideoMetadata.Empty;
+    // The last loaded or saved state; IsDirty is the difference between it and the fields.
+    private VideoMetadata _baseline = VideoMetadata.Empty;
     private CancellationTokenSource? _operationCancellation;
     private string _title = "", _description = "", _tags = "", _recordedAt = "", _status = "Loading video…";
-    private bool _isDirty, _isBusy, _isPlaying, _loaded;
+    private bool _isDirty, _isBusy, _isPlaying, _metadataLoaded;
     private bool _isInspectorOpen = true;
     private double _position, _seekPosition, _volume = 80;
     private MediaPlayer? _player;
@@ -31,33 +32,27 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     {
         _video = video; _path = path; _metadata = metadata; _playback = playback; _initialMetadata = initialMetadata;
         _playback.Updated += PlaybackUpdated;
-        Chapters.CollectionChanged += (_, args) =>
-        {
-            if (args.NewItems is not null)
-                foreach (ChapterEditorViewModel chapter in args.NewItems) chapter.PropertyChanged += ChapterChanged;
-            if (args.OldItems is not null)
-                foreach (ChapterEditorViewModel chapter in args.OldItems) chapter.PropertyChanged -= ChapterChanged;
-            MarkDirty();
-        };
-        Thumbnails.CollectionChanged += (_, _) => { MarkDirty(); OnPropertyChanged(nameof(CanCapture)); };
+        Chapters.CollectionChanged += (_, _) => RefreshDirty();
+        Thumbnails.CollectionChanged += (_, _) => { RefreshDirty(); OnPropertyChanged(nameof(CanCapture)); };
     }
 
     public ObservableCollection<ChapterEditorViewModel> Chapters { get; } = [];
     public ObservableCollection<ThumbnailEditorViewModel> Thumbnails { get; } = [];
-    public string Title { get => _title; set { if (SetProperty(ref _title, value)) MarkDirty(); } }
+    public string Title { get => _title; set { if (SetProperty(ref _title, value)) RefreshDirty(); } }
     /// <summary>Shown while the MKV has no TITLE; it is never written unless the user types it.</summary>
     public string TitlePlaceholder => _video.DisplayName;
 
     /// <summary>Whether Save closes the player first. An in-place mkvpropedit write is safe under an open reader on macOS and
     /// Linux; Windows sharing rules for that are unverified, so the player is released there.</summary>
     public bool ReleasePlaybackDuringSave { get; init; } = OperatingSystem.IsWindows();
-    public string Description { get => _description; set { if (SetProperty(ref _description, value)) MarkDirty(); } }
-    public string Tags { get => _tags; set { if (SetProperty(ref _tags, value)) MarkDirty(); } }
-    public string RecordedAt { get => _recordedAt; set { if (SetProperty(ref _recordedAt, value)) MarkDirty(); } }
+    public string Description { get => _description; set { if (SetProperty(ref _description, value)) RefreshDirty(); } }
+    public string Tags { get => _tags; set { if (SetProperty(ref _tags, value)) RefreshDirty(); } }
+    public string RecordedAt { get => _recordedAt; set { if (SetProperty(ref _recordedAt, value)) RefreshDirty(); } }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public bool IsDirty { get => _isDirty; private set => SetProperty(ref _isDirty, value); }
     public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanCapture)); OnPropertyChanged(nameof(CanEdit)); } }
-    public bool CanEdit => _loaded && !IsBusy;
+    /// <summary>Editing needs a successful read: saving without it would drop the file's thumbnails and chapters.</summary>
+    public bool CanEdit => _metadataLoaded && !IsBusy;
     public bool IsPlaying { get => _isPlaying; private set { SetProperty(ref _isPlaying, value); OnPropertyChanged(nameof(PlayLabel)); } }
     public string PlayLabel => IsPlaying ? "Pause" : "Play";
     public bool IsInspectorOpen { get => _isInspectorOpen; set => SetProperty(ref _isInspectorOpen, value); }
@@ -67,65 +62,104 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     public bool IsSeeking { get; set; }
     public double Volume { get => _volume; set => SetProperty(ref _volume, value); }
     public string TimeLabel => $"{TimeSpan.FromSeconds(Position):hh\\:mm\\:ss} / {_video.Duration:hh\\:mm\\:ss}";
-    public bool CanCapture => !IsBusy && _loaded && Thumbnails.Count < 20;
+    public bool CanCapture => CanEdit && Thumbnails.Count < 20;
     public MediaPlayer? Player { get => _player; private set => SetProperty(ref _player, value); }
 
-    /// <summary>Starts playback and the metadata read together; playback does not wait for, or depend on, the read.</summary>
+    /// <summary>Starts playback and the metadata read together. Editing is enabled as soon as the read succeeds; playback
+    /// neither waits for the read nor holds up editing.</summary>
     public async Task LoadAsync()
     {
         using var operation = BeginOperation();
         IsBusy = true;
-        if (_initialMetadata is { } initial) ApplyMetadata(initial);
-        var playback = OpenPlaybackAsync(TimeSpan.Zero, true);
-        string? playbackError = null, readError = null;
+        if (_initialMetadata is { } initial) ApplyBaseline(initial);
+        var playback = OpenPlaybackAsync(TimeSpan.Zero, true, operation.Token);
         try
         {
-            var metadata = await _metadata.ReadAsync(_video, operation.Token);
-            ApplyMetadata(metadata);
-            _loaded = true; IsDirty = false;
+            ApplyBaseline(await _metadata.ReadAsync(_video, operation.Token));
+            _metadataLoaded = true;
+            Status = "M adds a chapter at the current position. Save writes changes into this MKV.";
         }
-        catch (OperationCanceledException) { readError = "Loading cancelled. Return to the library to reopen this video."; }
-        catch (Exception exception) { readError = "Details could not be read, so editing is off: " + exception.Message; }
+        catch (OperationCanceledException) { Status = "Loading cancelled. Return to the library to reopen this video."; }
+        catch (Exception exception) { Status = "Details could not be read, so editing is off: " + exception.Message; }
+        finally { _operationCancellation = null; IsBusy = false; }
         try { await playback; }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { playbackError = exception.Message; }
-        Status = string.Join(" ", new[] { readError, playbackError }.Where(message => message is not null)) is { Length: > 0 } problems
-            ? problems : "M adds a chapter at the current position. Save writes changes into this MKV.";
-        _operationCancellation = null;
-        IsBusy = false;
+        catch (Exception exception) { Status = _metadataLoaded ? exception.Message : Status + " " + exception.Message; }
     }
 
-    private void ApplyMetadata(VideoMetadata metadata)
+    /// <summary>Makes <paramref name="metadata"/> the unedited state. Rows are matched by chapter UID and thumbnail id and
+    /// only changed fields are touched, so unchanged rows keep their controls, focus and decoded images.</summary>
+    private void ApplyBaseline(VideoMetadata metadata)
     {
-        var loaded = _loaded;
-        _loaded = false;
-        _loadedMetadata = metadata;
+        _baseline = metadata;
         Title = metadata.Title;
         Description = metadata.Description;
-        Tags = string.Join(Environment.NewLine, metadata.Tags);
+        var tags = string.Join(Environment.NewLine, metadata.Tags);
+        if (Tags != tags) Tags = tags;
         RecordedAt = RecordedDate.FormatForEditing(metadata);
-        Chapters.Clear();
-        foreach (var chapter in metadata.Chapters) Chapters.Add(new ChapterEditorViewModel(chapter));
-        foreach (var thumbnail in Thumbnails) thumbnail.Dispose();
-        Thumbnails.Clear();
-        foreach (var thumbnail in metadata.Thumbnails) Thumbnails.Add(new ThumbnailEditorViewModel(thumbnail));
-        _loaded = loaded;
-        IsDirty = false;
+
+        foreach (var stale in Chapters.Where(row => metadata.Chapters.All(chapter => chapter.Uid != row.Uid)).ToArray()) Chapters.Remove(stale);
+        for (var index = 0; index < metadata.Chapters.Count; index++)
+        {
+            var chapter = metadata.Chapters[index];
+            if (Chapters.FirstOrDefault(row => row.Uid == chapter.Uid) is not { } row)
+            {
+                Chapters.Insert(index, new ChapterEditorViewModel(chapter, RefreshDirty));
+                continue;
+            }
+            row.Reset(chapter);
+            if (Chapters.IndexOf(row) is var current && current != index) Chapters.Move(current, index);
+        }
+
+        foreach (var stale in Thumbnails.Where(row => metadata.Thumbnails.All(thumbnail => thumbnail.Id != row.Thumbnail.Id)).ToArray())
+        {
+            Thumbnails.Remove(stale);
+            stale.Dispose();
+        }
+        for (var index = 0; index < metadata.Thumbnails.Count; index++)
+        {
+            var thumbnail = metadata.Thumbnails[index];
+            if (Thumbnails.FirstOrDefault(row => row.Thumbnail.Id == thumbnail.Id) is not { } row)
+                Thumbnails.Insert(index, new ThumbnailEditorViewModel(thumbnail));
+            else if (Thumbnails.IndexOf(row) is var current && current != index) Thumbnails.Move(current, index);
+        }
+        RefreshDirty();
     }
 
-    private async Task OpenPlaybackAsync(TimeSpan position, bool play)
+    private void RefreshDirty() => IsDirty = !MatchesBaseline();
+
+    private bool MatchesBaseline() =>
+        Title == _baseline.Title && Description == _baseline.Description && ParseTags(Tags).SequenceEqual(_baseline.Tags) &&
+        RecordedAt == RecordedDate.FormatForEditing(_baseline) &&
+        Chapters.Count == _baseline.Chapters.Count &&
+        Chapters.All(row => _baseline.Chapters.FirstOrDefault(chapter => chapter.Uid == row.Uid) is { } chapter && row.Matches(chapter)) &&
+        Thumbnails.Select(row => row.Thumbnail.Id).SequenceEqual(_baseline.Thumbnails.Select(thumbnail => thumbnail.Id));
+
+    /// <summary>Binds a new player to the view before it starts, so LibVLC never opens its own window.</summary>
+    private async Task OpenPlaybackAsync(TimeSpan position, bool play, CancellationToken cancellationToken)
     {
-        await _playback.OpenAsync(_path, position, play, async () =>
+        Player = await _playback.CreatePlayerAsync();
+        try { await _playback.StartAsync(_path, position, play, cancellationToken); }
+        catch
         {
-            await Dispatcher.UIThread.InvokeAsync(() => Player = _playback.NativePlayer);
-        }, _operationCancellation?.Token ?? _lifetime.Token);
+            await ClosePlaybackAsync();
+            throw;
+        }
         await _playback.SetVolumeAsync((int)Volume);
         IsPlaying = play;
     }
 
+    /// <summary>Unbinds the player from the view, then releases it.</summary>
+    private async Task ClosePlaybackAsync()
+    {
+        Player = null;
+        IsPlaying = false;
+        await _playback.CloseAsync();
+    }
+
     public async Task TogglePlaybackAsync() => await WithErrorAsync(async () =>
     {
-        if (Player is null) await OpenPlaybackAsync(TimeSpan.FromSeconds(Position), true);
+        if (Player is null) await OpenPlaybackAsync(TimeSpan.FromSeconds(Position), true, _lifetime.Token);
         else { var play = !IsPlaying; await _playback.SetPlayingAsync(play); IsPlaying = play; }
     });
 
@@ -138,11 +172,11 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     public Task ApplyVolumeAsync() => WithErrorAsync(() => _playback.SetVolumeAsync((int)Volume));
     public void AddChapter()
     {
-        if (!_loaded || IsBusy) return;
+        if (!CanEdit) return;
         Span<byte> bytes = stackalloc byte[8];
         ulong uid;
         do { RandomNumberGenerator.Fill(bytes); uid = BitConverter.ToUInt64(bytes); } while (uid == 0 || Chapters.Any(chapter => chapter.Uid == uid));
-        Chapters.Add(new ChapterEditorViewModel(new VideoChapter(uid, TimeSpan.FromSeconds(ClampSeek(Position, Duration)), "New chapter", "", [])));
+        Chapters.Add(new ChapterEditorViewModel(new VideoChapter(uid, TimeSpan.FromSeconds(ClampSeek(Position, Duration)), "New chapter", "", []), RefreshDirty));
         Status = "Chapter added. Edit its title and description, then Save changes.";
     }
 
@@ -167,7 +201,7 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
 
     public async Task SaveAsync()
     {
-        if (!_loaded || IsBusy) return;
+        if (!CanEdit) return;
         using var operation = BeginOperation();
         IsBusy = true;
         var position = TimeSpan.FromSeconds(Position);
@@ -179,26 +213,23 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
             var metadata = BuildMetadata();
             if (ReleasePlaybackDuringSave)
             {
-                await _playback.CloseAsync(DetachPlayerAsync); // Release native file handles before the write.
-                released = true; IsPlaying = false;
+                await ClosePlaybackAsync(); // Release native file handles before the write.
+                released = true;
             }
             await _metadata.SaveAsync(_video, metadata, operation.Token);
-            IsDirty = false; saved = true;
+            saved = true;
+            // The save verified that the file now reads back as exactly this.
+            ApplyBaseline(MetadataText.AsStored(metadata));
             Status = "Changes saved inside the MKV.";
-            try { ApplyMetadata(await _metadata.ReadAsync(_video, operation.Token)); }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                Status = "Changes saved, but the saved details could not be reloaded: " + exception.Message;
-            }
         }
-        catch (OperationCanceledException) { Status = saved ? "Changes saved inside the MKV." : "Save cancelled; changes remain unsaved."; }
+        catch (OperationCanceledException) { Status = "Save cancelled; changes remain unsaved."; }
         catch (Exception exception) { Status = exception.Message; }
         finally
         {
             _operationCancellation = null;
             if (released && !_lifetime.IsCancellationRequested)
             {
-                try { await OpenPlaybackAsync(position, resume); }
+                try { await OpenPlaybackAsync(position, resume, _lifetime.Token); }
                 catch (Exception exception) { Status = (saved ? "Changes saved. " : "Changes remain unsaved. ") + exception.Message; }
             }
             IsBusy = false;
@@ -209,9 +240,9 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     /// <exception cref="ArgumentException">A field is invalid; the message names it.</exception>
     private VideoMetadata BuildMetadata()
     {
-        var recordedAt = _loadedMetadata.RecordedAt;
-        var recordedAtText = _loadedMetadata.RecordedAtText;
-        if (RecordedAt != RecordedDate.FormatForEditing(_loadedMetadata))
+        var recordedAt = _baseline.RecordedAt;
+        var recordedAtText = _baseline.RecordedAtText;
+        if (RecordedAt != RecordedDate.FormatForEditing(_baseline))
         {
             recordedAtText = RecordedAt.Trim();
             if (recordedAtText.Length == 0) recordedAt = null;
@@ -227,8 +258,8 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
 
     public async Task SeekToChapterAsync(ChapterEditorViewModel chapter)
     {
-        try { await SeekAsync(chapter.ParsePosition().TotalSeconds); }
-        catch (ArgumentException exception) { Status = exception.Message; }
+        if (chapter.StartError is { } error) Status = error;
+        else await SeekAsync(chapter.Start.TotalSeconds);
     }
 
     private CancellationTokenSource BeginOperation() => _operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
@@ -239,8 +270,6 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     public static bool ShouldAddMarker(bool isM, bool hasModifiers, bool textInputFocused, bool busy) => isM && !hasModifiers && !textInputFocused && !busy;
     /// <summary>One tag per line or comma; duplicates differing only in case are dropped.</summary>
     public static IReadOnlyList<string> ParseTags(string text) => MetadataText.NormalizeTags([text]);
-    private void MarkDirty() { if (_loaded) IsDirty = true; }
-    private void ChapterChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args) => MarkDirty();
     private async Task WithErrorAsync(Func<Task> action)
     {
         if (IsBusy) return;
@@ -259,12 +288,11 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
         if (update.Error is { } error) Status = error;
     });
     public void Cancel() => _lifetime.Cancel();
-    private async Task DetachPlayerAsync() => await Dispatcher.UIThread.InvokeAsync(() => Player = null);
     public async ValueTask DisposeAsync()
     {
         _lifetime.Cancel();
         _playback.Updated -= PlaybackUpdated;
-        await _playback.CloseAsync(DetachPlayerAsync);
+        await ClosePlaybackAsync();
         await _playback.DisposeAsync();
         foreach (var thumbnail in Thumbnails) thumbnail.Dispose();
         PruneUnsavedCaptures();
@@ -274,7 +302,7 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Deletes frames captured in this session that the MKV never received.</summary>
     private void PruneUnsavedCaptures()
     {
-        var kept = _loadedMetadata.Thumbnails.Select(thumbnail => thumbnail.ImagePath).ToHashSet(StringComparer.Ordinal);
+        var kept = _baseline.Thumbnails.Select(thumbnail => thumbnail.ImagePath).ToHashSet(StringComparer.Ordinal);
         foreach (var image in _capturedImages.Where(image => !kept.Contains(image)))
         {
             try { File.Delete(image); }
