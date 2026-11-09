@@ -132,6 +132,8 @@
             <Button Name="PART_Remove"
                     DockPanel.Dock="Right"
                     Theme="{StaticResource Vcr.Theme.TagChipRemove}"
+                    Command="{TemplateBinding RemoveCommand}"
+                    CommandParameter="{TemplateBinding Text}"
                     Margin="4,0,0,0"
                     VerticalAlignment="Center"/>
             <TextBlock Name="PART_Text"
@@ -194,6 +196,21 @@
     </Style>
   </ControlTheme>
 
+  <!-- Suggestion rows draw their own highlight; the container only hosts them and never takes focus,
+       so the entry keeps typing focus while the list is open. -->
+  <ControlTheme x:Key="Vcr.Theme.TagSuggestionContainer" TargetType="ListBoxItem">
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="0"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ContentPresenter Name="PART_Row"
+                          Content="{TemplateBinding Content}"
+                          ContentTemplate="{TemplateBinding ContentTemplate}"/>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
   <ControlTheme x:Key="{x:Type c:TagChipInput}" TargetType="c:TagChipInput">
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Field}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
@@ -214,7 +231,20 @@
                   CornerRadius="{TemplateBinding CornerRadius}"
                   BoxShadow="{DynamicResource Vcr.Shadow.Field}"
                   Padding="{TemplateBinding Padding}">
-            <WrapPanel Name="PART_ChipPanel" VerticalAlignment="Center">
+            <WrapPanel VerticalAlignment="Center">
+              <ItemsControl Name="PART_Chips" ItemsSource="{TemplateBinding Tags}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <c:TagChip Text="{Binding}"
+                               RemoveCommand="{Binding $parent[c:TagChipInput].RemoveTagCommand}"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
               <TextBox Name="PART_Entry"
                        Theme="{StaticResource Vcr.Theme.TagChipEntry}"
                        Text="{TemplateBinding Text, Mode=TwoWay}"
@@ -229,6 +259,7 @@
                  VerticalOffset="4"
                  ShouldUseOverlayLayer="True">
             <Border Name="PART_DropDown"
+                    Width="{Binding #PART_Field.Bounds.Width}"
                     MinWidth="160"
                     Background="{DynamicResource Vcr.Brush.Chassis.Raised}"
                     BorderBrush="{DynamicResource Vcr.Brush.Plastic.Rim}"
@@ -236,9 +267,24 @@
                     CornerRadius="4"
                     BoxShadow="{DynamicResource Vcr.Shadow.Popup}"
                     Padding="3">
-              <ScrollViewer MaxHeight="268" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Name="PART_Suggestions"/>
-              </ScrollViewer>
+              <ListBox Name="PART_Suggestions"
+                       MaxHeight="268"
+                       Focusable="False"
+                       Background="Transparent"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                       ItemsSource="{TemplateBinding Suggestions}"
+                       SelectedItem="{TemplateBinding HighlightedSuggestion}"
+                       ItemContainerTheme="{StaticResource Vcr.Theme.TagSuggestionContainer}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="c:TagSuggestionRow">
+                    <c:TagSuggestionItem Text="{Binding Tag}"
+                                         Count="{Binding Count}"
+                                         MatchStart="{Binding MatchStart}"
+                                         MatchLength="{Binding MatchLength}"
+                                         IsHighlighted="{Binding $parent[ListBoxItem].IsSelected}"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
             </Border>
           </Popup>
         </Panel>

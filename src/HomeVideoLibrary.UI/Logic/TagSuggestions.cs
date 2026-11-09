@@ -1,4 +1,4 @@
-using System.Text;
+using CoreTagRules = HomeVideoLibrary.Core.TagRules;
 
 namespace HomeVideoLibrary.UI.Logic;
 
@@ -22,58 +22,22 @@ public enum TagMatchKind
     None,
 }
 
-/// <summary>Tag entry rules. Tags compare case-insensitively everywhere.</summary>
-public static class TagRules
+/// <summary>
+/// Supplies ranked suggestions for a <see cref="Controls.TagChipInput"/>: tags matching
+/// <paramref name="query"/> (null lists the most used), excluding <paramref name="exclude"/>, at most
+/// <paramref name="max"/>, best first, in their canonical spelling. The app backs this with its tag index.
+/// </summary>
+public delegate IReadOnlyList<TagFrequency> TagSuggestionProvider(string? query, IReadOnlyCollection<string> exclude, int max);
+
+/// <summary>
+/// Suggestion matching and a snapshot-backed ranking for hosts without a tag index (the gallery, tests).
+/// What a tag is (normalization, identity, separators) is defined by <see cref="CoreTagRules"/>.
+/// </summary>
+public static class TagSuggestions
 {
-    public static StringComparer Comparer => StringComparer.OrdinalIgnoreCase;
-
-    /// <summary>Trims and collapses internal whitespace runs to one space; returns null when nothing remains.</summary>
-    public static string? Normalize(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return null;
-        }
-
-        var builder = new StringBuilder(raw.Length);
-        var pendingSpace = false;
-        foreach (var ch in raw)
-        {
-            if (char.IsWhiteSpace(ch))
-            {
-                pendingSpace = builder.Length > 0;
-                continue;
-            }
-
-            if (pendingSpace)
-            {
-                builder.Append(' ');
-                pendingSpace = false;
-            }
-
-            builder.Append(ch);
-        }
-
-        return builder.ToString();
-    }
-
-    /// <summary>
-    /// Characters that end a tag: ASCII comma, the full-width and ideographic commas CJK input methods
-    /// produce, and line breaks so a pasted one-per-line list splits too.
-    /// </summary>
-    public static IReadOnlyList<char> Separators { get; } = [',', '\uFF0C', '\u3001', '\n', '\r'];
-
-    /// <summary>Splits on <see cref="Separators"/>, normalizes each piece, and drops empty pieces and case-insensitive repeats.</summary>
-    public static IReadOnlyList<string> SplitEntry(string? raw) =>
-        raw is null ? [] : Distinct(raw.Split([.. Separators]).Select(Normalize).OfType<string>());
-
-    /// <summary>Index of the last separator in <paramref name="text"/>, or -1.</summary>
-    public static int LastSeparatorIndex(string text) => text.LastIndexOfAny([.. Separators]);
-
-    public static bool Contains(IEnumerable<string> tags, string tag) => tags.Contains(tag, Comparer);
-
-    /// <summary>Keeps the first occurrence of each tag, ignoring case.</summary>
-    public static IReadOnlyList<string> Distinct(IEnumerable<string> tags) => tags.Distinct(Comparer).ToList();
+    /// <summary>A provider that ranks a fixed snapshot with <see cref="Rank"/>.</summary>
+    public static TagSuggestionProvider FromSnapshot(IReadOnlyList<TagFrequency> snapshot) =>
+        (query, exclude, max) => Rank(query, snapshot, exclude, max);
 
     /// <summary>Finds the best match of an already-normalized query: a prefix, else the start of a word, else any substring.</summary>
     public static TagMatch FindMatch(string tag, string query)
@@ -111,7 +75,7 @@ public static class TagRules
     /// tag by count; otherwise only matches are kept, ordered by <see cref="TagMatchKind"/> tier. Ties
     /// sort by count descending, then alphabetically.
     /// </summary>
-    public static IReadOnlyList<TagFrequency> RankSuggestions(
+    public static IReadOnlyList<TagFrequency> Rank(
         string? query, IEnumerable<TagFrequency> source, IEnumerable<string> chosen, int max)
     {
         if (max <= 0)
@@ -119,8 +83,8 @@ public static class TagRules
             return [];
         }
 
-        var normalizedQuery = Normalize(query) ?? string.Empty;
-        var excluded = new HashSet<string>(chosen, Comparer);
+        var normalizedQuery = CoreTagRules.Normalize(query) ?? string.Empty;
+        var excluded = new HashSet<string>(chosen, CoreTagRules.Comparer);
         var candidates = MergeCase(source)
             .Where(t => !excluded.Contains(t.Tag))
             .Select(t => (Frequency: t, Tier: normalizedQuery.Length == 0 ? TagMatchKind.Prefix : FindMatch(t.Tag, normalizedQuery).Kind))
@@ -129,7 +93,7 @@ public static class TagRules
         return candidates
             .OrderBy(c => c.Tier)
             .ThenByDescending(c => c.Frequency.Count)
-            .ThenBy(c => c.Frequency.Tag, Comparer)
+            .ThenBy(c => CoreTagRules.Key(c.Frequency.Tag), StringComparer.Ordinal)
             .ThenBy(c => c.Frequency.Tag, StringComparer.Ordinal)
             .Take(max)
             .Select(c => c.Frequency)
@@ -139,11 +103,11 @@ public static class TagRules
     /// <summary>Merges entries that differ only by case; the casing with the highest count wins, first seen on ties.</summary>
     public static IReadOnlyList<TagFrequency> MergeCase(IEnumerable<TagFrequency> source)
     {
-        var merged = new Dictionary<string, (string Casing, int CasingCount, int Total)>(Comparer);
+        var merged = new Dictionary<string, (string Casing, int CasingCount, int Total)>(CoreTagRules.Comparer);
         var order = new List<string>();
         foreach (var entry in source)
         {
-            var tag = Normalize(entry.Tag);
+            var tag = CoreTagRules.Normalize(entry.Tag);
             if (tag is null)
             {
                 continue;

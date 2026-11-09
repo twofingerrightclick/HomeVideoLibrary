@@ -1,9 +1,9 @@
-using System.Collections.ObjectModel;
-using System.Collections.Specialized;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Controls.Metadata;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Data;
 using Avalonia.Input;
@@ -12,45 +12,52 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using HomeVideoLibrary.UI.Logic;
+using CoreTagRules = HomeVideoLibrary.Core.TagRules;
 
 namespace HomeVideoLibrary.UI.Controls;
 
-public sealed class TagEventArgs(RoutedEvent routedEvent, string tag) : RoutedEventArgs(routedEvent)
-{
-    public string Tag { get; } = tag;
-}
+/// <summary>One offered suggestion with the span of its tag that matched the query (-1 for none).</summary>
+public sealed record TagSuggestionRow(string Tag, int Count, int MatchStart, int MatchLength);
 
 /// <summary>
-/// Free-form tag entry that renders chosen tags as removable chips and suggests library tags as you type.
+/// Tag entry that shows the video's tags as removable chips and suggests library tags as you type.
 /// </summary>
 /// <remarks>
-/// <para><see cref="Tags"/> is edited in place when the list is writable; a read-only list (such as an
-/// array) is replaced with an edited <see cref="ObservableCollection{T}"/> copy. Tags are unique ignoring
-/// case, and a typed tag that matches a library tag takes the library's casing.</para>
-/// <para>Keys in the entry: Enter commits the highlighted suggestion, else the typed text. Comma commits
-/// the text before it; pasted comma-separated text commits every piece. Down opens the suggestions
-/// when the entry is empty. Up/Down move the highlight and wrap at either end. Tab accepts the
-/// highlighted suggestion while the list is open, otherwise moves focus. Esc closes the list and keeps
-/// the text. Backspace in an empty entry removes the last chip.</para>
+/// <para>The control never edits <see cref="Tags"/>: it asks through <see cref="AddTagCommand"/> (with the
+/// tag in its canonical spelling) and <see cref="RemoveTagCommand"/>, and shows whatever list the view model
+/// then exposes. Tag identity and splitting come from <see cref="CoreTagRules"/>; an entry matching an
+/// existing chip flashes that chip instead of adding. Bind <see cref="Text"/> two-way to the page view
+/// model's draft so typing belongs to the video being edited; leaving the field commits it.</para>
+/// <para>Keys in the entry: Enter commits the highlighted suggestion, else the typed text. A separator
+/// (comma, CJK comma, line break) commits the text before it, and pasted lists commit every piece. Down
+/// opens every suggestion when the entry is empty; Up/Down move the highlight and wrap. Tab accepts the
+/// highlight, otherwise moves focus. Escape closes the list and keeps the text. A fresh, unmodified
+/// Backspace in an empty entry removes the last chip.</para>
 /// </remarks>
 [TemplatePart(FieldPartName, typeof(Border))]
-[TemplatePart(ChipPanelPartName, typeof(Panel))]
+[TemplatePart(ChipsPartName, typeof(ItemsControl))]
 [TemplatePart(EntryPartName, typeof(TextBox))]
-[TemplatePart(SuggestionPanelPartName, typeof(Panel))]
-[TemplatePart(DropDownPartName, typeof(Control))]
+[TemplatePart(SuggestionsPartName, typeof(ListBox))]
 public class TagChipInput : TemplatedControl
 {
     public const string FieldPartName = "PART_Field";
-    public const string ChipPanelPartName = "PART_ChipPanel";
+    public const string ChipsPartName = "PART_Chips";
     public const string EntryPartName = "PART_Entry";
-    public const string SuggestionPanelPartName = "PART_Suggestions";
-    public const string DropDownPartName = "PART_DropDown";
+    public const string SuggestionsPartName = "PART_Suggestions";
 
-    public static readonly StyledProperty<IList<string>?> TagsProperty =
-        AvaloniaProperty.Register<TagChipInput, IList<string>?>(nameof(Tags), defaultBindingMode: BindingMode.TwoWay);
+    public static readonly StyledProperty<IReadOnlyList<string>?> TagsProperty =
+        AvaloniaProperty.Register<TagChipInput, IReadOnlyList<string>?>(nameof(Tags));
 
-    public static readonly StyledProperty<IEnumerable<TagFrequency>?> SuggestionsSourceProperty =
-        AvaloniaProperty.Register<TagChipInput, IEnumerable<TagFrequency>?>(nameof(SuggestionsSource));
+    /// <summary>Executed with the canonical tag string to add.</summary>
+    public static readonly StyledProperty<ICommand?> AddTagCommandProperty =
+        AvaloniaProperty.Register<TagChipInput, ICommand?>(nameof(AddTagCommand));
+
+    /// <summary>Executed with the tag string to remove (chip X, or Backspace on an empty entry).</summary>
+    public static readonly StyledProperty<ICommand?> RemoveTagCommandProperty =
+        AvaloniaProperty.Register<TagChipInput, ICommand?>(nameof(RemoveTagCommand));
+
+    public static readonly StyledProperty<TagSuggestionProvider?> SuggestionProviderProperty =
+        AvaloniaProperty.Register<TagChipInput, TagSuggestionProvider?>(nameof(SuggestionProvider));
 
     public static readonly StyledProperty<int> MaxSuggestionsProperty =
         AvaloniaProperty.Register<TagChipInput, int>(nameof(MaxSuggestions), 8, validate: value => value >= 0);
@@ -64,46 +71,46 @@ public class TagChipInput : TemplatedControl
     public static readonly DirectProperty<TagChipInput, bool> IsDropDownOpenProperty =
         AvaloniaProperty.RegisterDirect<TagChipInput, bool>(nameof(IsDropDownOpen), o => o.IsDropDownOpen);
 
-    public static readonly RoutedEvent<TagEventArgs> TagAddedEvent =
-        RoutedEvent.Register<TagChipInput, TagEventArgs>(nameof(TagAdded), RoutingStrategies.Bubble);
+    public static readonly DirectProperty<TagChipInput, IReadOnlyList<TagSuggestionRow>> SuggestionsProperty =
+        AvaloniaProperty.RegisterDirect<TagChipInput, IReadOnlyList<TagSuggestionRow>>(nameof(Suggestions), o => o.Suggestions);
 
-    public static readonly RoutedEvent<TagEventArgs> TagRemovedEvent =
-        RoutedEvent.Register<TagChipInput, TagEventArgs>(nameof(TagRemoved), RoutingStrategies.Bubble);
+    public static readonly DirectProperty<TagChipInput, TagSuggestionRow?> HighlightedSuggestionProperty =
+        AvaloniaProperty.RegisterDirect<TagChipInput, TagSuggestionRow?>(nameof(HighlightedSuggestion), o => o.HighlightedSuggestion);
 
-    private Border? _field;
-    private Panel? _chipPanel;
+    private ItemsControl? _chips;
     private TextBox? _entry;
-    private Panel? _suggestionPanel;
-    private Control? _dropDown;
-    private INotifyCollectionChanged? _observedTags;
-    private INotifyCollectionChanged? _observedSource;
-    private IReadOnlyList<TagFrequency> _suggestions = [];
-    private int _highlightedIndex = -1;
+    private Border? _field;
+    private ListBox? _suggestionList;
+    private SuggestionState _state = SuggestionState.Closed;
+    private IReadOnlyList<TagSuggestionRow> _suggestions = [];
+    private TagSuggestionRow? _highlighted;
     private bool _isDropDownOpen;
 
-    // Down on an empty entry asks for the full list; Esc hides the list until the text changes.
-    private bool _isBrowsing;
-    private bool _isAttached;
-    private bool _isReplacingTags;
+    // Avalonia key events carry no repeat flag; KeyUp marks the end of a held Backspace.
     private bool _backspaceHeld;
-    private bool _isDismissed;
 
-    public TagChipInput()
-    {
-        SetCurrentValue(TagsProperty, new ObservableCollection<string>());
-    }
-
-    public IList<string>? Tags
+    public IReadOnlyList<string>? Tags
     {
         get => GetValue(TagsProperty);
         set => SetValue(TagsProperty, value);
     }
 
-    /// <summary>Library-wide tag usage. Re-ranked live when it raises collection changes.</summary>
-    public IEnumerable<TagFrequency>? SuggestionsSource
+    public ICommand? AddTagCommand
     {
-        get => GetValue(SuggestionsSourceProperty);
-        set => SetValue(SuggestionsSourceProperty, value);
+        get => GetValue(AddTagCommandProperty);
+        set => SetValue(AddTagCommandProperty, value);
+    }
+
+    public ICommand? RemoveTagCommand
+    {
+        get => GetValue(RemoveTagCommandProperty);
+        set => SetValue(RemoveTagCommandProperty, value);
+    }
+
+    public TagSuggestionProvider? SuggestionProvider
+    {
+        get => GetValue(SuggestionProviderProperty);
+        set => SetValue(SuggestionProviderProperty, value);
     }
 
     public int MaxSuggestions
@@ -118,7 +125,7 @@ public class TagChipInput : TemplatedControl
         set => SetValue(WatermarkProperty, value);
     }
 
-    /// <summary>Uncommitted text in the entry.</summary>
+    /// <summary>The uncommitted entry text (the draft).</summary>
     public string? Text
     {
         get => GetValue(TextProperty);
@@ -131,28 +138,23 @@ public class TagChipInput : TemplatedControl
         private set => SetAndRaise(IsDropDownOpenProperty, ref _isDropDownOpen, value);
     }
 
-    /// <summary>Ranked suggestions currently offered; empty while the list is closed.</summary>
-    public IReadOnlyList<TagFrequency> Suggestions => _suggestions;
-
-    /// <summary>Index into <see cref="Suggestions"/> of the keyboard highlight, or -1.</summary>
-    public int HighlightedIndex => _highlightedIndex;
-
-    public event EventHandler<TagEventArgs>? TagAdded
+    /// <summary>Suggestions currently offered, best first; empty while the list is closed.</summary>
+    public IReadOnlyList<TagSuggestionRow> Suggestions
     {
-        add => AddHandler(TagAddedEvent, value);
-        remove => RemoveHandler(TagAddedEvent, value);
+        get => _suggestions;
+        private set => SetAndRaise(SuggestionsProperty, ref _suggestions, value);
     }
 
-    public event EventHandler<TagEventArgs>? TagRemoved
+    public TagSuggestionRow? HighlightedSuggestion
     {
-        add => AddHandler(TagRemovedEvent, value);
-        remove => RemoveHandler(TagRemovedEvent, value);
+        get => _highlighted;
+        private set => SetAndRaise(HighlightedSuggestionProperty, ref _highlighted, value);
     }
 
-    /// <summary>Normalizes and adds each comma-separated tag, skipping case-insensitive duplicates.</summary>
+    /// <summary>Commits every tag in <paramref name="entry"/> as if typed and confirmed.</summary>
     public void AddTags(string? entry)
     {
-        foreach (var tag in TagRules.SplitEntry(entry))
+        foreach (var tag in CoreTagRules.Split(entry))
         {
             AddTag(tag);
         }
@@ -161,205 +163,99 @@ public class TagChipInput : TemplatedControl
     protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
         base.OnApplyTemplate(e);
-
         if (_entry is not null)
         {
             _entry.RemoveHandler(KeyDownEvent, OnEntryKeyDown);
             _entry.RemoveHandler(KeyUpEvent, OnEntryKeyUp);
             _entry.RemoveHandler(TextInputEvent, OnEntryTextInput);
             _entry.RemoveHandler(TextBox.PastingFromClipboardEvent, OnEntryPasting);
-            _entry.GotFocus -= OnEntryFocusChanged;
-            _entry.LostFocus -= OnEntryFocusChanged;
+            _entry.GotFocus -= OnEntryGotFocus;
+            _entry.LostFocus -= OnEntryLostFocus;
         }
 
         _field?.RemoveHandler(PointerPressedEvent, OnFieldPointerPressed);
-        if (_field is not null)
-        {
-            _field.SizeChanged -= OnFieldSizeChanged;
-        }
+        _suggestionList?.RemoveHandler(PointerPressedEvent, OnSuggestionPointerPressed);
 
         _field = e.NameScope.Find<Border>(FieldPartName);
-        _chipPanel = e.NameScope.Find<Panel>(ChipPanelPartName);
+        _chips = e.NameScope.Find<ItemsControl>(ChipsPartName);
         _entry = e.NameScope.Find<TextBox>(EntryPartName);
-        _suggestionPanel = e.NameScope.Find<Panel>(SuggestionPanelPartName);
-        _dropDown = e.NameScope.Find<Control>(DropDownPartName);
+        _suggestionList = e.NameScope.Find<ListBox>(SuggestionsPartName);
 
         if (_entry is not null)
         {
-            // Tunnel so these run before TextBox consumes Up/Down/Enter/Backspace and inserts commas.
+            // Tunnel so these run before TextBox consumes Up/Down/Enter/Backspace and inserts separators.
             _entry.AddHandler(KeyDownEvent, OnEntryKeyDown, RoutingStrategies.Tunnel);
             _entry.AddHandler(KeyUpEvent, OnEntryKeyUp, RoutingStrategies.Tunnel);
             _entry.AddHandler(TextInputEvent, OnEntryTextInput, RoutingStrategies.Tunnel);
             _entry.AddHandler(TextBox.PastingFromClipboardEvent, OnEntryPasting);
-            _entry.GotFocus += OnEntryFocusChanged;
-            _entry.LostFocus += OnEntryFocusChanged;
+            _entry.GotFocus += OnEntryGotFocus;
+            _entry.LostFocus += OnEntryLostFocus;
         }
 
         _field?.AddHandler(PointerPressedEvent, OnFieldPointerPressed);
-        if (_field is not null)
-        {
-            _field.SizeChanged += OnFieldSizeChanged;
-        }
 
-        RebuildChips();
-        RefreshSuggestions();
+        // Tunnel: a click commits before the list could take focus from the entry or change selection.
+        _suggestionList?.AddHandler(PointerPressedEvent, OnSuggestionPointerPressed, RoutingStrategies.Tunnel);
+        Refresh();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-
-        if (change.Property == TagsProperty)
+        if (change.Property == TextProperty)
         {
-            ObserveTags(change.GetNewValue<IList<string>?>());
+            _state = _state.TextChanged(CoreTagRules.Normalize(change.GetNewValue<string?>()));
+            Refresh();
         }
-        else if (change.Property == SuggestionsSourceProperty)
+        else if (change.Property == TagsProperty
+            || change.Property == SuggestionProviderProperty
+            || change.Property == MaxSuggestionsProperty
+            || change.Property == IsEffectivelyEnabledProperty)
         {
-            ObserveSource(change.GetNewValue<IEnumerable<TagFrequency>?>());
-        }
-        else if (change.Property == TextProperty)
-        {
-            _isDismissed = false;
-            _highlightedIndex = -1;
-            if (!string.IsNullOrEmpty(change.GetNewValue<string?>()))
-            {
-                _isBrowsing = false;
-            }
-
-            RefreshSuggestions();
-        }
-        else if (change.Property == MaxSuggestionsProperty || change.Property == IsEffectivelyEnabledProperty)
-        {
-            RefreshSuggestions();
+            Refresh();
         }
     }
 
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        _isAttached = true;
-        SubscribeTags(Tags);
-        SubscribeSource(SuggestionsSource);
-        RebuildChips();
-        RefreshSuggestions();
-    }
-
-    // Subscribing only while attached keeps the app-lifetime tag index from rooting every input ever shown.
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        _isAttached = false;
-        SubscribeTags(null);
-        SubscribeSource(null);
-        CloseDropDown();
+        _state = SuggestionState.Closed;
+        Refresh();
     }
 
-    private void ObserveTags(IList<string>? tags)
+    private void Refresh()
     {
-        if (tags is null)
-        {
-            SubscribeTags(null);
-            SetCurrentValue(TagsProperty, new ObservableCollection<string>());
-            return;
-        }
-
-        // A different tag list means a different video; text typed for the previous one must not carry over.
-        if (!_isReplacingTags)
-        {
-            ClearEntry();
-        }
-
-        SubscribeTags(tags);
-        RebuildChips();
-        RefreshSuggestions();
+        var query = CoreTagRules.Normalize(Text);
+        var offered = _entry is { IsFocused: true } && IsEffectivelyEnabled && _state.WantsList(query) && SuggestionProvider is { } provider
+            ? provider(query, Tags ?? [], MaxSuggestions)
+            : [];
+        _state = _state.Reconcile([.. offered.Select(f => f.Tag)]);
+        Suggestions = [.. offered.Select(f => ToRow(f, query))];
+        ShowHighlight();
+        IsDropDownOpen = Suggestions.Count > 0;
     }
 
-    private void SubscribeTags(IList<string>? tags)
+    private static TagSuggestionRow ToRow(TagFrequency suggestion, string? query)
     {
-        if (_observedTags is not null)
-        {
-            _observedTags.CollectionChanged -= OnTagsCollectionChanged;
-            _observedTags = null;
-        }
-
-        if (_isAttached && tags is INotifyCollectionChanged observable)
-        {
-            _observedTags = observable;
-            observable.CollectionChanged += OnTagsCollectionChanged;
-        }
+        var match = TagSuggestions.FindMatch(suggestion.Tag, query ?? string.Empty);
+        return new TagSuggestionRow(suggestion.Tag, suggestion.Count, match.Start, match.Length);
     }
 
-    private void ObserveSource(IEnumerable<TagFrequency>? source)
-    {
-        SubscribeSource(source);
-        RefreshSuggestions();
-    }
+    private void ShowHighlight() =>
+        HighlightedSuggestion = _suggestions.FirstOrDefault(r => _state.Highlighted is { } tag && CoreTagRules.Comparer.Equals(r.Tag, tag));
 
-    private void SubscribeSource(IEnumerable<TagFrequency>? source)
+    private void OnEntryGotFocus(object? sender, GotFocusEventArgs e) => Refresh();
+
+    // Leaving the field keeps what was typed as tags rather than silently holding it for later.
+    private void OnEntryLostFocus(object? sender, RoutedEventArgs e)
     {
-        if (_observedSource is not null)
+        _state = SuggestionState.Closed;
+        if (CoreTagRules.Normalize(Text) is not null)
         {
-            _observedSource.CollectionChanged -= OnSourceCollectionChanged;
-            _observedSource = null;
+            CommitText();
         }
 
-        if (_isAttached && source is INotifyCollectionChanged observable)
-        {
-            _observedSource = observable;
-            observable.CollectionChanged += OnSourceCollectionChanged;
-        }
-    }
-
-    // Collections may be filled by a background library scan, but controls may only be touched on the UI
-    // thread. Marshalling avoids the cross-thread crash; the collection should still be mutated on the UI
-    // thread, since enumerating it here while a worker writes is a race the control cannot prevent.
-    private void OnTagsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(() => OnTagsCollectionChanged(sender, e));
-            return;
-        }
-
-        RebuildChips();
-        RefreshSuggestions();
-    }
-
-    private void OnSourceCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(RefreshSuggestions);
-            return;
-        }
-
-        RefreshSuggestions();
-    }
-
-    private void OnEntryFocusChanged(object? sender, RoutedEventArgs e)
-    {
-        if (_entry?.IsFocused != true)
-        {
-            _isBrowsing = false;
-            _isDismissed = false;
-            _highlightedIndex = -1;
-            CommitPendingText();
-        }
-
-        RefreshSuggestions();
-    }
-
-    // Leaving the field keeps what was typed as a tag rather than silently holding it for later.
-    private void CommitPendingText()
-    {
-        if (TagRules.Normalize(Text) is null)
-        {
-            return;
-        }
-
-        var text = Text;
-        ClearEntry();
-        AddTags(text);
+        Refresh();
     }
 
     private void OnFieldPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -374,6 +270,16 @@ public class TagChipInput : TemplatedControl
         e.Handled = true;
     }
 
+    private void OnSuggestionPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed
+            && (e.Source as StyledElement)?.DataContext is TagSuggestionRow row)
+        {
+            e.Handled = true;
+            CommitTag(row.Tag);
+        }
+    }
+
     private void OnEntryKeyDown(object? sender, KeyEventArgs e)
     {
         var plain = e.KeyModifiers == KeyModifiers.None;
@@ -385,26 +291,23 @@ public class TagChipInput : TemplatedControl
             case Key.Enter when plain:
                 if (HighlightedSuggestion is { } highlighted)
                 {
-                    CommitSuggestion(highlighted);
+                    CommitTag(highlighted.Tag);
                     e.Handled = true;
                 }
-                else if (TagRules.Normalize(Text) is not null)
+                else if (CoreTagRules.Normalize(Text) is not null)
                 {
-                    var text = Text;
-                    ClearEntry();
-                    AddTags(text);
+                    CommitText();
                     e.Handled = true;
                 }
 
                 break;
             case Key.Tab when plain && HighlightedSuggestion is { } tabbed:
-                CommitSuggestion(tabbed);
+                CommitTag(tabbed.Tag);
                 e.Handled = true;
                 break;
             case Key.Escape when IsDropDownOpen:
-                _isDismissed = true;
-                _highlightedIndex = -1;
-                RefreshSuggestions();
+                _state = _state.Dismiss();
+                Refresh();
                 e.Handled = true;
                 break;
             case Key.Back:
@@ -414,7 +317,8 @@ public class TagChipInput : TemplatedControl
                 _backspaceHeld = true;
                 if (removeChip)
                 {
-                    RemoveTagAt(Tags!.Count - 1);
+                    Execute(RemoveTagCommand, Tags![^1]);
+                    Refresh();
                     e.Handled = true;
                 }
 
@@ -430,12 +334,34 @@ public class TagChipInput : TemplatedControl
         }
     }
 
+    private bool MoveHighlight(int step)
+    {
+        if (!IsDropDownOpen)
+        {
+            if (step < 0)
+            {
+                return false;
+            }
+
+            _state = _state.Browse();
+            Refresh();
+            if (!IsDropDownOpen)
+            {
+                return false;
+            }
+        }
+
+        _state = _state.Move([.. _suggestions.Select(r => r.Tag)], step);
+        ShowHighlight();
+        return true;
+    }
+
     private void OnEntryTextInput(object? sender, TextInputEventArgs e)
     {
-        if (e.Text is { } text && TagRules.LastSeparatorIndex(text) >= 0)
+        if (e.Text is { } text && LastSeparator(text) >= 0)
         {
             e.Handled = true;
-            InsertIntoEntry(e.Text, commitTrailing: false);
+            InsertIntoEntry(text, commitTrailing: false);
         }
     }
 
@@ -460,12 +386,12 @@ public class TagChipInput : TemplatedControl
 
         if (!string.IsNullOrEmpty(text))
         {
-            InsertIntoEntry(text, commitTrailing: TagRules.LastSeparatorIndex(text) >= 0);
+            InsertIntoEntry(text, commitTrailing: LastSeparator(text) >= 0);
         }
     }
 
     /// <summary>
-    /// Replaces the entry selection with <paramref name="inserted"/>. Text up to the last comma is
+    /// Replaces the entry selection with <paramref name="inserted"/>. Text up to the last separator is
     /// committed; what follows stays in the entry unless <paramref name="commitTrailing"/>.
     /// </summary>
     private void InsertIntoEntry(string inserted, bool commitTrailing)
@@ -477,20 +403,22 @@ public class TagChipInput : TemplatedControl
         var end = Math.Clamp(Math.Max(selectionStart, selectionEnd), 0, current.Length);
         var composed = string.Concat(current.AsSpan(0, start), inserted, current.AsSpan(end));
 
-        var lastComma = TagRules.LastSeparatorIndex(composed);
-        if (lastComma < 0 && !commitTrailing)
+        var lastSeparator = LastSeparator(composed);
+        if (lastSeparator < 0 && !commitTrailing)
         {
-            SetEntryText(composed, start + inserted.Length);
+            SetDraft(composed, start + inserted.Length);
             return;
         }
 
-        var committed = commitTrailing ? composed : composed[..lastComma];
-        var remainder = commitTrailing ? string.Empty : composed[(lastComma + 1)..].TrimStart();
-        SetEntryText(remainder, remainder.Length);
+        var committed = commitTrailing ? composed : composed[..lastSeparator];
+        var remainder = commitTrailing ? string.Empty : composed[(lastSeparator + 1)..].TrimStart();
+        SetDraft(remainder, remainder.Length);
         AddTags(committed);
     }
 
-    private void SetEntryText(string text, int caretIndex)
+    private static int LastSeparator(string text) => text.LastIndexOfAny([.. CoreTagRules.Separators]);
+
+    private void SetDraft(string text, int caretIndex)
     {
         SetCurrentValue(TextProperty, text);
         if (_entry is not null)
@@ -500,270 +428,65 @@ public class TagChipInput : TemplatedControl
         }
     }
 
-    private void ClearEntry()
+    private void CommitText()
     {
-        _isBrowsing = false;
-        SetEntryText(string.Empty, 0);
+        var text = Text;
+        SetDraft(string.Empty, 0);
+        AddTags(text);
     }
 
-    private void CommitSuggestion(TagFrequency suggestion)
+    private void CommitTag(string tag)
     {
-        ClearEntry();
-        AddTag(suggestion.Tag);
+        SetDraft(string.Empty, 0);
+        _state = SuggestionState.Closed;
+        AddTag(tag);
         _entry?.Focus();
     }
 
     private void AddTag(string tag)
     {
         var tags = Tags ?? [];
-        var existing = IndexOfTag(tags, tag);
-        if (existing >= 0)
-        {
-            ChipAt(existing)?.Flash();
-            return;
-        }
-
-        var canonical = SuggestionsSource is { } source
-            ? TagRules.MergeCase(source).FirstOrDefault(f => TagRules.Comparer.Equals(f.Tag, tag))?.Tag ?? tag
-            : tag;
-        EditTags(list => list.Add(canonical));
-        RaiseEvent(new TagEventArgs(TagAddedEvent, canonical));
-    }
-
-    private void RemoveTagAt(int index)
-    {
-        var tag = Tags![index];
-        EditTags(list => list.RemoveAt(index));
-        RaiseEvent(new TagEventArgs(TagRemovedEvent, tag));
-        _entry?.Focus();
-    }
-
-    private void EditTags(Action<IList<string>> edit)
-    {
-        var tags = Tags ?? [];
-        if (tags.IsReadOnly)
-        {
-            var copy = new ObservableCollection<string>(tags);
-            edit(copy);
-            _isReplacingTags = true;
-            try
-            {
-                SetCurrentValue(TagsProperty, copy);
-            }
-            finally
-            {
-                _isReplacingTags = false;
-            }
-
-            return;
-        }
-
-        edit(tags);
-        if (tags is not INotifyCollectionChanged)
-        {
-            RebuildChips();
-            RefreshSuggestions();
-        }
-    }
-
-    private static int IndexOfTag(IList<string> tags, string tag)
-    {
         for (var i = 0; i < tags.Count; i++)
         {
-            if (TagRules.Comparer.Equals(tags[i], tag))
+            if (CoreTagRules.Comparer.Equals(tags[i], tag))
             {
-                return i;
+                ChipAt(i)?.Flash();
+                return;
             }
         }
 
-        return -1;
+        // The library's spelling wins over what was typed, so "grandma" joins the existing "Grandma".
+        var canonical = SuggestionProvider?.Invoke(tag, [], Math.Max(1, MaxSuggestions))
+            .FirstOrDefault(f => CoreTagRules.Comparer.Equals(f.Tag, tag))?.Tag ?? tag;
+        Execute(AddTagCommand, canonical);
+        Refresh();
     }
 
-    private TagChip? ChipAt(int index) => _chipPanel?.Children.OfType<TagChip>().ElementAtOrDefault(index);
+    private TagChip? ChipAt(int index) => (_chips?.ContainerFromIndex(index) as ContentPresenter)?.Child as TagChip;
 
-    private void RebuildChips()
+    private static void Execute(ICommand? command, string tag)
     {
-        if (_chipPanel is null)
+        if (command?.CanExecute(tag) == true)
         {
-            return;
-        }
-
-        foreach (var chip in _chipPanel.Children.OfType<TagChip>().ToList())
-        {
-            chip.RemoveRequested -= OnChipRemoveRequested;
-            _chipPanel.Children.Remove(chip);
-        }
-
-        var index = 0;
-        foreach (var tag in Tags ?? [])
-        {
-            var chip = new TagChip { Text = tag };
-            chip.RemoveRequested += OnChipRemoveRequested;
-            _chipPanel.Children.Insert(index++, chip);
-        }
-    }
-
-    private void OnChipRemoveRequested(object? sender, EventArgs e)
-    {
-        if (sender is TagChip chip && _chipPanel is not null)
-        {
-            var index = _chipPanel.Children.OfType<TagChip>().ToList().IndexOf(chip);
-            if (index >= 0)
-            {
-                RemoveTagAt(index);
-            }
-        }
-    }
-
-    private TagFrequency? HighlightedSuggestion =>
-        IsDropDownOpen && _highlightedIndex >= 0 && _highlightedIndex < _suggestions.Count ? _suggestions[_highlightedIndex] : null;
-
-    private bool MoveHighlight(int step)
-    {
-        if (!IsDropDownOpen)
-        {
-            if (step < 0)
-            {
-                return false;
-            }
-
-            _isBrowsing = true;
-            _isDismissed = false;
-            RefreshSuggestions();
-            if (!IsDropDownOpen)
-            {
-                return false;
-            }
-        }
-
-        var count = _suggestions.Count;
-        _highlightedIndex = _highlightedIndex < 0
-            ? (step > 0 ? 0 : count - 1)
-            : (_highlightedIndex + step + count) % count;
-        UpdateHighlight();
-        return true;
-    }
-
-    private void UpdateHighlight()
-    {
-        if (_suggestionPanel is null)
-        {
-            return;
-        }
-
-        for (var i = 0; i < _suggestionPanel.Children.Count; i++)
-        {
-            if (_suggestionPanel.Children[i] is TagSuggestionItem item)
-            {
-                item.IsHighlighted = i == _highlightedIndex;
-                if (item.IsHighlighted)
-                {
-                    item.BringIntoView();
-                }
-            }
-        }
-    }
-
-    private void RefreshSuggestions()
-    {
-        var query = TagRules.Normalize(Text);
-        var wanted = _entry is { IsFocused: true }
-            && IsEffectivelyEnabled
-            && !_isDismissed
-            && (_isBrowsing || query is not null);
-        var highlighted = HighlightedSuggestion?.Tag;
-        _suggestions = wanted && SuggestionsSource is { } source
-            ? TagRules.RankSuggestions(query, source, Tags ?? [], MaxSuggestions)
-            : [];
-
-        // A re-rank can reorder rows; keep the highlight on the same tag so Enter commits what is shown.
-        _highlightedIndex = highlighted is null ? -1 : IndexOfSuggestion(highlighted);
-
-        RebuildSuggestionRows(query ?? string.Empty);
-        MatchDropDownWidth();
-
-        IsDropDownOpen = _suggestions.Count > 0;
-    }
-
-    private void OnFieldSizeChanged(object? sender, SizeChangedEventArgs e) => MatchDropDownWidth();
-
-    private void MatchDropDownWidth()
-    {
-        if (_dropDown is not null && _field is { Bounds.Width: > 0 })
-        {
-            _dropDown.Width = _field.Bounds.Width;
-        }
-    }
-
-    private int IndexOfSuggestion(string tag)
-    {
-        for (var i = 0; i < _suggestions.Count; i++)
-        {
-            if (TagRules.Comparer.Equals(_suggestions[i].Tag, tag))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private void CloseDropDown()
-    {
-        _suggestions = [];
-        _highlightedIndex = -1;
-        _suggestionPanel?.Children.Clear();
-        IsDropDownOpen = false;
-    }
-
-    private void RebuildSuggestionRows(string query)
-    {
-        if (_suggestionPanel is null)
-        {
-            return;
-        }
-
-        _suggestionPanel.Children.Clear();
-        for (var i = 0; i < _suggestions.Count; i++)
-        {
-            var suggestion = _suggestions[i];
-            var match = TagRules.FindMatch(suggestion.Tag, query);
-            var item = new TagSuggestionItem
-            {
-                Text = suggestion.Tag,
-                Count = suggestion.Count,
-                MatchStart = match.Start,
-                MatchLength = match.Length,
-                IsHighlighted = i == _highlightedIndex,
-            };
-            item.PointerPressed += OnSuggestionPointerPressed;
-            _suggestionPanel.Children.Add(item);
-        }
-    }
-
-    private void OnSuggestionPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is TagSuggestionItem { Text: { } tag } && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            e.Handled = true;
-            CommitSuggestion(new TagFrequency(tag, 0));
+            command.Execute(tag);
         }
     }
 }
 
 /// <summary>A committed tag drawn as a raised plastic pill with a remove button.</summary>
-[TemplatePart(RemovePartName, typeof(Button))]
 [PseudoClasses(DuplicatePseudoClass)]
 public class TagChip : TemplatedControl
 {
-    public const string RemovePartName = "PART_Remove";
     private const string DuplicatePseudoClass = ":duplicate";
     private static readonly TimeSpan FlashDuration = TimeSpan.FromMilliseconds(450);
 
     public static readonly StyledProperty<string?> TextProperty =
         AvaloniaProperty.Register<TagChip, string?>(nameof(Text));
 
-    private Button? _removeButton;
+    /// <summary>Executed with <see cref="Text"/> when the chip's X is pressed.</summary>
+    public static readonly StyledProperty<ICommand?> RemoveCommandProperty =
+        AvaloniaProperty.Register<TagChip, ICommand?>(nameof(RemoveCommand));
+
     private IDisposable? _flashTimer;
 
     public string? Text
@@ -772,7 +495,11 @@ public class TagChip : TemplatedControl
         set => SetValue(TextProperty, value);
     }
 
-    public event EventHandler? RemoveRequested;
+    public ICommand? RemoveCommand
+    {
+        get => GetValue(RemoveCommandProperty);
+        set => SetValue(RemoveCommandProperty, value);
+    }
 
     /// <summary>Briefly sets <c>:duplicate</c> to point at this chip after a repeated entry.</summary>
     public void Flash()
@@ -780,27 +507,6 @@ public class TagChip : TemplatedControl
         _flashTimer?.Dispose();
         PseudoClasses.Set(DuplicatePseudoClass, true);
         _flashTimer = DispatcherTimer.RunOnce(() => PseudoClasses.Set(DuplicatePseudoClass, false), FlashDuration);
-    }
-
-    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
-    {
-        base.OnApplyTemplate(e);
-        if (_removeButton is not null)
-        {
-            _removeButton.Click -= OnRemoveClick;
-        }
-
-        _removeButton = e.NameScope.Find<Button>(RemovePartName);
-        if (_removeButton is not null)
-        {
-            _removeButton.Click += OnRemoveClick;
-        }
-    }
-
-    private void OnRemoveClick(object? sender, RoutedEventArgs e)
-    {
-        e.Handled = true;
-        RemoveRequested?.Invoke(this, EventArgs.Empty);
     }
 }
 

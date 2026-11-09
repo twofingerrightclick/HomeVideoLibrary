@@ -1,7 +1,18 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:demo="using:HomeVideoLibrary.Gallery.Demo"
              x:Class="HomeVideoLibrary.Gallery.Sections.TagsSection">
+  <UserControl.Styles>
+    <!-- Each input is bound to its own video's TagEditorViewModel: tags and draft live there. -->
+    <Style Selector="c|TagChipInput" x:DataType="demo:TagEditorViewModel">
+      <Setter Property="Tags" Value="{Binding Tags}"/>
+      <Setter Property="Text" Value="{Binding Draft, Mode=TwoWay}"/>
+      <Setter Property="AddTagCommand" Value="{Binding AddTag}"/>
+      <Setter Property="RemoveTagCommand" Value="{Binding RemoveTag}"/>
+      <Setter Property="SuggestionProvider" Value="{Binding Suggest}"/>
+    </Style>
+  </UserControl.Styles>
   <StackPanel Spacing="0">
     <TextBlock Classes="gallery-title" Text="TAG CHIPS" Margin="0,0,0,14"/>
 
