@@ -40,6 +40,19 @@ public static class MetadataText
     /// values split the same way.</summary>
     public static IReadOnlyList<string> NormalizeTags(IEnumerable<string> tags) => TagRules.Canonicalize(tags.Select(Normalize));
 
+    /// <summary>What a verified save leaves in the MKV, field for field, and so what the next read returns: normalized text,
+    /// canonical tags, chapters in start order and <see cref="VideoMetadata.RecordedAtText"/> as written. Saving verifies
+    /// the file against this, so a caller can adopt it as the saved state without reading the file again.</summary>
+    public static VideoMetadata AsStored(VideoMetadata metadata)
+    {
+        var normalized = Normalize(metadata);
+        return normalized with
+        {
+            Chapters = normalized.Chapters.OrderBy(chapter => chapter.Position).ToArray(),
+            RecordedAtText = RecordedDate.ToTagText(normalized),
+        };
+    }
+
     public static VideoMetadata Normalize(VideoMetadata metadata) => metadata with
     {
         Title = NormalizeTitle(metadata.Title),

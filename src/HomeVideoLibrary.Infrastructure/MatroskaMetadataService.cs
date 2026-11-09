@@ -57,7 +57,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     public async Task SaveAsync(LibraryVideo video, VideoMetadata metadata, CancellationToken cancellationToken = default)
     {
         if (metadata.Thumbnails.Count > MaxThumbnails) throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
-        metadata = MetadataText.Normalize(metadata);
+        metadata = MetadataText.AsStored(metadata);
         var path = catalog.GetVideoPath(video.RelativePath);
         using var _ = await EnterGateAsync(path, cancellationToken);
         var scratch = CreateScratch();
@@ -77,7 +77,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         options ??= new MetadataWriteOptions();
         if (!options.KeepExistingThumbnails && metadata.Thumbnails.Count > MaxThumbnails)
             throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
-        metadata = MetadataText.Normalize(metadata);
+        metadata = MetadataText.AsStored(metadata);
         var extraTags = options.ExtraGlobalTags.ToDictionary(pair => pair.Key, pair => MetadataText.Normalize(pair.Value));
         var path = Path.GetFullPath(mkvPath);
         using var _ = await EnterGateAsync(path, cancellationToken);
