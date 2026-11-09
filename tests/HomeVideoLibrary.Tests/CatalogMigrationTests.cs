@@ -133,6 +133,88 @@ public sealed class CatalogMigrationTests : IDisposable
         Assert.Equal(2, contents.Issues.Count);
     }
 
+    [Fact]
+    public async Task WindowsRowsNamingTheSameFileMergeIntoOneVideoKeepingAlbums()
+    {
+        var paths = new LibraryPaths(_root);
+        Directory.CreateDirectory(paths.VideosDirectory);
+        Guid kept = Guid.NewGuid(), duplicate = Guid.NewGuid(), album = Guid.NewGuid();
+        await ExecuteAsync(paths, VersionTwoSchema + $"""
+            INSERT INTO videos VALUES ('{kept}', 'Videos/same.mkv', 'Kept', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+            INSERT INTO videos VALUES ('{duplicate}', 'Videos\same.mkv', 'Duplicate', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+            INSERT INTO albums VALUES ('{album}', 'Trip');
+            INSERT INTO album_videos VALUES ('{album}', '{duplicate}');
+            """);
+
+        var catalog = new LibraryCatalog(paths);
+        await catalog.InitializeAsync();
+
+        var contents = await catalog.LoadContentsAsync();
+        Assert.Equal(kept, Assert.Single(contents.Videos).Id);
+        Assert.Equal((album, kept), Assert.Single(contents.Memberships));
+    }
+
+    [Fact]
+    public async Task AlbumNamesAreOneAlbumAcrossCaseAndDiacritics()
+    {
+        var paths = new LibraryPaths(_root);
+        Directory.CreateDirectory(paths.RootDirectory);
+        await ExecuteAsync(paths, VersionTwoSchema + $"""
+            INSERT INTO albums VALUES ('{Guid.NewGuid()}', 'École'), ('{Guid.NewGuid()}', 'ecole'), ('{Guid.NewGuid()}', '  Summer   trip ');
+            """);
+        var catalog = new LibraryCatalog(paths);
+        await catalog.InitializeAsync();
+        var albums = new AlbumRepository(catalog);
+
+        Assert.Equal(["Summer trip", "ecole (2)", "École"], (await albums.ListAsync()).Select(album => album.Name).Order(StringComparer.Ordinal));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => albums.CreateAsync("ÉCOLE"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => albums.CreateAsync("summer trip"));
+        var empty = await Assert.ThrowsAsync<InvalidOperationException>(() => albums.CreateAsync("   "));
+        Assert.Equal("Give the album a name.", empty.Message);
+    }
+
+    [Theory]
+    [InlineData(false, "wal")]
+    [InlineData(true, "delete")]
+    public async Task NetworkLibrariesKeepTheRollbackJournal(bool network, string expected)
+    {
+        var paths = new LibraryPaths(_root);
+        await new LibraryCatalog(paths, _ => false).InitializeAsync();
+        await new LibraryCatalog(paths, _ => network).InitializeAsync();
+        Assert.Equal(expected, await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
+    }
+
+    [Fact]
+    public async Task AFailedUpgradeSaysNothingWasLostAndWhereTheBackupIs()
+    {
+        var paths = new LibraryPaths(_root);
+        Directory.CreateDirectory(paths.RootDirectory);
+        // A v3 database where a trigger rejects the v4 step's path rewrite.
+        await ExecuteAsync(paths, VersionTwoSchema + """
+            ALTER TABLE videos ADD COLUMN source_fingerprint TEXT NULL;
+            INSERT INTO videos VALUES ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d11', 'Videos\x.mkv', 'X', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', NULL);
+            CREATE TRIGGER reject BEFORE UPDATE ON videos BEGIN SELECT RAISE(ABORT, 'rejected by test'); END;
+            PRAGMA user_version = 3;
+            """);
+
+        var failure = await Assert.ThrowsAsync<InvalidDataException>(() => new LibraryCatalog(paths).InitializeAsync());
+        Assert.Contains("Nothing was lost", failure.Message);
+        Assert.Contains("backup-v3.sqlite3", failure.Message);
+        Assert.Equal(3L, await ScalarAsync(paths.DatabasePath, "PRAGMA user_version"));
+        Assert.Equal(1L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM videos"));
+    }
+
+    [Theory]
+    [InlineData("/Volumes/NAS/Library", true)]
+    [InlineData("/Volumes/NASBackup/Library", false)]
+    [InlineData("/Users/me/Movies", false)]
+    public void VolumeDetectionUsesTheMostSpecificMount(string path, bool network)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        (string, DriveType)[] drives = [("/", DriveType.Fixed), ("/Volumes/NAS", DriveType.Network), ("/Volumes/NASBackup", DriveType.Removable)];
+        Assert.Equal(network, StorageVolume.IsNetwork(path, drives));
+    }
+
     private static async Task ExecuteAsync(LibraryPaths paths, string sql)
     {
         await using var connection = new SqliteConnection($"Data Source={paths.DatabasePath};Pooling=False");

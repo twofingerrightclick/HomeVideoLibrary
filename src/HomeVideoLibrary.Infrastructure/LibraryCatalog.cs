@@ -16,14 +16,17 @@ public sealed record CatalogContents(IReadOnlyList<LibraryVideo> Videos, IReadOn
     IReadOnlyList<(Guid AlbumId, Guid VideoId)> Memberships, IReadOnlyDictionary<Guid, CatalogCacheEntry> Cache,
     IReadOnlyList<string> Issues);
 
-public sealed class LibraryCatalog(LibraryPaths paths)
+/// <param name="isNetworkVolume">Decides the journal mode; defaults to asking the OS about the library's volume.</param>
+public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNetworkVolume = null)
 {
     public const int SchemaVersion = 4;
 
     public LibraryPaths Paths { get; } = paths;
 
     /// <summary>Creates or migrates the database. Before migrating an existing database it is backed up to
-    /// <c>.cache/backup-v{version}.sqlite3</c>; each migration step commits on its own.</summary>
+    /// <c>.cache/backup-v{version}.sqlite3</c>; each migration step commits on its own, so a failure keeps every earlier
+    /// step and loses no data.</summary>
+    /// <exception cref="InvalidDataException">The library is from a newer version, or an upgrade step failed.</exception>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         Directory.CreateDirectory(Paths.RootDirectory);
@@ -33,18 +36,37 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         var version = await ScalarAsync(connection, null, "PRAGMA user_version", cancellationToken);
         if (version > SchemaVersion)
             throw new InvalidDataException("This library was created by a newer version of Home Video Library.");
-        if (version < SchemaVersion && await ScalarAsync(connection, null,
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='videos'", cancellationToken) > 0)
-            BackUp(connection, version);
-        // WAL persists in the file, so readers no longer wait on a reconcile batch.
-        await ExecuteAsync(connection, null, "PRAGMA journal_mode=WAL", cancellationToken);
+        var backup = version < SchemaVersion && await ScalarAsync(connection, null,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='videos'", cancellationToken) > 0
+            ? BackUp(connection, version) : null;
+        await SetJournalModeAsync(connection, cancellationToken);
         if (version == SchemaVersion) return;
-        if (version < 2) await MigrateAsync(connection, 2, CreateV2Async, cancellationToken);
-        if (version < 3) await MigrateAsync(connection, 3, AddSourceFingerprintAsync, cancellationToken);
-        if (version < 4) await MigrateAsync(connection, 4, CreateVideoCacheAsync, cancellationToken);
+        try
+        {
+            if (version < 2) await MigrateAsync(connection, 2, CreateV2Async, cancellationToken);
+            if (version < 3) await MigrateAsync(connection, 3, AddSourceFingerprintAsync, cancellationToken);
+            if (version < 4) await MigrateAsync(connection, 4, CreateVideoCacheAsync, cancellationToken);
+        }
+        catch (Exception exception) when (exception is SqliteException or InvalidOperationException or IOException)
+        {
+            throw new InvalidDataException("This library could not be upgraded: " + exception.Message +
+                (backup is null ? "" : $" Nothing was lost; a copy of the database from before the upgrade is at {backup}."), exception);
+        }
     }
 
-    private void BackUp(SqliteConnection connection, long version)
+    /// <summary>WAL lets readers proceed during a reconcile batch, but needs shared memory that network filesystems do
+    /// not provide, so a library on a network share keeps SQLite's rollback journal.</summary>
+    private async Task SetJournalModeAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var requested = (isNetworkVolume ?? StorageVolume.IsNetwork)(Paths.RootDirectory) ? "delete" : "wal";
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA journal_mode={requested}";
+        var actual = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+        if (!string.Equals(actual, requested, StringComparison.OrdinalIgnoreCase))
+            Trace.TraceWarning($"SQLite kept journal mode {actual} for {Paths.DatabasePath} instead of {requested}.");
+    }
+
+    private string BackUp(SqliteConnection connection, long version)
     {
         var backup = Path.Combine(Paths.CacheDirectory, $"backup-v{version}.sqlite3");
         if (File.Exists(backup))
@@ -52,6 +74,7 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = backup, Pooling = false }.ToString());
         destination.Open();
         connection.BackupDatabase(destination);
+        return backup;
     }
 
     private static async Task MigrateAsync(SqliteConnection connection, int target,
@@ -88,8 +111,8 @@ public sealed class LibraryCatalog(LibraryPaths paths)
             "CREATE INDEX IF NOT EXISTS videos_source_fingerprint ON videos(source_fingerprint)", cancellationToken);
     }
 
-    /// <summary>Replaces the FTS search cache with <c>video_cache</c>, makes album names unique ignoring case,
-    /// and rewrites Windows-style stored paths.</summary>
+    /// <summary>Replaces the FTS search cache with <c>video_cache</c>, makes album names unique by
+    /// <see cref="AlbumNames.Key"/>, and rewrites Windows-style stored paths.</summary>
     private static async Task CreateVideoCacheAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
     {
         await ExecuteAsync(connection, transaction, """
@@ -103,16 +126,52 @@ public sealed class LibraryCatalog(LibraryPaths paths)
                 record_json TEXT NOT NULL, file_length INTEGER NOT NULL, modified_ticks INTEGER NOT NULL
             );
             """, cancellationToken);
-        await SuffixDuplicateAlbumNamesAsync(connection, transaction, cancellationToken);
-        await ExecuteAsync(connection, transaction,
-            "CREATE UNIQUE INDEX IF NOT EXISTS albums_name ON albums(name COLLATE NOCASE)", cancellationToken);
+        if (await ScalarAsync(connection, transaction,
+                "SELECT COUNT(*) FROM pragma_table_info('albums') WHERE name = 'name_key'", cancellationToken) == 0)
+            await ExecuteAsync(connection, transaction, "ALTER TABLE albums ADD COLUMN name_key TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await KeyAlbumNamesAsync(connection, transaction, cancellationToken);
+        await ExecuteAsync(connection, transaction, "CREATE UNIQUE INDEX IF NOT EXISTS albums_name_key ON albums(name_key)", cancellationToken);
+        await MergeWindowsPathDuplicatesAsync(connection, transaction, cancellationToken);
         await ExecuteAsync(connection, transaction, """
-            UPDATE OR IGNORE videos SET relative_path = replace(relative_path, char(92), '/')
+            UPDATE videos SET relative_path = replace(relative_path, char(92), '/')
             WHERE instr(relative_path, char(92)) > 0
             """, cancellationToken);
     }
 
-    private static async Task SuffixDuplicateAlbumNamesAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    /// <summary>On Windows <c>Videos\x.mkv</c> and <c>Videos/x.mkv</c> name the same file, so rows that differ only in
+    /// the separator are one video: the earliest row is kept, the others' album memberships move to it, and they are
+    /// removed.</summary>
+    private static async Task MergeWindowsPathDuplicatesAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        var rows = new List<(string Id, string Path)>();
+        await using (var list = connection.CreateCommand())
+        {
+            list.Transaction = transaction;
+            list.CommandText = "SELECT id,relative_path FROM videos ORDER BY rowid";
+            await using var reader = await list.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) rows.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        foreach (var group in rows.GroupBy(row => NormalizeRelativePath(row.Path)).Where(group => group.Count() > 1))
+        {
+            var kept = group.First().Id;
+            foreach (var (duplicate, path) in group.Skip(1))
+            {
+                Trace.TraceWarning($"Merged catalog row {duplicate} ({path}) into {kept}: both name the same file.");
+                await using var merge = connection.CreateCommand();
+                merge.Transaction = transaction;
+                merge.CommandText = """
+                    INSERT OR IGNORE INTO album_videos(album_id,video_id) SELECT album_id,$kept FROM album_videos WHERE video_id=$duplicate;
+                    DELETE FROM videos WHERE id=$duplicate;
+                    """;
+                merge.Parameters.AddWithValue("$kept", kept); merge.Parameters.AddWithValue("$duplicate", duplicate);
+                await merge.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+    }
+
+    /// <summary>Fills <c>name_key</c> for every album, suffixing later albums whose name has the same identity as an
+    /// earlier one ("Family", "family" become "Family", "family (2)").</summary>
+    private static async Task KeyAlbumNamesAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
     {
         var albums = new List<(string Id, string Name)>();
         await using (var list = connection.CreateCommand())
@@ -122,19 +181,23 @@ public sealed class LibraryCatalog(LibraryPaths paths)
             await using var reader = await list.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) albums.Add((reader.GetString(0), reader.GetString(1)));
         }
-        var taken = new HashSet<string>(albums.Select(album => album.Name), StringComparer.OrdinalIgnoreCase);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, name) in albums)
+        var taken = albums.Select(album => AlbumNames.Key(album.Name)).ToHashSet(StringComparer.Ordinal);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (id, original) in albums)
         {
-            if (seen.Add(name)) continue;
-            var suffix = 2;
-            while (taken.Contains($"{name} ({suffix})")) suffix++;
-            var renamed = $"{name} ({suffix})";
-            taken.Add(renamed); seen.Add(renamed);
+            var name = AlbumNames.Normalize(original) ?? "Album";
+            if (!used.Add(AlbumNames.Key(name)))
+            {
+                var suffix = 2;
+                while (taken.Contains(AlbumNames.Key($"{name} ({suffix})"))) suffix++;
+                name = $"{name} ({suffix})";
+                taken.Add(AlbumNames.Key(name)); used.Add(AlbumNames.Key(name));
+            }
             await using var update = connection.CreateCommand();
             update.Transaction = transaction;
-            update.CommandText = "UPDATE albums SET name=$name WHERE id=$id";
-            update.Parameters.AddWithValue("$name", renamed); update.Parameters.AddWithValue("$id", id);
+            update.CommandText = "UPDATE albums SET name=$name, name_key=$key WHERE id=$id";
+            update.Parameters.AddWithValue("$name", name); update.Parameters.AddWithValue("$key", AlbumNames.Key(name));
+            update.Parameters.AddWithValue("$id", id);
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
     }

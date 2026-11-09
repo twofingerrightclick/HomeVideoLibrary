@@ -9,7 +9,7 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
     {
         await using var connection = await catalog.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,name FROM albums ORDER BY name COLLATE NOCASE,id";
+        command.CommandText = "SELECT id,name FROM albums ORDER BY name_key,name,id";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<VideoAlbum>();
         while (await reader.ReadAsync(cancellationToken)) result.Add(new VideoAlbum(Guid.Parse(reader.GetString(0)), reader.GetString(1)));
@@ -32,8 +32,9 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         await using var transaction = connection.BeginTransaction();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "INSERT INTO albums(id,name) VALUES ($id,$name)";
+        command.CommandText = "INSERT INTO albums(id,name,name_key) VALUES ($id,$name,$key)";
         command.Parameters.AddWithValue("$id", album.Id.ToString()); command.Parameters.AddWithValue("$name", album.Name);
+        command.Parameters.AddWithValue("$key", AlbumNames.Key(album.Name));
         await command.ExecuteNonQueryAsync(cancellationToken);
         foreach (var videoId in videoIds.Distinct())
         {
@@ -51,8 +52,9 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         name = NormalizeName(name);
         await using var connection = await catalog.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE albums SET name=$name WHERE id=$id";
+        command.CommandText = "UPDATE albums SET name=$name, name_key=$key WHERE id=$id";
         command.Parameters.AddWithValue("$id", albumId.ToString()); command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$key", AlbumNames.Key(name));
         int changed;
         try { changed = await command.ExecuteNonQueryAsync(cancellationToken); }
         catch (SqliteException exception) { throw Friendly(exception, name); }
@@ -118,9 +120,7 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         _ => exception,
     };
 
-    private static string NormalizeName(string name)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return name.Trim();
-    }
+    /// <exception cref="InvalidOperationException">The name is empty.</exception>
+    private static string NormalizeName(string name) =>
+        AlbumNames.Normalize(name) ?? throw new InvalidOperationException("Give the album a name.");
 }
