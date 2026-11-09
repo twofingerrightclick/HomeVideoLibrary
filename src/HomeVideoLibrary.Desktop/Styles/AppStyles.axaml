@@ -1,0 +1,11 @@
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <!-- App-level surface defaults. Colors come only from Vcr.* tokens; controls are themed by HomeVideoLibrary.UI. -->
+ <Style Selector="Window">
+  <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
+  <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+  <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+ </Style>
+ <Style Selector="ToolTip">
+  <Setter Property="MaxWidth" Value="460"/>
+ </Style>
+</Styles>
