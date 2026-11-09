@@ -40,10 +40,7 @@ public sealed partial class VideoEditorView : UserControl
     }
     private async void ChapterSeekClicked(object? sender, RoutedEventArgs args)
     {
-        if (ViewModel is { } vm && sender is Control { DataContext: ChapterEditorViewModel chapter })
-        {
-            if (TimeSpan.TryParse(chapter.Position, System.Globalization.CultureInfo.InvariantCulture, out var position)) await vm.SeekAsync(position.TotalSeconds);
-        }
+        if (ViewModel is { } vm && sender is Control { DataContext: ChapterEditorViewModel chapter }) await vm.SeekToChapterAsync(chapter);
     }
     private void ChapterRemoveClicked(object? sender, RoutedEventArgs args)
     {
