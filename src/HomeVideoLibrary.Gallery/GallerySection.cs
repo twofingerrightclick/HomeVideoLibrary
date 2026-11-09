@@ -12,5 +12,6 @@ public sealed record GallerySection(string Key, string Title, Func<Control> Crea
         new("inputs", "Inputs & surfaces", () => new InputsSection()),
         new("tabs", "Inspector tabs", () => new TabsSection()),
         new("scrub", "Scrub bar", () => new ScrubSection()),
+        new("tags", "Tag chips", () => new TagsSection()),
     ];
 }
