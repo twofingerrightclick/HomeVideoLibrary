@@ -149,7 +149,8 @@ public sealed class ClipEditingService(LibraryCatalog catalog, MediaTools tools,
         var frameTolerance = 1 / ParseRatio(probe.Format.FrameRate, 30) + 0.03;
         if (!probe.HasAudio || Math.Abs(probe.Duration.TotalSeconds - expected.TotalSeconds) > Math.Max(Math.Max(0.15, frameTolerance), expected.TotalSeconds * 0.01))
             throw new InvalidDataException("The edited video failed output duration/audio validation.");
-        await new MediaValidator(tools, _process).ValidateDecodedAsync(path, probe.Duration, cancellationToken);
+        await new MediaValidator(tools, _process).ValidateDecodedAsync(path, probe.Duration,
+            DecodeTolerance.ForEdit(TimeSpan.FromSeconds(1 / ParseRatio(probe.Format.FrameRate, 30))), cancellationToken: cancellationToken);
         return probe;
     }
 
