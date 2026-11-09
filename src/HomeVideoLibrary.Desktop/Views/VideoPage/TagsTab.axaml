@@ -1,0 +1,74 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.TagsTab"
+             x:DataType="vp:VideoPageViewModel">
+  <UserControl.Resources>
+    <!-- A chapter link: a plain row, not a key. -->
+    <ControlTheme x:Key="Page.Theme.ChapterLink" TargetType="Button">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Padding" Value="4,2"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="3">
+            <ContentPresenter Content="{TemplateBinding Content}"/>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+      <Style Selector="^:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Raised}"/>
+      </Style>
+    </ControlTheme>
+  </UserControl.Resources>
+  <StackPanel Spacing="10">
+    <c:SectionHeader Title="TAGS"/>
+    <c:TagChipInput Watermark="Add tags…" IsEnabled="{Binding Details.CanEdit}"
+                    Tags="{Binding Details.Tags.Items}"
+                    Text="{Binding Details.Tags.Draft, Mode=TwoWay}"
+                    AddTagCommand="{Binding Details.Tags.AddTagCommand}"
+                    RemoveTagCommand="{Binding Details.Tags.RemoveTagCommand}"
+                    SuggestionProvider="{Binding Details.Tags.Suggest}"/>
+
+    <c:SectionHeader Title="POPULAR IN YOUR LIBRARY" Margin="0,10,0,0" IsVisible="{Binding !!Details.Tags.Popular.Count}"/>
+    <ItemsControl ItemsSource="{Binding Details.Tags.Popular}" IsEnabled="{Binding Details.CanEdit}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6"/></ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="x:String">
+          <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Plus}" Content="{Binding}" ToolTip.Tip="Add this tag"
+                           Command="{Binding $parent[local:TagsTab].((vp:VideoPageViewModel)DataContext).Details.Tags.AddTagCommand}"
+                           CommandParameter="{Binding}"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <c:SectionHeader Title="CHAPTER TAGS" Margin="0,10,0,0"/>
+    <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Chapters.TagGroups.Count}"
+               Text="Tags on chapters show here. Add them in the CHAPTERS tab."/>
+    <ItemsControl ItemsSource="{Binding Details.Chapters.TagGroups}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vp:ChapterTagGroup">
+          <StackPanel Spacing="2" Margin="0,0,0,8">
+            <TextBlock Classes="legend" Text="{Binding Tag}"/>
+            <ItemsControl ItemsSource="{Binding Chapters}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vp:ChapterRowViewModel">
+                  <Button Theme="{StaticResource Page.Theme.ChapterLink}" Command="{Binding JumpCommand}" ToolTip.Tip="Play from this chapter">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <TextBlock Classes="meta" Text="{Binding StartText}" Foreground="{DynamicResource Vcr.Brush.Amber}"/>
+                      <TextBlock Classes="meta" Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>

@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChaptersTab"
+             x:DataType="vp:VideoPageViewModel">
+  <UserControl.Styles>
+    <Style Selector="c|ChapterListItem.selected">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>
+    </Style>
+    <!-- Row keys show on hover and keyboard focus only, so titles keep the row's width. -->
+    <Style Selector="c|ChapterListItem StackPanel.rowActions">
+      <Setter Property="Opacity" Value="0"/>
+    </Style>
+    <Style Selector="c|ChapterListItem:pointerover StackPanel.rowActions, c|ChapterListItem:focus-within StackPanel.rowActions">
+      <Setter Property="Opacity" Value="1"/>
+    </Style>
+  </UserControl.Styles>
+  <StackPanel Spacing="10">
+    <c:SectionHeader Title="CHAPTERS">
+      <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Chapter}" Content="ADD  M"
+                       Command="{Binding Details.Chapters.AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
+    </c:SectionHeader>
+    <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Chapters.Chapters.Count}"
+               Text="Play or scrub to a moment, then press M to start a chapter there."/>
+    <!-- Rows are patched in place by the view model: the playhead moves the placeholder and never rebuilds a row. -->
+    <ItemsControl ItemsSource="{Binding Details.Chapters.Rows}">
+      <ItemsControl.DataTemplates>
+        <DataTemplate DataType="vp:ChapterRowViewModel">
+          <c:ChapterListItem Margin="0,1"
+                             Start="{Binding Start}"
+                             Title="{Binding Title}"
+                             TitleWatermark="Untitled chapter"
+                             IsCurrent="{Binding IsCurrent}"
+                             IsEditing="{Binding IsEditing, Mode=TwoWay}"
+                             DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
+                             JumpCommand="{Binding JumpCommand}"
+                             CommitTitleCommand="{Binding CommitTitleCommand}"
+                             Classes.selected="{Binding IsSelected}">
+            <StackPanel Orientation="Horizontal" Spacing="4" Classes="rowActions">
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Slice}" Command="{Binding MoveToPlayheadCommand}"
+                               ToolTip.Tip="Start this chapter at the playhead"/>
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DeleteCommand}"
+                               ToolTip.Tip="Remove chapter (Delete)"/>
+            </StackPanel>
+          </c:ChapterListItem>
+        </DataTemplate>
+        <DataTemplate DataType="vp:PlaceholderRowViewModel">
+          <c:ChapterPlaceholderRow Margin="0,1" Start="{Binding Start}" IsVisible="{Binding IsShown}"/>
+        </DataTemplate>
+      </ItemsControl.DataTemplates>
+    </ItemsControl>
+    <!-- A new view for each selected chapter, so the description's undo history never reaches another chapter. -->
+    <ContentControl Content="{Binding Details.Chapters.SelectedChapter}" ContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
+                    IsEnabled="{Binding Details.CanEdit}"/>
+  </StackPanel>
+</UserControl>

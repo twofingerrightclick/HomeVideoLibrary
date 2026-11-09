@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Logic;
 
@@ -62,6 +63,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private double _progress;
     private int _tapeColumns = 1;
     private PageViewModel? _page;
+    private readonly VideoPageSession _videoPageSession = new();
     private LibraryVideo? _selectedVideo;
     private VideoAlbum? _currentAlbum, _targetAlbum;
     public MainWindowViewModel(MainWindowDependencies dependencies) => _dependencies = dependencies;
@@ -254,8 +256,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
             indexed.IndexingFailed += warning => Status = warning;
-            return new VideoEditorPage(new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed,
-                _dependencies.CreatePlayback(), record.ToMetadata()));
+            return new VideoPageViewModel(new VideoPageDependencies
+            {
+                Record = record, Path = model.GetVideoPath(record), Metadata = indexed, Playback = _dependencies.CreatePlayback(),
+                Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
+                Previews = ToolsReady ? _previews : null,
+                Back = CloseEditorAsync,
+                ShowAlbum = async album => { if (await CloseEditorAsync()) ShowAlbum(album); },
+                AddToAlbum = album => AddToAlbumAsync(album.Id, [record.Id]),
+                OutputsCreated = outputs => PublishOutputsAsync(model, outputs),
+            });
         });
     }
 
@@ -604,6 +614,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Tapes.Patch(desired);
         _visibleIds.Clear(); _visibleIds.UnionWith(desired.Select(tape => tape.Id));
         _shown = snapshot;
+        (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
         RebuildRows();
         if (SelectedVideo is { } focused && !snapshot.Videos.ContainsKey(focused.Id)) SelectedVideo = null;
         else if (SelectedVideo is { } current && _tapeIndex.TryGetValue(current.Id, out var focusedTape)) SelectedVideo = focusedTape.Video;

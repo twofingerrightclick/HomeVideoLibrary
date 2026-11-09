@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using LibVLCSharp.Shared;
 using Xunit;
@@ -44,7 +45,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var (viewModel, video) = await OpenLibraryAsync();
         await viewModel.OpenVideoAsync(video);
-        Assert.IsType<VideoEditorPage>(viewModel.Page);
+        Assert.IsType<VideoPageViewModel>(viewModel.Page);
         return viewModel;
     }
 
@@ -105,7 +106,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var viewModel = await OpenEditorAsync();
         var page = viewModel.Page;
-        Editor(viewModel).Title = "unsaved";
+        Page(viewModel).Details.Title = "unsaved";
 
         _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
         Assert.False(await viewModel.CloseEditorAsync());
@@ -121,7 +122,7 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task ASecondNavigationWaitsForTheOpenQuestionInsteadOfStackingAnother()
     {
         var viewModel = await OpenEditorAsync();
-        Editor(viewModel).Title = "unsaved";
+        Page(viewModel).Details.Title = "unsaved";
         var answer = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
 
         var back = viewModel.CloseEditorAsync();
@@ -139,7 +140,7 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task SaveAndLeaveSavesThenCloses()
     {
         var viewModel = await OpenEditorAsync();
-        Editor(viewModel).Title = "saved title";
+        Page(viewModel).Details.Title = "saved title";
 
         _interaction.Answers.Enqueue(LeaveChoice.Save);
         Assert.True(await viewModel.CloseEditorAsync());
@@ -147,7 +148,7 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.Null(viewModel.Page);
     }
 
-    private static VideoEditorViewModel Editor(MainWindowViewModel viewModel) => Assert.IsType<VideoEditorPage>(viewModel.Page).Editor;
+    private static VideoPageViewModel Page(MainWindowViewModel viewModel) => Assert.IsType<VideoPageViewModel>(viewModel.Page);
 
     [Fact]
     public void VisibleOpenActionRequiresASelectionAndClearsWithIt()

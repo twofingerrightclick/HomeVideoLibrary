@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
+using HomeVideoLibrary.Desktop.Views.VideoPage;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
@@ -11,7 +13,7 @@ public static class PageViews
     public static IDataTemplate Template { get; } = new FuncDataTemplate<PageViewModel?>((page, _) => page switch
     {
         null => null,
-        VideoEditorPage editor => new VideoEditorView { DataContext = editor.Editor },
+        VideoPageViewModel => new VideoPageView(),
         ClipEditorPage clips => new ClipEditorView { DataContext = clips.Editor },
         _ => throw new ArgumentOutOfRangeException(nameof(page), page.GetType().Name, "No view for this page."),
     }, supportsRecycling: false);

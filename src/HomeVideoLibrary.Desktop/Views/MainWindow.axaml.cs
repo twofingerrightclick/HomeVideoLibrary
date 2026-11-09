@@ -30,7 +30,6 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
         Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
-        AddHandler(KeyDownEvent, MarkerKeyDown, RoutingStrategies.Bubble);
         VideoList.SizeChanged += (_, args) =>
         {
             // A hidden list reports width 0; keep the last column count rather than flipping to one column.
@@ -222,14 +221,4 @@ public sealed partial class MainWindow : Window
     private void OpenSelectedClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenSelectedAsync, "Open video");
     private void EditClipsClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(ViewModel.OpenClipEditorAsync, "Edit clips");
     private void BackClicked(object? sender, RoutedEventArgs args) => AppErrors.Run(() => ViewModel.CloseEditorAsync(), "Back to library");
-
-    private void MarkerKeyDown(object? sender, KeyEventArgs args)
-    {
-        if ((ViewModel.Page as VideoEditorPage)?.Editor is not { } editor) return;
-        var focused = FocusManager?.GetFocusedElement() as Control;
-        var textInput = focused is TextBox || focused?.FindAncestorOfType<TextBox>() is not null;
-        if (!VideoEditorViewModel.ShouldAddMarker(args.Key == Key.M, args.KeyModifiers != KeyModifiers.None, textInput, editor.IsBusy)) return;
-        editor.AddChapter();
-        args.Handled = true;
-    }
 }

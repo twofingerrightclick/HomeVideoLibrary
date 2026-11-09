@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChapterDetailsView"
+             x:DataType="vp:ChapterRowViewModel">
+  <Border Classes="bezel" Margin="0,6,0,0">
+    <StackPanel Spacing="8">
+      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+        <TextBlock Classes="legend" Text="{Binding StartText}" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"/>
+        <TextBlock Grid.Column="1" Classes="legend" Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+      </Grid>
+      <TextBlock Classes="legend" Text="CHAPTER DESCRIPTION"/>
+      <TextBox Classes="area" Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
+               MinHeight="64" MaxHeight="160" Watermark="What happens in this chapter?" AutomationProperties.Name="Chapter description"/>
+      <TextBlock Classes="legend" Text="CHAPTER TAGS"/>
+      <c:TagChipInput Watermark="Add tags…"
+                      Tags="{Binding Tags.Items}"
+                      Text="{Binding Tags.Draft, Mode=TwoWay}"
+                      AddTagCommand="{Binding Tags.AddTagCommand}"
+                      RemoveTagCommand="{Binding Tags.RemoveTagCommand}"
+                      SuggestionProvider="{Binding Tags.Suggest}"/>
+    </StackPanel>
+  </Border>
+</UserControl>
