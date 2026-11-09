@@ -4,9 +4,9 @@
              xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
              x:Class="HomeVideoLibrary.Desktop.Views.VideoEditorView"
              x:DataType="vm:VideoEditorViewModel">
-  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="20">
+  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
     <Grid RowDefinitions="*,Auto,Auto" RowSpacing="12">
-      <Border Background="Black" MinHeight="180">
+      <Border Background="#090C0D" MinHeight="180" CornerRadius="4">
         <vlc:VideoView MediaPlayer="{Binding Player}" />
       </Border>
       <StackPanel Grid.Row="1" Spacing="12">
@@ -28,17 +28,17 @@
         <ScrollViewer MaxHeight="140"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#CBD0D8" /></ScrollViewer>
       </StackPanel>
     </Grid>
-    <ScrollViewer Grid.Column="1" Width="340" IsVisible="{Binding IsInspectorOpen}">
+    <ScrollViewer Grid.Column="1" Width="300" IsVisible="{Binding IsInspectorOpen}">
       <StackPanel Spacing="10" IsEnabled="{Binding CanEdit}">
         <Grid ColumnDefinitions="*,Auto">
-          <TextBlock Text="Video details" FontSize="22" FontWeight="SemiBold" />
+          <TextBlock Text="Video details" FontSize="21" FontWeight="SemiBold" />
           <TextBlock Grid.Column="1" Text="Unsaved" IsVisible="{Binding IsDirty}" Foreground="#F0CE8B" VerticalAlignment="Center" />
         </Grid>
         <TextBlock Text="Title" /><TextBox Text="{Binding Title, Mode=TwoWay}" AutomationProperties.Name="Video title" />
         <TextBlock Text="Description" /><TextBox Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" MinHeight="90" TextWrapping="Wrap" AutomationProperties.Name="Video description" />
         <TextBlock Text="Tags · one per line" /><TextBox Text="{Binding Tags, Mode=TwoWay}" AcceptsReturn="True" MinHeight="62" AutomationProperties.Name="Video tags, one per line" />
-        <TextBlock Text="Recorded date (ISO, optional)" /><TextBox Text="{Binding RecordedAt, Mode=TwoWay}" Watermark="1997-07-03" AutomationProperties.Name="Recorded date" />
-        <Button Content="Save changes to MKV" Click="SaveClicked" HorizontalAlignment="Stretch" Margin="0,4,0,16" />
+        <TextBlock Text="Recorded date / time · ISO format" /><TextBox Text="{Binding RecordedAt, Mode=TwoWay}" Watermark="1997-07-03" AutomationProperties.Name="Recorded date" />
+        <Button Classes="primary" Content="Save changes to MKV" Click="SaveClicked" HorizontalAlignment="Stretch" Margin="0,4,0,16" />
         <TextBlock Text="Chapters" FontSize="20" FontWeight="SemiBold" />
         <TextBlock Text="Add a chapter while watching, then describe it here." TextWrapping="Wrap" Foreground="#B8BEC8" />
         <ItemsControl ItemsSource="{Binding Chapters}">

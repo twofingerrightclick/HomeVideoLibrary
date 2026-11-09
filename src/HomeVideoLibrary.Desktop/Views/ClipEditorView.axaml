@@ -4,7 +4,10 @@
   <ScrollViewer>
     <StackPanel Spacing="16" MaxWidth="850" HorizontalAlignment="Stretch">
       <TextBlock Text="Create new clips" FontSize="26" FontWeight="SemiBold" />
-      <TextBlock Text="Outputs use the first video and audio tracks only. Trim/split preserve source size, aspect and frame timing. Merge uses the first ordered clip's size and frame rate, preserving aspect and padding smaller clips. Silent clips receive silence. Other tracks, subtitles, external attachments and alternate chapter editions stay safely in the originals. Descriptions, tags, chapters and up to the first 20 chosen thumbnails are remapped to each output." TextWrapping="Wrap" Foreground="#CBD0D8" />
+      <TextBlock Text="Make a new video. Keep the original." TextWrapping="Wrap" Foreground="#B9C5CB" />
+      <Expander Header="What your new clips include" HorizontalAlignment="Stretch">
+        <TextBlock Text="New clips use the primary picture and audio. Descriptions, tags, chapters and up to 20 chosen thumbnails follow the new timeline. Extra tracks, subtitles and attachments remain in the originals. Trim and split preserve the original size and frame timing; merge uses the first clip’s format and pads other sizes. Silent clips receive silence." TextWrapping="Wrap" Foreground="#CBD0D8" MaxWidth="700" />
+      </Expander>
       <TextBlock Text="{Binding OutputFormatSummary}" TextWrapping="Wrap" FontWeight="SemiBold" />
       <StackPanel Spacing="12" IsEnabled="{Binding !IsBusy}">
         <TextBlock Text="Output title" /><TextBox Text="{Binding OutputTitle, Mode=TwoWay}" AutomationProperties.Name="New video title" />
@@ -14,7 +17,7 @@
         </ListBox>
         <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding !IsSingle}">
           <Button Content="Move selected up" Click="MoveUpClicked" /><Button Content="Move selected down" Click="MoveDownClicked" />
-          <Button Content="Save merged MKV" Click="MergeClicked" IsEnabled="{Binding CanMerge}" />
+          <Button Classes="primary" Content="Save merged MKV" Click="MergeClicked" IsEnabled="{Binding CanMerge}" />
         </StackPanel>
         <StackPanel IsVisible="{Binding IsSingle}" Spacing="12">
           <TextBlock Text="Trim to a range" FontSize="20" />
@@ -23,10 +26,10 @@
             <StackPanel Spacing="6"><TextBlock Text="Start (seconds)" /><TextBox Text="{Binding StartSeconds, Mode=TwoWay}" AutomationProperties.Name="Trim start in seconds" /></StackPanel>
             <StackPanel Grid.Column="1" Spacing="6"><TextBlock Text="End (seconds)" /><TextBox Text="{Binding EndSeconds, Mode=TwoWay}" AutomationProperties.Name="Trim end in seconds" /></StackPanel>
           </Grid>
-          <Button Content="Save trimmed MKV" Click="TrimClicked" />
+          <Button Classes="primary" Content="Save trimmed MKV" Click="TrimClicked" />
           <TextBlock Text="Split into two clips" FontSize="20" Margin="0,12,0,0" />
           <TextBlock Text="Split at (seconds)" /><TextBox Text="{Binding SplitSeconds, Mode=TwoWay}" AutomationProperties.Name="Split position in seconds" />
-          <Button Content="Save both MKVs" Click="SplitClicked" />
+          <Button Classes="primary" Content="Save both MKVs" Click="SplitClicked" />
         </StackPanel>
       </StackPanel>
       <ProgressBar Value="{Binding Progress}" IsVisible="{Binding IsBusy}" />

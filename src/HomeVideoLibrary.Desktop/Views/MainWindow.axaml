@@ -1,59 +1,71 @@
-<Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
-        xmlns:core="using:HomeVideoLibrary.Core"
-        xmlns:views="using:HomeVideoLibrary.Desktop.Views"
-        x:Class="HomeVideoLibrary.Desktop.Views.MainWindow"
-        x:DataType="vm:MainWindowViewModel"
-        Title="{Binding Title}"
-        Width="1280" Height="820" MinWidth="900" MinHeight="600"
-        Background="#17191C">
-  <Grid ColumnDefinitions="260,*">
-    <Border Background="#1E2024" BorderBrush="#303239" BorderThickness="0,0,1,0" Padding="24,32"
-            DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop">
-      <ScrollViewer><StackPanel Spacing="14" IsEnabled="{Binding !HasEditor}">
-        <TextBlock Text="HOME VIDEO LIBRARY" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
-        <Button Content="All videos" Click="ShowLibraryClicked" />
-        <TextBox Text="{Binding SearchText, Mode=TwoWay}" Watermark="Search descriptions, tags, chapters" AutomationProperties.Name="Search video metadata" />
-        <Button Content="Choose library folder" Click="ChooseLibraryClicked" IsEnabled="{Binding !IsBusy}" />
-        <TextBlock Text="{Binding LibraryRoot}" TextWrapping="Wrap" Foreground="#9299A5" FontSize="12" />
-        <TextBlock Text="Albums" FontSize="20" />
-        <ListBox ItemsSource="{Binding Albums}" SelectedItem="{Binding CurrentAlbum, Mode=TwoWay}" MaxHeight="260" Background="Transparent"
-                 DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop" AutomationProperties.Name="Albums, drop selected videos onto an album">
-          <ListBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}" Padding="8,10" TextTrimming="CharacterEllipsis" /></DataTemplate></ListBox.ItemTemplate>
-        </ListBox>
-        <TextBox Text="{Binding AlbumName, Mode=TwoWay}" Watermark="Album name" AutomationProperties.Name="Album name" />
-        <WrapPanel><Button Content="Create album" Click="CreateAlbumClicked" Margin="0,0,8,8" ToolTip.Tip="Creates an album containing the selected videos, or an empty album if none are selected." /><Button Content="Rename" Click="RenameAlbumClicked" IsEnabled="{Binding HasAlbum}" /></WrapPanel>
-        <Button Content="Delete album only" Click="DeleteAlbumClicked" IsEnabled="{Binding HasAlbum}" />
-        <Button Content="Refresh search index" Click="RefreshIndexClicked" IsEnabled="{Binding !IsIndexing}" />
-        <Button Content="Rebuild index from MKVs" Click="RebuildIndexClicked" IsEnabled="{Binding !IsIndexing}" />
-        <Button Content="Cancel index refresh" Click="CancelIndexClicked" IsVisible="{Binding IsIndexing}" />
-        <TextBlock Text="{Binding IndexStatus}" TextWrapping="Wrap" FontSize="12" Foreground="#CBD0D8" />
-      </StackPanel></ScrollViewer>
-    </Border>
-    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="32">
-      <StackPanel Spacing="14" Margin="0,0,0,24">
-        <TextBlock Text="{Binding Title}" FontSize="32" FontWeight="SemiBold" />
-        <TextBlock Text="{Binding CurrentViewTitle}" FontSize="20" IsVisible="{Binding !HasEditor}" />
-        <StackPanel Orientation="Horizontal" Spacing="12">
-          <Button Content="Import videos…" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}" />
-          <Button Content="Open selected video" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" IsVisible="{Binding !HasEditor}" />
-          <Button Content="Edit selected clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" IsVisible="{Binding !HasEditor}" />
-          <Button Content="Back to library" Click="BackClicked" IsVisible="{Binding HasEditor}" />
-          <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}" />
-        </StackPanel>
-        <StackPanel Spacing="10" IsVisible="{Binding !HasEditor}">
-          <TextBlock Text="Select multiple videos with Command/Ctrl or Shift, then add them to an album or drag them onto its name." TextWrapping="Wrap" Foreground="#CBD0D8" />
-          <WrapPanel>
-            <ComboBox Width="170" ItemsSource="{Binding Albums}" SelectedItem="{Binding TargetAlbum, Mode=TwoWay}" Margin="0,0,10,8" AutomationProperties.Name="Destination album">
-              <ComboBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
-            </ComboBox>
-            <Button Content="Add selected to album" Click="AddSelectedClicked" IsEnabled="{Binding CanAddSelected}" Margin="0,0,10,8" />
-            <Button Content="Add videos / show album" Click="ToggleAlbumAddClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,10,8" />
-            <Button Content="Add selected here" Click="AddSelectedHereClicked" IsVisible="{Binding IsChoosingAlbumVideos}" Margin="0,0,10,8" />
-            <Button Content="Remove selected from album" Click="RemoveSelectedClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,10,8" />
-          </WrapPanel>
-        </StackPanel>
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:core="using:HomeVideoLibrary.Core" xmlns:views="using:HomeVideoLibrary.Desktop.Views"
+ x:Class="HomeVideoLibrary.Desktop.Views.MainWindow" x:DataType="vm:MainWindowViewModel" Title="{Binding Title}"
+ Width="1440" Height="900" MinWidth="900" MinHeight="600" Background="#191D1F">
+ <Grid ColumnDefinitions="Auto,*">
+  <Border x:Name="LibraryDrawer" Width="236" IsVisible="{Binding IsDrawerOpen}" Background="#23282B" BorderBrush="#353C40" BorderThickness="0,0,1,0" DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop">
+   <Grid RowDefinitions="Auto,*,Auto" Margin="20,28,20,18" IsEnabled="{Binding !HasEditor}">
+    <StackPanel Spacing="20">
+     <TextBlock Text="Home Video Library" FontSize="18" FontWeight="SemiBold"/>
+     <TextBox Text="{Binding SearchText, Mode=TwoWay}" Watermark="Search your memories" AutomationProperties.Name="Search descriptions, tags and chapters"/>
+     <Button Content="All videos" Click="ShowLibraryClicked" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" Margin="0,28,0,20">
+     <StackPanel Spacing="12">
+      <TextBlock Text="Albums" FontSize="13" FontWeight="SemiBold" Foreground="#B3BDC2"/>
+      <ListBox ItemsSource="{Binding Albums}" SelectedItem="{Binding CurrentAlbum, Mode=TwoWay}" Background="Transparent"
+       DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop" AutomationProperties.Name="Albums, drop selected videos onto an album">
+       <ListBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}" Padding="4,8" TextTrimming="CharacterEllipsis"/></DataTemplate></ListBox.ItemTemplate>
+      </ListBox>
+      <Expander Header="Manage albums" HorizontalAlignment="Stretch">
+       <StackPanel Spacing="10">
+        <TextBox Text="{Binding AlbumName, Mode=TwoWay}" Watermark="Album name" AutomationProperties.Name="Album name"/>
+        <Button Content="Create album" Click="CreateAlbumClicked" ToolTip.Tip="Creates an album with selected videos, or an empty album."/>
+        <Button Content="Rename album" Click="RenameAlbumClicked" IsEnabled="{Binding HasAlbum}"/>
+        <Button Content="Delete album only" Click="DeleteAlbumClicked" IsEnabled="{Binding HasAlbum}"/>
+       </StackPanel>
+      </Expander>
+     </StackPanel>
+    </ScrollViewer>
+    <Expander Grid.Row="2" Header="Library settings" HorizontalAlignment="Stretch">
+     <StackPanel Spacing="12">
+      <TextBlock Text="{Binding LibraryRoot}" TextWrapping="Wrap" Foreground="#AEBAC0" FontSize="11"/>
+      <Button Content="Choose library folder…" Click="ChooseLibraryClicked" IsEnabled="{Binding !IsBusy}"/>
+      <Button Content="Refresh search index" Click="RefreshIndexClicked" IsEnabled="{Binding !IsIndexing}"/>
+      <Button Content="Rebuild from MKVs" Click="RebuildIndexClicked" IsEnabled="{Binding !IsIndexing}"/>
+      <Button Content="Cancel index refresh" Click="CancelIndexClicked" IsVisible="{Binding IsIndexing}"/>
+      <TextBlock Text="{Binding IndexStatus}" TextWrapping="Wrap" FontSize="11" Foreground="#B8C2C7"/>
+     </StackPanel>
+    </Expander>
+   </Grid>
+  </Border>
+  <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="28,24,28,18">
+   <StackPanel Spacing="16" Margin="0,0,0,16">
+    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+     <ToggleButton IsChecked="{Binding IsDrawerOpen, Mode=TwoWay}" VerticalAlignment="Center" ToolTip.Tip="Show or hide library sidebar" AutomationProperties.Name="Library sidebar">
+      <Path Width="17" Height="17" Stretch="Uniform" Stroke="#DCE3E6" StrokeThickness="1.4" Data="M1,1 L17,1 17,17 1,17 Z M6,1 L6,17"/>
+     </ToggleButton>
+     <StackPanel Grid.Column="1" Spacing="4">
+      <TextBlock Text="{Binding CurrentViewTitle}" FontSize="27" FontWeight="SemiBold" IsVisible="{Binding !HasEditor}"/>
+      <TextBlock Text="{Binding LibraryCount}" FontSize="12" Foreground="#A6B2B8" IsVisible="{Binding !HasEditor}"/>
+      <Button Content="Back to library" Click="BackClicked" IsVisible="{Binding HasEditor}"/>
+     </StackPanel>
+     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+      <Button Content="Import videos…" Classes="primary" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}"/>
+      <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}"/>
+     </StackPanel>
+    </Grid>
+    <WrapPanel IsVisible="{Binding !HasEditor}">
+     <Button Content="Play" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" Margin="0,0,8,8"/>
+     <Button Content="Edit clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" Margin="0,0,16,8"/>
+     <ComboBox Width="155" PlaceholderText="Choose album" ItemsSource="{Binding Albums}" SelectedItem="{Binding TargetAlbum, Mode=TwoWay}" Margin="0,0,8,8" AutomationProperties.Name="Destination album">
+      <ComboBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate>
+     </ComboBox>
+     <Button Content="Add to album" Click="AddSelectedClicked" IsEnabled="{Binding CanAddSelected}" Margin="0,0,8,8"/>
+     <Button Content="Add videos / show album" Click="ToggleAlbumAddClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,8,8"/>
+     <Button Content="Add selected here" Click="AddSelectedHereClicked" IsVisible="{Binding IsChoosingAlbumVideos}" Margin="0,0,8,8"/>
+     <Button Content="Remove from album" Click="RemoveSelectedClicked" IsVisible="{Binding HasAlbum}" Margin="0,0,8,8"/>
+    </WrapPanel>
         <Border IsVisible="{Binding CloseWarning}" Padding="12" Background="#363023">
           <StackPanel Spacing="10">
             <TextBlock Text="This video has unsaved changes. Save them or discard them before leaving." TextWrapping="Wrap" />
@@ -64,22 +76,29 @@
             </WrapPanel>
           </StackPanel>
         </Border>
-      </StackPanel>
-      <ListBox x:Name="VideoList" Grid.Row="1" ItemsSource="{Binding Videos}" SelectedItem="{Binding SelectedVideo, Mode=TwoWay}" SelectionMode="Multiple"
-               SelectionChanged="VideoSelectionChanged" Background="Transparent" IsVisible="{Binding !HasEditor}" DoubleTapped="VideoDoubleTapped" KeyDown="VideoListKeyDown">
-        <ListBox.ItemTemplate>
-          <DataTemplate x:DataType="core:LibraryVideo">
-            <Border Padding="16" Margin="0,0,0,8" Background="#25282D" CornerRadius="6">
-              <StackPanel Spacing="5">
-                <TextBlock Text="{Binding Label}" FontSize="18" TextTrimming="CharacterEllipsis" />
-                <TextBlock Text="{Binding Title}" Foreground="#CBD0D8" TextTrimming="CharacterEllipsis" />
-                <TextBlock Text="{Binding Duration}" Foreground="#A3AAB5" />
-                <TextBlock Text="{Binding RelativePath}" FontSize="11" Foreground="#9299A5" />
-              </StackPanel>
-            </Border>
-          </DataTemplate>
-        </ListBox.ItemTemplate>
-      </ListBox>
+
+   </StackPanel>
+   <Grid Grid.Row="1" IsVisible="{Binding !HasEditor}" RowDefinitions="Auto,*">
+    <Grid ColumnDefinitions="Auto,*,Auto" Margin="3,0,3,16">
+     <Border Background="#F2F0E9" CornerRadius="3" Padding="13,7"><TextBlock x:Name="ScrollDate" Text="Your collection" Foreground="#252C30" FontSize="13" FontWeight="SemiBold"/></Border>
+     <TextBlock Grid.Column="2" Text="{Binding SelectionLabel}" Foreground="#A6B2B8" VerticalAlignment="Center" FontSize="12"/>
+    </Grid>
+    <ListBox x:Name="VideoList" Grid.Row="1" ItemsSource="{Binding TapeRows}" Background="Transparent" Padding="0" IsVisible="{Binding !IsEmpty}" KeyDown="VideoListKeyDown" SelectionMode="Single" AutomationProperties.Name="Chronological video tapes">
+     <ListBox.Styles><Style Selector="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style><Style Selector="ListBoxItem:pointerover /template/ ContentPresenter"><Setter Property="Background" Value="Transparent"/></Style><Style Selector="ListBoxItem:selected /template/ ContentPresenter"><Setter Property="Background" Value="Transparent"/></Style></ListBox.Styles>
+     <ListBox.ItemTemplate><DataTemplate x:DataType="vm:TapeRow">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+       <views:TapeView DataContext="{Binding Left}"/>
+       <Border Grid.Column="1" IsVisible="{Binding HasRight}" Width="{Binding $parent[ListBox].Bounds.Width, Converter={x:Static views:HalfWidthConverter.Instance}}"><views:TapeView DataContext="{Binding Right}"/></Border>
+      </Grid>
+     </DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+    <StackPanel Grid.Row="1" IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420" Spacing="18" Margin="24">
+     <Path Width="96" Height="42" Stretch="Uniform" Stroke="#889A9F" StrokeThickness="1.4" Data="M4,1 L92,1 Q95,1 95,4 L95,38 Q95,41 92,41 L4,41 Q1,41 1,38 L1,4 Q1,1 4,1 Z M16,9 L81,9 81,33 16,33 Z M22,25 L75,25"/>
+     <TextBlock Text="{Binding EmptyTitle}" FontSize="25" TextAlignment="Center" TextWrapping="Wrap"/>
+     <TextBlock Text="{Binding EmptyMessage}" Foreground="#AFBCC2" TextWrapping="Wrap" TextAlignment="Center"/>
+     <Button Content="Choose library folder…" Click="ChooseLibraryClicked" HorizontalAlignment="Center" IsEnabled="{Binding !IsBusy}" IsVisible="{Binding !HasLibrary}"/>
+    </StackPanel>
+   </Grid>
       <ContentControl Grid.Row="1" Content="{Binding Editor}" IsVisible="{Binding HasVideoEditor}">
         <ContentControl.ContentTemplate>
           <DataTemplate x:DataType="vm:VideoEditorViewModel"><views:VideoEditorView /></DataTemplate>
@@ -88,10 +107,17 @@
       <ContentControl Grid.Row="1" Content="{Binding ClipEditor}" IsVisible="{Binding HasClipEditor}">
         <ContentControl.ContentTemplate><DataTemplate x:DataType="vm:ClipEditorViewModel"><views:ClipEditorView /></DataTemplate></ContentControl.ContentTemplate>
       </ContentControl>
-      <StackPanel Grid.Row="2" Spacing="12" Margin="0,20,0,0">
-        <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" IsVisible="{Binding IsBusy}" />
-        <ScrollViewer MaxHeight="140"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#A3AAB5" /></ScrollViewer>
-      </StackPanel>
+
+   <StackPanel Grid.Row="2" Spacing="8" Margin="3,14,3,0">
+    <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" Height="3" IsVisible="{Binding IsBusy}"/>
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+     <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Status}" Foreground="#A3B0B7" FontSize="11"/>
+     <TextBlock Grid.Column="1" Text="Click to play · check to select" Foreground="#A3B0B7" FontSize="11" IsVisible="{Binding !HasEditor}"/>
     </Grid>
+   </StackPanel>
   </Grid>
+  <Border Grid.ColumnSpan="2" IsVisible="{Binding IsDraggingTapes}" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0" Padding="16,10" CornerRadius="4" Background="#EAE5D5">
+   <TextBlock Text="Drop on an album to add selected videos" Foreground="#252D30"/>
+  </Border>
+ </Grid>
 </Window>

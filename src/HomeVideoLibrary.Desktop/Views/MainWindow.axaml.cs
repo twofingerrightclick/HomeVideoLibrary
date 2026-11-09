@@ -16,24 +16,49 @@ public sealed partial class MainWindow : Window
     private static readonly DataFormat<string> VideoIdsFormat = DataFormat.CreateStringApplicationFormat("HomeVideoLibrary.VideoIds");
     private Point? _dragStart;
     private bool _dragging;
+    private TapeViewModel? _pressedTape;
     private Guid[] _dragVideoIds = [];
     public MainWindow()
     {
         InitializeComponent();
         Opened += async (_, _) => await ViewModel.RestoreLibraryAsync();
         AddHandler(KeyDownEvent, MarkerKeyDown, RoutingStrategies.Bubble);
+        VideoList.SizeChanged += (_, _) => { ViewModel.SetTapeColumns(VideoList.Bounds.Width >= 1000 ? 2 : 1); UpdateScrollDate(); };
+        VideoList.AddHandler(ScrollViewer.ScrollChangedEvent, (_, _) => UpdateScrollDate());
         VideoList.AddHandler(PointerPressedEvent, (_, args) =>
         {
             var source = args.Source as Control;
-            var item = source as ListBoxItem ?? source?.FindAncestorOfType<ListBoxItem>();
-            if (!args.GetCurrentPoint(VideoList).Properties.IsLeftButtonPressed || item?.DataContext is not LibraryVideo video) return;
+            var tapeView = source as TapeView ?? source?.FindAncestorOfType<TapeView>();
+            if (source is CheckBox || source?.FindAncestorOfType<CheckBox>() is not null) return;
+            if (!args.GetCurrentPoint(VideoList).Properties.IsLeftButtonPressed || tapeView?.DataContext is not TapeViewModel tape) return;
             _dragStart = args.GetPosition(VideoList);
-            // Capture an existing multi-selection before ListBox's press handler can collapse it.
-            _dragVideoIds = ViewModel.SelectedVideos.Any(selected => selected.Id == video.Id)
-                ? ViewModel.SelectedVideos.Select(selected => selected.Id).ToArray() : [video.Id];
+            _pressedTape = tape;
+            args.Pointer.Capture(this);
+            _dragVideoIds = tape.IsSelected ? ViewModel.SelectedVideos.Select(selected => selected.Id).ToArray() : [tape.Video.Id];
         }, RoutingStrategies.Tunnel);
-        VideoList.AddHandler(PointerMovedEvent, VideoPointerMoved, RoutingStrategies.Bubble, handledEventsToo: true);
-        VideoList.AddHandler(PointerReleasedEvent, (_, _) => _dragStart = null, RoutingStrategies.Bubble, handledEventsToo: true);
+        AddHandler(PointerMovedEvent, VideoPointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(PointerReleasedEvent, async (_, args) =>
+        {
+            var pressed = _pressedTape; _pressedTape = null;
+            var start = _dragStart; _dragStart = null;
+            var wasDragging = _dragging;
+            _dragging = false; ViewModel.IsDraggingTapes = false;
+            args.Pointer.Capture(null);
+            if (pressed is null || start is null) return;
+            var delta = args.GetPosition(VideoList) - start.Value;
+            if (wasDragging || Math.Abs(delta.X) + Math.Abs(delta.Y) >= 8)
+            {
+                var target = this.InputHitTest(args.GetPosition(this)) as Control;
+                var album = target?.DataContext as VideoAlbum
+                    ?? target?.GetVisualAncestors().OfType<Control>().Select(control => control.DataContext).OfType<VideoAlbum>().FirstOrDefault();
+                if (album is null && (target == LibraryDrawer || target?.GetVisualAncestors().Contains(LibraryDrawer) == true))
+                    album = ViewModel.CurrentAlbum ?? ViewModel.TargetAlbum;
+                if (album is not null) await ViewModel.AddToAlbumAsync(album.Id, _dragVideoIds);
+                return;
+            }
+            if (args.KeyModifiers != KeyModifiers.None) ViewModel.ToggleTapeSelection(pressed);
+            else await ViewModel.OpenVideoAsync(pressed.Video);
+        }, RoutingStrategies.Bubble, handledEventsToo: true);
         Closing += async (_, args) =>
         {
             if (_allowClose) return;
@@ -44,6 +69,7 @@ public sealed partial class MainWindow : Window
             CloseWindowIfRequested(await ViewModel.RequestCloseEditorAsync(closeWindow: true));
         };
         Closed += (_, _) => ViewModel.CancelIndex();
+        DataContextChanged += (_, _) => { if (DataContext is MainWindowViewModel vm) vm.TapeRows.CollectionChanged += (_, _) => UpdateScrollDate(); };
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
@@ -75,24 +101,20 @@ public sealed partial class MainWindow : Window
     private async void AddSelectedHereClicked(object? sender, RoutedEventArgs args) => await ViewModel.AddSelectedToCurrentAsync();
     private async void RemoveSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.RemoveSelectedFromCurrentAsync();
     private void ToggleAlbumAddClicked(object? sender, RoutedEventArgs args) => ViewModel.ToggleAlbumAddMode();
-    private void VideoSelectionChanged(object? sender, SelectionChangedEventArgs args)
+    private void UpdateScrollDate()
     {
-        if (DataContext is MainWindowViewModel vm && sender is ListBox list) vm.SetSelectedVideos(list.SelectedItems?.OfType<LibraryVideo>() ?? []);
+        var scroll = VideoList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        var index = (int)((scroll?.Offset.Y ?? 0) / 72);
+        ScrollDate.Text = ViewModel.TapeRows.Count > 0 ? ViewModel.TapeRows[Math.Clamp(index, 0, ViewModel.TapeRows.Count - 1)].Left.Video.RecordedAt.ToString("MMMM yyyy") : "Your collection";
     }
 
-    private async void VideoPointerMoved(object? sender, PointerEventArgs args)
+    private void VideoPointerMoved(object? sender, PointerEventArgs args)
     {
-        if (_dragging || _dragStart is not { } start || !args.GetCurrentPoint(VideoList).Properties.IsLeftButtonPressed || _dragVideoIds.Length == 0) return;
+        if (_dragging || _dragStart is not { } start || _dragVideoIds.Length == 0) return;
         var delta = args.GetPosition(VideoList) - start;
         if (Math.Abs(delta.X) + Math.Abs(delta.Y) < 8) return;
-        _dragging = true; _dragStart = null;
-        try
-        {
-            using var data = new DataTransfer();
-            data.Add(DataTransferItem.Create(VideoIdsFormat, JsonSerializer.Serialize(new VideoDragPayload(ViewModel.LibraryRoot, _dragVideoIds))));
-            await DragDrop.DoDragDropAsync(args, data, DragDropEffects.Copy);
-        }
-        finally { _dragging = false; }
+        _dragging = true;
+        ViewModel.IsDraggingTapes = true;
     }
 
     private void AlbumDragOver(object? sender, DragEventArgs args)
@@ -117,17 +139,14 @@ public sealed partial class MainWindow : Window
     }
 
     private sealed record VideoDragPayload(string LibraryRoot, Guid[] Ids);
-    private async void VideoDoubleTapped(object? sender, TappedEventArgs args)
-    {
-        if (sender is ListBox { SelectedItem: LibraryVideo video }) await ViewModel.OpenVideoAsync(video);
-    }
     private async void VideoListKeyDown(object? sender, KeyEventArgs args)
     {
-        if (args.Key == Key.Enter && sender is ListBox { SelectedItem: LibraryVideo video })
-        {
-            args.Handled = true;
-            await ViewModel.OpenVideoAsync(video);
-        }
+        var focused = FocusManager?.GetFocusedElement() as Control;
+        var tape = (focused as TapeView ?? focused?.FindAncestorOfType<TapeView>())?.DataContext as TapeViewModel
+            ?? (VideoList.SelectedItem as TapeRow)?.Left;
+        if (tape is null || focused is CheckBox) return;
+        if (args.Key == Key.Space) { ViewModel.ToggleTapeSelection(tape); args.Handled = true; }
+        if (args.Key == Key.Enter) { args.Handled = true; await ViewModel.OpenVideoAsync(tape.Video); }
     }
     private async void OpenSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenSelectedAsync();
     private async void EditClipsClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenClipEditorAsync();

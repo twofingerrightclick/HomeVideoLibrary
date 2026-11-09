@@ -20,11 +20,11 @@ dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~ImportTests
 
 Choose a library folder in the left sidebar, then use **Import videos…** to copy media into it. The selected library reopens on the next launch. Sources remain untouched. Cancel stops the active import and keeps only previously completed files. To close during an import, cancel first and close after cleanup completes.
 
-Install FFmpeg and ffprobe for import (`brew install ffmpeg` on macOS; use your Linux package manager or Windows FFmpeg distribution elsewhere). MKVToolNix and native libVLC are planned dependencies for later metadata and playback stages.
+Install FFmpeg and ffprobe for import (`brew install ffmpeg` on macOS; use your Linux package manager or Windows FFmpeg distribution elsewhere). Install MKVToolNix for metadata editing and native libVLC for embedded playback (on macOS, a local VLC installation supplies libVLC; the VLC GUI is not used as the player).
 
 Import probes actual media, remuxes video/audio/subtitle/attachment streams to MKV with metadata and chapters, and falls back to H.264/AAC/SRT conversion when stream copying fails. Bitmap subtitles or other unsupported streams can still cause conversion to fail; the source is preserved and the failed output is removed. Existing Matroska files are copied byte-for-byte to preserve all embedded tags and attachments. Before publication, import checks output duration and stream count, then decodes all video/audio streams and compares the observed playback duration to the source duration. This catches truncated files whose headers still declare their original length, and adds a full playback scan to import time. Conversion and playback validation each have a 24-hour timeout; probe has a 60-second timeout. All stages support cancellation.
 
-The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite owns catalog paths and albums; metadata/search projections are rebuildable from MKV. The final VHS interface is added in the next visual stage.
+The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable extracted previews. SQLite owns catalog paths and albums; metadata/search projections are rebuildable from MKV. The library presents virtualized VHS spines with handwritten descriptions and a scroll-linked month/year marker. Click a label to play; check boxes or modifier-click to select videos. Space toggles a keyboard-focused tape and Enter plays it. Move over a label to preview chosen thumbnails or disposable cached frames; hovering never saves a thumbnail into the MKV. The sidebar and playback inspector can be collapsed.
 
 ## Trim, split, and merge
 

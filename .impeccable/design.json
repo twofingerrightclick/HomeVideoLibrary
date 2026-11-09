@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-08T00:00:00Z",
+  "title": "Design System: Home Video Library",
+  "extensions": {
+    "shadows": [
+      { "name": "tape", "value": "0 3 5 0 #70000000", "purpose": "Native Avalonia shell depth" },
+      { "name": "preview", "value": "0 8 20 0 #90000000", "purpose": "Floating native frame preview" }
+    ],
+    "motion": [
+      { "name": "tape-lift", "value": "140ms translateY(-2px)", "purpose": "Subtle hover protrusion" },
+      { "name": "preview-crossfade", "value": "160ms opacity", "purpose": "Frame changes" }
+    ],
+    "breakpoints": [{ "name": "two-tapes", "value": "1000px available list width" }],
+    "nativeSource": "src/HomeVideoLibrary.Desktop/Views/TapeView.axaml",
+    "nativeNote": "Avalonia controls are authoritative; web component snippets and synthesized color ramps are intentionally omitted."
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "The personal tape shelf",
+    "overview": "Native controls support real library work; warm paper and handwritten descriptions carry the personal character.",
+    "keyCharacteristics": ["Dark navigation and pale handwritten labels", "Virtualized chronological browsing", "Native focus and explicit actions"],
+    "rules": [], "dos": [], "donts": []
+  }
+}

@@ -32,6 +32,44 @@ public sealed class MainWindowViewModel : ViewModelBase
     private IReadOnlyList<LibraryVideo> _selectedVideos = [];
     private ClipEditorViewModel? _clipEditor;
 
+    private bool _isDrawerOpen = true;
+    private bool _isDraggingTapes;
+    public bool IsDraggingTapes { get => _isDraggingTapes; set => SetProperty(ref _isDraggingTapes, value); }
+    private int _tapeColumns = 1;
+    public bool IsDrawerOpen { get => _isDrawerOpen; set => SetProperty(ref _isDrawerOpen, value); }
+    public ObservableCollection<TapeRow> TapeRows { get; } = [];
+    public IReadOnlyList<TapeViewModel> Tapes { get; private set; } = [];
+    public bool IsEmpty => Videos.Count == 0 && !HasEditor;
+    public bool HasLibrary => _catalog is not null;
+    public string EmptyTitle => !HasLibrary ? "A home for your home videos" : !string.IsNullOrWhiteSpace(SearchText) ? "No matching videos" : HasAlbum ? "No videos in this view" : "Your collection starts here";
+    public string EmptyMessage => !HasLibrary ? "Choose a library folder, then import your videos. Your originals stay untouched." : !string.IsNullOrWhiteSpace(SearchText) ? "Try another description, tag or chapter, or clear your search to see the collection." : HasAlbum ? "Use Add videos to find videos outside this album, or return to All videos." : "Import your first videos to start your chronological collection. Your originals stay untouched.";
+    public string LibraryCount => $"{Videos.Count} {(Videos.Count == 1 ? "video" : "videos")} · newest first";
+    public string SelectionLabel => $"{SelectedVideos.Count} selected";
+    public void SetTapeColumns(int columns)
+    {
+        if (_tapeColumns == columns) return;
+        _tapeColumns = columns; RebuildRows();
+    }
+    private void RebuildTapes()
+    {
+        Tapes = Videos.OrderByDescending(video => video.RecordedAt).ThenBy(video => video.Id)
+            .Select(video => new TapeViewModel(video, UpdateTapeSelection)).ToArray();
+        RebuildRows(); OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(LibraryCount));
+        OnPropertyChanged(nameof(HasLibrary)); OnPropertyChanged(nameof(EmptyTitle)); OnPropertyChanged(nameof(EmptyMessage));
+    }
+    private void RebuildRows()
+    {
+        TapeRows.Clear();
+        for (var i = 0; i < Tapes.Count; i += _tapeColumns)
+            TapeRows.Add(new TapeRow(Tapes[i], _tapeColumns == 2 && i + 1 < Tapes.Count ? Tapes[i + 1] : null));
+    }
+    private void UpdateTapeSelection()
+    {
+        SetSelectedVideos(Tapes.Where(tape => tape.IsSelected).Select(tape => tape.Video));
+        SelectedVideo = SelectedVideos.FirstOrDefault(); OnPropertyChanged(nameof(SelectionLabel));
+    }
+    public void ToggleTapeSelection(TapeViewModel tape) => tape.IsSelected = !tape.IsSelected;
+    public IVideoMetadataService? CreatePreviewService() => _catalog is null ? null : new MatroskaMetadataService(_catalog, MediaTools.Discover());
     public ObservableCollection<LibraryVideo> Videos { get; } = [];
     public ObservableCollection<VideoAlbum> Albums { get; } = [];
     public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) _ = RefreshVideosAsync(debounce: true); } }
@@ -55,7 +93,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string CurrentViewTitle => IsChoosingAlbumVideos ? $"Add videos to {CurrentAlbum?.Name}" : CurrentAlbum?.Name ?? "All videos";
     public IReadOnlyList<LibraryVideo> SelectedVideos => _selectedVideos;
     public bool CanAddSelected => TargetAlbum is not null && SelectedVideos.Count > 0 && !IsBusy;
-    public void SetSelectedVideos(IEnumerable<LibraryVideo> videos) { _selectedVideos = videos.ToArray(); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); }
+    public void SetSelectedVideos(IEnumerable<LibraryVideo> videos) { _selectedVideos = videos.ToArray(); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); OnPropertyChanged(nameof(SelectionLabel)); }
     public string LibraryRoot { get => _libraryRoot; private set => SetProperty(ref _libraryRoot, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
@@ -223,6 +261,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (version != _queryVersion || generation != _libraryGeneration) return;
             Videos.Clear(); SelectedVideo = null; SetSelectedVideos([]);
             foreach (var video in videos) Videos.Add(video);
+            RebuildTapes();
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) { if (version == _queryVersion && generation == _libraryGeneration) Status = exception.Message; }
