@@ -41,6 +41,49 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
+    public async Task RejectsTruncatedMkvEvenWhenItsHeadersRetainTheOriginalDuration()
+    {
+        Directory.CreateDirectory(_root);
+        var source = Path.Combine(_root, "truncated.mkv");
+        var generated = await new MediaProcess().RunAsync(_tools.Ffmpeg,
+            ["-hide_banner", "-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=128x96:rate=10", "-t", "12", "-c:v", "libx264", "-pix_fmt", "yuv420p", source],
+            TimeSpan.FromSeconds(30));
+        Assert.Equal(0, generated.ExitCode);
+        await using (var truncated = new FileStream(source, FileMode.Open, FileAccess.Write))
+            truncated.SetLength(truncated.Length * 3 / 5);
+        var originalHash = SHA256.HashData(await File.ReadAllBytesAsync(source));
+        var probe = await new MediaProcess().RunAsync(_tools.Ffprobe,
+            ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", source], TimeSpan.FromSeconds(30));
+        Assert.Equal(0, probe.ExitCode);
+        Assert.Equal(12, double.Parse(probe.StandardOutput.Trim(), System.Globalization.CultureInfo.InvariantCulture));
+        var catalog = await CreateCatalogAsync();
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => new VideoImporter(catalog, _tools).ImportAsync(source));
+
+        Assert.Equal(originalHash, SHA256.HashData(await File.ReadAllBytesAsync(source)));
+        Assert.Empty(await catalog.ListAsync());
+        Assert.Empty(Directory.GetFiles(catalog.Paths.VideosDirectory));
+    }
+
+    [Fact]
+    public async Task CancellationDuringPlaybackValidationCleansUpStagedMedia()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        using var cancellation = new CancellationTokenSource();
+        var progress = new InlineProgress(update =>
+        {
+            if (update.Stage == "Checking complete video and audio playback") cancellation.Cancel();
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new VideoImporter(catalog, _tools).ImportAsync(source, progress, cancellation.Token));
+
+        Assert.True(File.Exists(source));
+        Assert.Empty(await catalog.ListAsync());
+        Assert.Empty(Directory.GetFiles(catalog.Paths.VideosDirectory));
+    }
+
+    [Fact]
     public async Task RejectsNonVideoWithoutPublishingFiles()
     {
         Directory.CreateDirectory(_root);
