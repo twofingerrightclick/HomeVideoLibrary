@@ -83,6 +83,9 @@ public class TagChipInput : TemplatedControl
 
     // Down on an empty entry asks for the full list; Esc hides the list until the text changes.
     private bool _isBrowsing;
+    private bool _isAttached;
+    private bool _isReplacingTags;
+    private bool _backspaceHeld;
     private bool _isDismissed;
 
     public TagChipInput()
@@ -162,6 +165,7 @@ public class TagChipInput : TemplatedControl
         if (_entry is not null)
         {
             _entry.RemoveHandler(KeyDownEvent, OnEntryKeyDown);
+            _entry.RemoveHandler(KeyUpEvent, OnEntryKeyUp);
             _entry.RemoveHandler(TextInputEvent, OnEntryTextInput);
             _entry.RemoveHandler(TextBox.PastingFromClipboardEvent, OnEntryPasting);
             _entry.GotFocus -= OnEntryFocusChanged;
@@ -169,6 +173,10 @@ public class TagChipInput : TemplatedControl
         }
 
         _field?.RemoveHandler(PointerPressedEvent, OnFieldPointerPressed);
+        if (_field is not null)
+        {
+            _field.SizeChanged -= OnFieldSizeChanged;
+        }
 
         _field = e.NameScope.Find<Border>(FieldPartName);
         _chipPanel = e.NameScope.Find<Panel>(ChipPanelPartName);
@@ -180,6 +188,7 @@ public class TagChipInput : TemplatedControl
         {
             // Tunnel so these run before TextBox consumes Up/Down/Enter/Backspace and inserts commas.
             _entry.AddHandler(KeyDownEvent, OnEntryKeyDown, RoutingStrategies.Tunnel);
+            _entry.AddHandler(KeyUpEvent, OnEntryKeyUp, RoutingStrategies.Tunnel);
             _entry.AddHandler(TextInputEvent, OnEntryTextInput, RoutingStrategies.Tunnel);
             _entry.AddHandler(TextBox.PastingFromClipboardEvent, OnEntryPasting);
             _entry.GotFocus += OnEntryFocusChanged;
@@ -187,6 +196,10 @@ public class TagChipInput : TemplatedControl
         }
 
         _field?.AddHandler(PointerPressedEvent, OnFieldPointerPressed);
+        if (_field is not null)
+        {
+            _field.SizeChanged += OnFieldSizeChanged;
+        }
 
         RebuildChips();
         RefreshSuggestions();
@@ -208,6 +221,11 @@ public class TagChipInput : TemplatedControl
         {
             _isDismissed = false;
             _highlightedIndex = -1;
+            if (!string.IsNullOrEmpty(change.GetNewValue<string?>()))
+            {
+                _isBrowsing = false;
+            }
+
             RefreshSuggestions();
         }
         else if (change.Property == MaxSuggestionsProperty || change.Property == IsEffectivelyEnabledProperty)
@@ -216,13 +234,47 @@ public class TagChipInput : TemplatedControl
         }
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _isAttached = true;
+        SubscribeTags(Tags);
+        SubscribeSource(SuggestionsSource);
+        RebuildChips();
+        RefreshSuggestions();
+    }
+
+    // Subscribing only while attached keeps the app-lifetime tag index from rooting every input ever shown.
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
+        _isAttached = false;
+        SubscribeTags(null);
+        SubscribeSource(null);
         CloseDropDown();
     }
 
     private void ObserveTags(IList<string>? tags)
+    {
+        if (tags is null)
+        {
+            SubscribeTags(null);
+            SetCurrentValue(TagsProperty, new ObservableCollection<string>());
+            return;
+        }
+
+        // A different tag list means a different video; text typed for the previous one must not carry over.
+        if (!_isReplacingTags)
+        {
+            ClearEntry();
+        }
+
+        SubscribeTags(tags);
+        RebuildChips();
+        RefreshSuggestions();
+    }
+
+    private void SubscribeTags(IList<string>? tags)
     {
         if (_observedTags is not null)
         {
@@ -230,45 +282,59 @@ public class TagChipInput : TemplatedControl
             _observedTags = null;
         }
 
-        if (tags is null)
-        {
-            SetCurrentValue(TagsProperty, new ObservableCollection<string>());
-            return;
-        }
-
-        if (tags is INotifyCollectionChanged observable)
+        if (_isAttached && tags is INotifyCollectionChanged observable)
         {
             _observedTags = observable;
             observable.CollectionChanged += OnTagsCollectionChanged;
         }
-
-        RebuildChips();
-        RefreshSuggestions();
     }
 
     private void ObserveSource(IEnumerable<TagFrequency>? source)
     {
-        if (_observedSource is not null)
-        {
-            _observedSource.CollectionChanged -= OnSourceCollectionChanged;
-        }
-
-        _observedSource = source as INotifyCollectionChanged;
-        if (_observedSource is not null)
-        {
-            _observedSource.CollectionChanged += OnSourceCollectionChanged;
-        }
-
+        SubscribeSource(source);
         RefreshSuggestions();
     }
 
+    private void SubscribeSource(IEnumerable<TagFrequency>? source)
+    {
+        if (_observedSource is not null)
+        {
+            _observedSource.CollectionChanged -= OnSourceCollectionChanged;
+            _observedSource = null;
+        }
+
+        if (_isAttached && source is INotifyCollectionChanged observable)
+        {
+            _observedSource = observable;
+            observable.CollectionChanged += OnSourceCollectionChanged;
+        }
+    }
+
+    // Collections may be filled by a background library scan, but controls may only be touched on the UI
+    // thread. Marshalling avoids the cross-thread crash; the collection should still be mutated on the UI
+    // thread, since enumerating it here while a worker writes is a race the control cannot prevent.
     private void OnTagsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnTagsCollectionChanged(sender, e));
+            return;
+        }
+
         RebuildChips();
         RefreshSuggestions();
     }
 
-    private void OnSourceCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => RefreshSuggestions();
+    private void OnSourceCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(RefreshSuggestions);
+            return;
+        }
+
+        RefreshSuggestions();
+    }
 
     private void OnEntryFocusChanged(object? sender, RoutedEventArgs e)
     {
@@ -277,9 +343,23 @@ public class TagChipInput : TemplatedControl
             _isBrowsing = false;
             _isDismissed = false;
             _highlightedIndex = -1;
+            CommitPendingText();
         }
 
         RefreshSuggestions();
+    }
+
+    // Leaving the field keeps what was typed as a tag rather than silently holding it for later.
+    private void CommitPendingText()
+    {
+        if (TagRules.Normalize(Text) is null)
+        {
+            return;
+        }
+
+        var text = Text;
+        ClearEntry();
+        AddTags(text);
     }
 
     private void OnFieldPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -327,16 +407,32 @@ public class TagChipInput : TemplatedControl
                 RefreshSuggestions();
                 e.Handled = true;
                 break;
-            case Key.Back when string.IsNullOrEmpty(Text) && Tags is { Count: > 0 } tags:
-                RemoveTagAt(tags.Count - 1);
-                e.Handled = true;
+            case Key.Back:
+                // Only a fresh, unmodified press on an already-empty entry removes a chip, so holding
+                // Backspace to clear text (or Ctrl+Backspace) never eats chips once the text is gone.
+                var removeChip = plain && !_backspaceHeld && string.IsNullOrEmpty(Text) && Tags is { Count: > 0 };
+                _backspaceHeld = true;
+                if (removeChip)
+                {
+                    RemoveTagAt(Tags!.Count - 1);
+                    e.Handled = true;
+                }
+
                 break;
+        }
+    }
+
+    private void OnEntryKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Back)
+        {
+            _backspaceHeld = false;
         }
     }
 
     private void OnEntryTextInput(object? sender, TextInputEventArgs e)
     {
-        if (e.Text?.Contains(',') == true)
+        if (e.Text is { } text && TagRules.LastSeparatorIndex(text) >= 0)
         {
             e.Handled = true;
             InsertIntoEntry(e.Text, commitTrailing: false);
@@ -352,10 +448,19 @@ public class TagChipInput : TemplatedControl
         }
 
         e.Handled = true;
-        var text = await clipboard.TryGetTextAsync();
+        string? text;
+        try
+        {
+            text = await clipboard.TryGetTextAsync();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or TimeoutException or System.Runtime.InteropServices.COMException)
+        {
+            return;
+        }
+
         if (!string.IsNullOrEmpty(text))
         {
-            InsertIntoEntry(text, commitTrailing: text.Contains(','));
+            InsertIntoEntry(text, commitTrailing: TagRules.LastSeparatorIndex(text) >= 0);
         }
     }
 
@@ -372,7 +477,7 @@ public class TagChipInput : TemplatedControl
         var end = Math.Clamp(Math.Max(selectionStart, selectionEnd), 0, current.Length);
         var composed = string.Concat(current.AsSpan(0, start), inserted, current.AsSpan(end));
 
-        var lastComma = composed.LastIndexOf(',');
+        var lastComma = TagRules.LastSeparatorIndex(composed);
         if (lastComma < 0 && !commitTrailing)
         {
             SetEntryText(composed, start + inserted.Length);
@@ -440,7 +545,16 @@ public class TagChipInput : TemplatedControl
         {
             var copy = new ObservableCollection<string>(tags);
             edit(copy);
-            SetCurrentValue(TagsProperty, copy);
+            _isReplacingTags = true;
+            try
+            {
+                SetCurrentValue(TagsProperty, copy);
+            }
+            finally
+            {
+                _isReplacingTags = false;
+            }
+
             return;
         }
 
@@ -557,21 +671,41 @@ public class TagChipInput : TemplatedControl
             && IsEffectivelyEnabled
             && !_isDismissed
             && (_isBrowsing || query is not null);
+        var highlighted = HighlightedSuggestion?.Tag;
         _suggestions = wanted && SuggestionsSource is { } source
             ? TagRules.RankSuggestions(query, source, Tags ?? [], MaxSuggestions)
             : [];
-        if (_highlightedIndex >= _suggestions.Count)
-        {
-            _highlightedIndex = -1;
-        }
+
+        // A re-rank can reorder rows; keep the highlight on the same tag so Enter commits what is shown.
+        _highlightedIndex = highlighted is null ? -1 : IndexOfSuggestion(highlighted);
 
         RebuildSuggestionRows(query ?? string.Empty);
-        if (_dropDown is not null && _field is not null)
+        MatchDropDownWidth();
+
+        IsDropDownOpen = _suggestions.Count > 0;
+    }
+
+    private void OnFieldSizeChanged(object? sender, SizeChangedEventArgs e) => MatchDropDownWidth();
+
+    private void MatchDropDownWidth()
+    {
+        if (_dropDown is not null && _field is { Bounds.Width: > 0 })
         {
             _dropDown.Width = _field.Bounds.Width;
         }
+    }
 
-        IsDropDownOpen = _suggestions.Count > 0;
+    private int IndexOfSuggestion(string tag)
+    {
+        for (var i = 0; i < _suggestions.Count; i++)
+        {
+            if (TagRules.Comparer.Equals(_suggestions[i].Tag, tag))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private void CloseDropDown()

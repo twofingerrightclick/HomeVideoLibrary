@@ -57,9 +57,18 @@ public static class TagRules
         return builder.ToString();
     }
 
-    /// <summary>Splits on commas, normalizes each piece, and drops empty pieces and case-insensitive repeats.</summary>
+    /// <summary>
+    /// Characters that end a tag: ASCII comma, the full-width and ideographic commas CJK input methods
+    /// produce, and line breaks so a pasted one-per-line list splits too.
+    /// </summary>
+    public static IReadOnlyList<char> Separators { get; } = [',', '\uFF0C', '\u3001', '\n', '\r'];
+
+    /// <summary>Splits on <see cref="Separators"/>, normalizes each piece, and drops empty pieces and case-insensitive repeats.</summary>
     public static IReadOnlyList<string> SplitEntry(string? raw) =>
-        raw is null ? [] : Distinct(raw.Split(',').Select(Normalize).OfType<string>());
+        raw is null ? [] : Distinct(raw.Split([.. Separators]).Select(Normalize).OfType<string>());
+
+    /// <summary>Index of the last separator in <paramref name="text"/>, or -1.</summary>
+    public static int LastSeparatorIndex(string text) => text.LastIndexOfAny([.. Separators]);
 
     public static bool Contains(IEnumerable<string> tags, string tag) => tags.Contains(tag, Comparer);
 

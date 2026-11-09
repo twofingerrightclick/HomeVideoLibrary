@@ -19,6 +19,21 @@ public sealed class TagRulesTests
     public void SplitEntry_SplitsOnCommasAndNormalizesEachPiece() =>
         Assert.Equal(["beach", "Grandma", "summer 1994"], TagRules.SplitEntry("beach, Grandma ,  summer 1994"));
 
+    [Theory]
+    [InlineData("beach\uFF0Cpool")]
+    [InlineData("beach\u3001pool")]
+    [InlineData("beach\npool")]
+    [InlineData("beach\r\npool")]
+    public void SplitEntry_SplitsOnImeCommasAndLineBreaks(string entry) =>
+        Assert.Equal(["beach", "pool"], TagRules.SplitEntry(entry));
+
+    [Theory]
+    [InlineData("a, b", 1)]
+    [InlineData("a\uFF0Cb\nc", 3)]
+    [InlineData("abc", -1)]
+    public void LastSeparatorIndex_FindsTheFinalSeparatorOfAnyKind(string text, int expected) =>
+        Assert.Equal(expected, TagRules.LastSeparatorIndex(text));
+
     [Fact]
     public void SplitEntry_DropsEmptyPiecesAndCaseInsensitiveRepeats() =>
         Assert.Equal(["Beach", "pool"], TagRules.SplitEntry(",Beach,, beach ,pool,"));
