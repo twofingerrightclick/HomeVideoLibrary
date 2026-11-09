@@ -1,228 +1,359 @@
-using System.Globalization;
+using System.Diagnostics;
 using System.Security.Cryptography;
-using System.Text.Json;
 using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Infrastructure.Editing;
 
 namespace HomeVideoLibrary.Infrastructure;
 
-/// <summary>Creates new primary-A/V derivatives; source files are always read-only.</summary>
-public sealed class ClipEditingService(LibraryCatalog catalog, MediaTools tools, IVideoMetadataService? metadataService = null) : IClipEditingService
+/// <summary>Creates new videos from library MKVs by stream copy wherever possible; sources are always read-only.
+/// mkvmerge carries every track, track tag and foreign attachment; this app's metadata is rewritten on the new timeline.</summary>
+public sealed class ClipEditingService : IClipEditingService
 {
+    private const double MetadataReadWeight = 2, RenderWeight = 80, FinishWeight = 15, PublishWeight = 3;
+    private static readonly TimeSpan MinimumLength = TimeSpan.FromMilliseconds(100);
+    private readonly LibraryCatalog _catalog;
+    private readonly IVideoMetadataService _metadata;
+    private readonly IMatroskaFileEditor _editor;
+    private readonly MediaProbe _probe;
+    private readonly MediaValidator _validator;
+    private readonly CutEditor _cuts;
+    private readonly MergeEditor _merges;
+    private readonly MediaTools _tools;
     private readonly MediaProcess _process = new();
-    private readonly IVideoMetadataService _metadata = metadataService ?? new MatroskaMetadataService(catalog, tools);
-    public async Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) =>
-        (await ProbeAsync(catalog.GetVideoPath(source.RelativePath), cancellationToken)).Format;
 
-    public Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
-        IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default)
+    public ClipEditingService(LibraryCatalog catalog, MediaTools tools, IVideoMetadataService? metadataService = null,
+        IMatroskaFileEditor? fileEditor = null)
     {
-        ValidateRange(source, start, end);
-        return ExecuteAsync([new EditJob(TitleOrDefault(title, source.DisplayName + " · trim"), [new Segment(source, start, end)])], progress, cancellationToken);
+        _catalog = catalog;
+        _tools = tools;
+        var matroska = new MatroskaMetadataService(catalog, tools);
+        _metadata = metadataService ?? matroska;
+        _editor = fileEditor ?? metadataService as IMatroskaFileEditor ?? matroska;
+        _probe = new MediaProbe(tools, _process);
+        var commands = new MediaCommands(tools, _process);
+        _validator = new MediaValidator(tools, _process);
+        _cuts = new CutEditor(tools, _process, _probe, commands);
+        _merges = new MergeEditor(_probe, commands);
     }
 
-    public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
+    public async Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default)
+    {
+        var video = (await ProbeAsync(source, cancellationToken)).Video;
+        return new ClipOutputFormat(video.Width, video.Height, video.AverageFrameRate,
+            video.SampleAspectRatio is { Length: > 0 } and not "0:1" ? video.SampleAspectRatio : "1:1");
+    }
+
+    public async Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
+        CancellationToken cancellationToken = default)
+    {
+        var probe = await ProbeAsync(source, cancellationToken);
+        ValidateRange(probe, start, end);
+        var plan = await WithScratchAsync(scratch => _cuts.PlanTrimAsync(probe, start, end, mode, scratch, cancellationToken));
+        return plan.ToPublic();
+    }
+
+    public async Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default)
+    {
+        var probe = await ProbeAsync(source, cancellationToken);
+        ValidateRange(probe, TimeSpan.Zero, position);
+        ValidateRange(probe, position, probe.VideoEnd);
+        var split = await _cuts.PlanSplitAsync(probe, position, cancellationToken);
+        var note = (split - position).Duration() <= CutPlanner.Epsilon
+            ? "Lossless copy; the split falls on a keyframe."
+            : $"Lossless copy; the split snaps to the keyframe at {Timecode.Format(split)}.";
+        return new ClipCutPlan(split, probe.VideoEnd, true, note);
+    }
+
+    public async Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default) =>
+        (await PlanMergeCoreAsync(sources, cancellationToken)).ToPublic();
+
+    public async Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
+        IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default, ClipCutMode mode = ClipCutMode.Precise)
+    {
+        var probe = await ProbeAsync(source, cancellationToken);
+        ValidateRange(probe, start, end);
+        var name = TitleOrDefault(title, source.DisplayName + " · trim");
+        return await ExecuteAsync([source], progress, async (scratch, report) =>
+        {
+            var plan = await _cuts.PlanTrimAsync(probe, start, end, mode, scratch, cancellationToken);
+            EnsureFreeSpace(scratch, probe, plan.Duration, plan.IsLossless ? 1.1 : 2.2);
+            var staged = Path.Combine(scratch, "trim.mkv");
+            report.Begin(plan.IsLossless ? "Copying the trimmed range" : "Cutting at the exact frames", RenderWeight);
+            try { await _cuts.RenderTrimAsync(probe, plan, staged, scratch, local => report.Report(local), cancellationToken); }
+            catch (InvalidDataException exception) when (!plan.IsLossless)
+            {
+                // A smart cut that the encoder or muxer rejects still has a safe lossless alternative.
+                Trace.TraceWarning($"Frame-accurate trim of {probe.Path} failed; using keyframes. {exception}");
+                plan = await _cuts.PlanTrimAsync(probe, start, end, ClipCutMode.Fast, scratch, cancellationToken);
+                ScratchFiles.TryDelete(staged);
+                await _cuts.RenderTrimAsync(probe, plan, staged, scratch, local => report.Report(local), cancellationToken);
+                report.Warn("A frame-accurate cut was not possible; the cuts snap to keyframes instead.");
+            }
+            return [new RenderedOutput(name, staged, [new Segment(source, plan.ActualStart, plan.ActualEnd, TimeSpan.Zero)], plan.Duration,
+                probe.Mkv.Tracks.Select(track => track.Expected).ToArray(), plan.Joins, [], false)];
+        }, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
         IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        ValidateRange(source, TimeSpan.Zero, position); ValidateRange(source, position, source.Duration);
+        var probe = await ProbeAsync(source, cancellationToken);
+        ValidateRange(probe, TimeSpan.Zero, position);
+        ValidateRange(probe, position, probe.VideoEnd);
         var name = TitleOrDefault(title, source.DisplayName);
-        return ExecuteAsync([new EditJob(name + " · part 1", [new Segment(source, TimeSpan.Zero, position)]),
-            new EditJob(name + " · part 2", [new Segment(source, position, source.Duration)])], progress, cancellationToken);
+        return await ExecuteAsync([source], progress, async (scratch, report) =>
+        {
+            var split = await _cuts.PlanSplitAsync(probe, position, cancellationToken);
+            EnsureFreeSpace(scratch, probe, probe.VideoEnd, 1.1);
+            var first = Path.Combine(scratch, "part-1.mkv");
+            var second = Path.Combine(scratch, "part-2.mkv");
+            report.Begin("Splitting at a keyframe", RenderWeight);
+            await _cuts.RenderSplitAsync(probe, split, first, second, scratch, local => report.Report(local), cancellationToken);
+            var tracks = probe.Mkv.Tracks.Select(track => track.Expected).ToArray();
+            return [new RenderedOutput(name + " · part 1", first, [new Segment(source, TimeSpan.Zero, split, TimeSpan.Zero)], split, tracks, [], [], false),
+                new RenderedOutput(name + " · part 2", second, [new Segment(source, split, probe.VideoEnd, TimeSpan.Zero)], probe.VideoEnd - split, tracks, [], [], false)];
+        }, cancellationToken);
     }
 
-    public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
+    public async Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
         IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (sources.Count < 2) throw new ArgumentException("Select at least two videos to merge.", nameof(sources));
-        foreach (var source in sources) ValidateRange(source, TimeSpan.Zero, source.Duration);
-        return ExecuteAsync([new EditJob(TitleOrDefault(title, "Merged home video"), sources.Select(source => new Segment(source, TimeSpan.Zero, source.Duration)).ToArray())], progress, cancellationToken);
+        var plan = await PlanMergeCoreAsync(sources, cancellationToken);
+        var name = TitleOrDefault(title, "Merged home video");
+        return await ExecuteAsync(sources, progress, async (scratch, report) =>
+        {
+            var staged = Path.Combine(scratch, "merge.mkv");
+            var sourceBytes = plan.Clips.Sum(clip => new FileInfo(clip.Source.Path).Length);
+            ScratchFiles.EnsureFreeSpace(scratch, (long)(sourceBytes * (plan.Append ? 1.1 : 2.2)));
+            MergeOutput? output = null;
+            if (plan.Append)
+            {
+                report.Begin("Joining the clips without re-encoding", RenderWeight);
+                output = await _merges.AppendAsync(plan.Clips.Select(clip => clip.Source).ToArray(), staged, local => report.Report(local), cancellationToken);
+                if (output is null)
+                {
+                    Trace.TraceWarning("mkvmerge refused to append the merge sources; joining them as raw streams instead.");
+                    plan = MergePlanner.Plan(plan.Clips.Select(clip => clip.Source).ToArray(), await CanEncodeHevcAsync(), forceComposite: true);
+                }
+            }
+            if (output is null)
+            {
+                report.Begin(plan.IsLossless ? "Joining the clips" : "Re-encoding clips that do not match", RenderWeight);
+                output = await _merges.CompositeAsync(plan, staged, scratch, local => report.Report(local), cancellationToken);
+                if (!plan.IsLossless) report.Warn(plan.Note);
+            }
+            var offsets = new[] { TimeSpan.Zero }.Concat(output.Joins).ToArray();
+            var segments = plan.Clips.Select((clip, index) => new Segment(sources[index], TimeSpan.Zero, clip.Source.VideoEnd, offsets[index])).ToArray();
+            var tracks = plan.Append ? plan.Clips[0].Source.Mkv.Tracks.Select(track => track.Expected).ToArray() : CompositeTracks(plan);
+            var planned = plan.Append ? offsets[^1] + plan.Clips[^1].Source.VideoEnd : output.Duration;
+            return [new RenderedOutput(name, staged, segments, planned, tracks, output.Joins, output.ReencodedRanges, true)];
+        }, cancellationToken);
     }
 
-    private async Task<IReadOnlyList<LibraryVideo>> ExecuteAsync(IReadOnlyList<EditJob> jobs, IProgress<ClipEditProgress>? progress, CancellationToken cancellationToken)
+    private async Task<MergePlan> PlanMergeCoreAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken)
+    {
+        if (sources.Count < 2) throw new ArgumentException("Select at least two videos to merge.", nameof(sources));
+        var probes = new List<EditSource>();
+        foreach (var source in sources) probes.Add(await ProbeAsync(source, cancellationToken));
+        return MergePlanner.Plan(probes, await CanEncodeHevcAsync());
+    }
+
+    private Task<bool> CanEncodeHevcAsync() => VideoEncoding.CanEncodeAsync(_tools, _process, "hevc");
+
+    private static ExpectedTrack[] CompositeTracks(MergePlan plan)
+    {
+        var video = plan.Clips.FirstOrDefault(clip => clip.CopyVideo)?.Source.VideoTrack.Codec ?? (plan.Video!.CodecName == "hevc" ? "HEVC/H.265/MPEG-H" : "AVC/H.264/MPEG-4p10");
+        return [new ExpectedTrack("video", video, plan.Clips[0].Source.VideoTrack.Language),
+            .. plan.Audio.Select(target => new ExpectedTrack("audio",
+                VideoEncoding.AudioEncoder(target.Reference) is null ? "AAC" : target.Reference.Codec, target.Reference.Language))];
+    }
+
+    /// <summary>Renders into a private scratch directory, rewrites and validates each output's metadata, then publishes
+    /// every output and commits them to the catalog in one transaction, or none of them.</summary>
+    private async Task<IReadOnlyList<LibraryVideo>> ExecuteAsync(IReadOnlyList<LibraryVideo> sources, IProgress<ClipEditProgress>? progress,
+        Func<string, EditProgress, Task<IReadOnlyList<RenderedOutput>>> render, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var scratch = Path.Combine(catalog.Paths.VideosDirectory, ".edit-" + Guid.NewGuid().ToString("N"));
+        var scratch = Path.Combine(_catalog.Paths.ScratchDirectory, "edit-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
-        var prepared = new List<(LibraryVideo Video, string Staged)>();
+        var report = new EditProgress(progress, MetadataReadWeight + RenderWeight + FinishWeight + PublishWeight);
         var published = new List<string>();
         var committed = false;
         try
         {
-            var sourceMetadata = new Dictionary<string, VideoMetadata>();
-            foreach (var source in jobs.SelectMany(job => job.Segments).Select(segment => segment.Source).DistinctBy(source => source.RelativePath))
-                sourceMetadata.Add(source.RelativePath, await _metadata.ReadAsync(source, cancellationToken));
-            var segmentNumber = 0;
-            foreach (var job in jobs)
+            report.Begin("Reading descriptions, chapters and thumbnails", MetadataReadWeight, determinate: false);
+            var metadata = new Dictionary<string, VideoMetadata>();
+            foreach (var source in sources.DistinctBy(source => source.RelativePath))
+                metadata[source.RelativePath] = await ReadSourceMetadataAsync(source, report, cancellationToken);
+
+            var outputs = await render(scratch, report);
+            var prepared = new List<(LibraryVideo Video, string Staged)>();
+            foreach (var output in outputs)
             {
-                var targetFormat = (await ProbeAsync(catalog.GetVideoPath(job.Segments[0].Source.RelativePath), cancellationToken)).Format;
-                var normalized = new List<(Segment Segment, string Path, TimeSpan Duration)>();
-                foreach (var segment in job.Segments)
+                report.Begin("Writing descriptions, chapters and thumbnails", FinishWeight / outputs.Count / 3, determinate: false);
+                var content = MapMetadata(output, metadata);
+                await _editor.WriteStagedAsync(output.StagedPath, content, cancellationToken: cancellationToken);
+                report.Begin("Checking the new video", FinishWeight / outputs.Count * 2 / 3, determinate: false);
+                foreach (var warning in await _validator.ValidateStructureAsync(output.StagedPath, output.Tracks, output.Duration, output.Boundaries, cancellationToken))
+                    report.Warn(warning);
+                foreach (var (start, end) in output.ReencodedRanges)
                 {
-                    var segmentPath = Path.Combine(scratch, $"segment-{segmentNumber++}.mkv");
-                    progress?.Report(new ClipEditProgress($"Preparing {segment.Source.DisplayName}"));
-                    var sourceProbe = await ProbeAsync(catalog.GetVideoPath(segment.Source.RelativePath), cancellationToken);
-                    if (segment.End.TotalSeconds > sourceProbe.Duration.TotalSeconds + 0.1)
-                        throw new InvalidDataException("The source duration changed. Refresh the library before editing it.");
-                    await EncodeAsync(segment, segmentPath, sourceProbe.HasAudio, job.Segments.Count > 1 ? targetFormat : null, progress, cancellationToken);
-                    var encoded = await ValidateOutputAsync(segmentPath, segment.End - segment.Start, cancellationToken);
-                    normalized.Add((segment, segmentPath, encoded.Duration));
+                    var decoded = await _validator.ValidateDecodedRangeAsync(output.StagedPath, start, end - start,
+                        DecodeTolerance.ForEdit(TimeSpan.FromSeconds(0.1)), cancellationToken);
+                    if (decoded.ErrorCount > 0) report.Warn($"{decoded.ErrorCount} decoder error(s) in a re-encoded part.");
                 }
                 var id = Guid.NewGuid();
-                var staged = Path.Combine(scratch, $"{id:N}.mkv");
-                if (normalized.Count == 1) File.Move(normalized[0].Path, staged);
-                else
-                {
-                    var list = Path.Combine(scratch, $"concat-{id:N}.txt");
-                    await File.WriteAllLinesAsync(list, normalized.Select(segment => "file '" + Path.GetFileName(segment.Path) + "'"), cancellationToken);
-                    await RunFfmpegAsync(["-f", "concat", "-safe", "1", "-i", list, "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", staged],
-                        "Joining normalized clips", TimeSpan.FromTicks(normalized.Sum(segment => segment.Duration.Ticks)), progress, cancellationToken);
-                }
-                var expected = TimeSpan.FromTicks(normalized.Sum(segment => segment.Duration.Ticks));
-                var output = await ValidateOutputAsync(staged, expected, cancellationToken);
-                var content = MapMetadata(job.Title, normalized.Select(segment => (segment.Segment, segment.Duration)).ToArray(), sourceMetadata, output.Duration);
-                var temporaryVideo = new LibraryVideo(id, Path.GetRelativePath(catalog.Paths.RootDirectory, staged), job.Title, output.Duration,
-                    DateTimeOffset.UtcNow, content.RecordedAt ?? job.Segments[0].Source.RecordedAt);
-                progress?.Report(new ClipEditProgress("Embedding remapped descriptions, chapters and thumbnails"));
-                await _metadata.SaveAsync(temporaryVideo, content, cancellationToken);
-                prepared.Add((temporaryVideo with { RelativePath = Path.Combine("Videos", $"{id:N}.mkv") }, staged));
+                var duration = (await _probe.ReadVideoEndAsync(output.StagedPath, cancellationToken)).End;
+                var first = output.Segments[0].Source;
+                prepared.Add((new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), output.Title, duration, DateTimeOffset.UtcNow,
+                    content.RecordedAt ?? first.RecordedAt) { Title = content.Title, Description = content.Description }, output.StagedPath));
             }
-            progress?.Report(new ClipEditProgress("Publishing completed video outputs"));
+
+            report.Begin("Publishing the new videos", PublishWeight, determinate: false);
             cancellationToken.ThrowIfCancellationRequested();
-            foreach (var item in prepared)
+            foreach (var (video, staged) in prepared)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var destination = catalog.GetVideoPath(item.Video.RelativePath);
-                File.Move(item.Staged, destination, overwrite: false); published.Add(destination);
+                await using (var stream = new FileStream(staged, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    stream.Flush(flushToDisk: true);
+                var destination = _catalog.GetVideoPath(video.RelativePath);
+                File.Move(staged, destination, overwrite: false);
+                published.Add(destination);
             }
-            await catalog.AddBatchAsync(prepared.Select(item => item.Video).ToArray(), cancellationToken);
+            await _catalog.AddBatchAsync(prepared.Select(item => item.Video).ToArray(), cancellationToken);
             committed = true;
-            progress?.Report(new ClipEditProgress("Saved new videos; originals unchanged", 1));
+            report.Complete("Saved new videos; originals unchanged");
             return prepared.Select(item => item.Video).ToArray();
         }
         finally
         {
-            if (!committed) foreach (var path in published) File.Delete(path);
-            Directory.Delete(scratch, recursive: true);
+            if (!committed) foreach (var path in published) ScratchFiles.TryDelete(path);
+            ScratchFiles.TryDeleteDirectory(scratch);
         }
     }
 
-    private async Task EncodeAsync(Segment segment, string output, bool hasAudio, ClipOutputFormat? mergeFormat, IProgress<ClipEditProgress>? progress, CancellationToken cancellationToken)
+    private async Task<VideoMetadata> ReadSourceMetadataAsync(LibraryVideo source, EditProgress report, CancellationToken cancellationToken)
     {
-        var arguments = new List<string> { "-xerror", "-err_detect", "explode", "-ss", Seconds(segment.Start), "-i", catalog.GetVideoPath(segment.Source.RelativePath) };
-        if (!hasAudio) arguments.AddRange(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]);
-        var filter = "scale=max(2\\,trunc(iw/2)*2):max(2\\,trunc(ih/2)*2)";
-        if (mergeFormat is { } target)
+        try { return await _metadata.ReadAsync(source, cancellationToken); }
+        catch (Exception exception) when (exception is InvalidDataException or IOException)
         {
-            var sar = target.SampleAspectRatio.Replace(':', '/');
-            filter = $"scale=w='max(2,trunc(iw*sar/({sar})/2)*2)':h='max(2,trunc(ih/2)*2)',setsar={sar}," +
-                $"scale=w='min(iw,{target.Width})':h='min(ih,{target.Height})':force_original_aspect_ratio=decrease:force_divisible_by=2," +
-                $"pad={target.Width}:{target.Height}:(ow-iw)/2:(oh-ih)/2,setsar={sar},fps={target.FrameRate}";
+            Trace.TraceWarning($"Reading {source.RelativePath} for an edit failed; using its text metadata only. {exception}");
+            var text = await _editor.ReadTextAsync(_catalog.GetVideoPath(source.RelativePath), cancellationToken);
+            report.Warn($"Thumbnails of \"{source.DisplayName}\" could not be read and were left out.");
+            return text.Metadata;
         }
-        arguments.AddRange(["-t", Seconds(segment.End - segment.Start), "-map", "0:V:0", "-map", hasAudio ? "0:a:0" : "1:a:0",
-            "-map_metadata", "-1", "-map_chapters", "-1", "-vf", filter, "-fps_mode", mergeFormat is null ? "passthrough" : "cfr",
-            "-af", "aresample=48000:async=1:first_pts=0,apad", "-ac", "2", "-ar", "48000", "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", output]);
-        await RunFfmpegAsync(arguments, "Encoding " + segment.Source.DisplayName, segment.End - segment.Start, progress, cancellationToken);
     }
 
-    private async Task RunFfmpegAsync(IEnumerable<string> arguments, string stage, TimeSpan duration, IProgress<ClipEditProgress>? progress, CancellationToken cancellationToken)
+    /// <summary>Carries each source's descriptions, chapters and thumbnails onto the output timeline, using the actual
+    /// (keyframe-snapped) ranges. Each merged clip that lacks a chapter at its start gets one named after it.</summary>
+    private static VideoMetadata MapMetadata(RenderedOutput output, IReadOnlyDictionary<string, VideoMetadata> metadata)
     {
-        var pending = "";
-        var result = await _process.RunAsync(tools.Ffmpeg, new[] { "-hide_banner", "-nostdin", "-v", "error", "-n", "-progress", "pipe:1", "-nostats" }.Concat(arguments),
-            TimeSpan.FromHours(24), cancellationToken, chunk =>
-            {
-                pending += chunk;
-                int newline;
-                while ((newline = pending.IndexOf('\n')) >= 0)
-                {
-                    var line = pending[..newline].Trim(); pending = pending[(newline + 1)..];
-                    if (line.StartsWith("out_time_us=", StringComparison.Ordinal) && long.TryParse(line.AsSpan(12), CultureInfo.InvariantCulture, out var time))
-                        progress?.Report(new ClipEditProgress(stage, Math.Clamp(time / 1_000_000d / duration.TotalSeconds, 0, 1)));
-                }
-                if (pending.Length > 4096) pending = "";
-            });
-        if (result.ExitCode != 0) throw new InvalidDataException("Video editing failed; originals unchanged. " + result.StandardError);
-    }
-
-    private async Task<Probe> ValidateOutputAsync(string path, TimeSpan expected, CancellationToken cancellationToken)
-    {
-        var probe = await ProbeAsync(path, cancellationToken);
-        var frameTolerance = 1 / ParseRatio(probe.Format.FrameRate, 30) + 0.03;
-        if (!probe.HasAudio || Math.Abs(probe.Duration.TotalSeconds - expected.TotalSeconds) > Math.Max(Math.Max(0.15, frameTolerance), expected.TotalSeconds * 0.01))
-            throw new InvalidDataException("The edited video failed output duration/audio validation.");
-        await new MediaValidator(tools, _process).ValidateDecodedAsync(path, probe.Duration,
-            DecodeTolerance.ForEdit(TimeSpan.FromSeconds(1 / ParseRatio(probe.Format.FrameRate, 30))), cancellationToken: cancellationToken);
-        return probe;
-    }
-
-    private async Task<Probe> ProbeAsync(string path, CancellationToken cancellationToken)
-    {
-        var result = await _process.RunAsync(tools.Ffprobe, ["-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio:stream_disposition=attached_pic:stream_side_data=rotation", "-of", "json", path], TimeSpan.FromSeconds(60), cancellationToken);
-        if (result.ExitCode != 0) throw new InvalidDataException("The video is unreadable. " + result.StandardError);
-        using var document = JsonDocument.Parse(result.StandardOutput);
-        var streams = document.RootElement.GetProperty("streams").EnumerateArray().ToArray();
-        var seconds = double.Parse(document.RootElement.GetProperty("format").GetProperty("duration").GetString()!, CultureInfo.InvariantCulture);
-        if (!double.IsFinite(seconds) || seconds <= 0 || !streams.Any(stream => stream.GetProperty("codec_type").GetString() == "video"))
-            throw new InvalidDataException("Editing requires video media with a finite duration.");
-        var primary = streams.First(stream => stream.GetProperty("codec_type").GetString() == "video" &&
-            (!stream.TryGetProperty("disposition", out var disposition) || !disposition.TryGetProperty("attached_pic", out var attached) || attached.GetInt32() == 0));
-        var width = primary.GetProperty("width").GetInt32(); var height = primary.GetProperty("height").GetInt32();
-        var sar = primary.TryGetProperty("sample_aspect_ratio", out var sampleAspect) && ParseRatio(sampleAspect.GetString() ?? "", 0) > 0 ? sampleAspect.GetString()! : "1:1";
-        var fps = primary.TryGetProperty("avg_frame_rate", out var average) && ParseRatio(average.GetString() ?? "", 0) > 0 ? average.GetString()! : "30/1";
-        if (primary.TryGetProperty("side_data_list", out var sideData) && sideData.EnumerateArray().Any(side => side.TryGetProperty("rotation", out var rotation) && Math.Abs(rotation.GetDouble() % 180) == 90))
+        var chapters = new List<VideoChapter>();
+        var thumbnails = new List<VideoThumbnail>();
+        var uids = new HashSet<ulong>();
+        ulong UniqueUid(ulong uid)
         {
-            (width, height) = (height, width); var parts = sar.Split(':'); sar = parts[1] + ":" + parts[0];
+            while (uid == 0 || !uids.Add(uid)) uid = BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8));
+            return uid;
         }
-        return new Probe(TimeSpan.FromSeconds(seconds), streams.Any(stream => stream.GetProperty("codec_type").GetString() == "audio"),
-            new ClipOutputFormat(Math.Max(2, width / 2 * 2), Math.Max(2, height / 2 * 2), fps, sar));
-    }
-
-    private static VideoMetadata MapMetadata(string title, IReadOnlyList<(Segment Segment, TimeSpan Duration)> segments,
-        IReadOnlyDictionary<string, VideoMetadata> metadata, TimeSpan outputDuration)
-    {
-        var chapters = new List<VideoChapter>(); var thumbnails = new List<VideoThumbnail>(); var uids = new HashSet<ulong>();
-        var offset = TimeSpan.Zero;
-        foreach (var (segment, duration) in segments)
+        for (var index = 0; index < output.Segments.Count; index++)
         {
+            var segment = output.Segments[index];
+            var next = index + 1 < output.Segments.Count ? output.Segments[index + 1].Offset : output.Duration;
             var source = metadata[segment.Source.RelativePath];
             var ordered = source.Chapters.OrderBy(chapter => chapter.Position).ToArray();
-            var active = ordered.LastOrDefault(chapter => chapter.Position <= segment.Start);
-            var selected = ordered.Where(chapter => chapter.Position > segment.Start && chapter.Position < segment.End).ToList();
+            var active = ordered.LastOrDefault(chapter => chapter.Position <= segment.Start + CutPlanner.Epsilon);
+            var selected = ordered.Where(chapter => chapter.Position > segment.Start + CutPlanner.Epsilon && chapter.Position < segment.End).ToList();
             if (active is not null) selected.Insert(0, active);
+            else if (output.IsMerge)
+                chapters.Add(new VideoChapter(UniqueUid(0), segment.Offset, source.Title.Length > 0 ? source.Title : segment.Source.DisplayName, "", []));
             foreach (var chapter in selected)
             {
-                var position = offset + (chapter.Position <= segment.Start ? TimeSpan.Zero : chapter.Position - segment.Start);
-                if (position >= offset + duration || position >= outputDuration) continue;
-                var uid = chapter.Uid;
-                while (uid == 0 || !uids.Add(uid)) uid = BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8));
-                chapters.Add(chapter with { Uid = uid, Position = position });
+                var position = segment.Offset + (chapter.Position <= segment.Start ? TimeSpan.Zero : chapter.Position - segment.Start);
+                if (position < next) chapters.Add(chapter with { Uid = UniqueUid(chapter.Uid), Position = position });
             }
             foreach (var thumbnail in source.Thumbnails.Where(thumbnail => thumbnail.Position >= segment.Start && thumbnail.Position < segment.End))
             {
-                var position = offset + thumbnail.Position - segment.Start;
-                if (position < offset + duration && position < outputDuration) thumbnails.Add(thumbnail with { Id = Guid.NewGuid(), Position = position });
+                var position = segment.Offset + thumbnail.Position - segment.Start;
+                if (position < next) thumbnails.Add(thumbnail with { Id = Guid.NewGuid(), Position = position });
             }
-            offset += duration;
         }
-        var contents = segments.Select(segment => metadata[segment.Segment.Source.RelativePath]).ToArray();
-        return new VideoMetadata(title, string.Join(Environment.NewLine, contents.Select(content => content.Description).Where(description => description.Length > 0)),
-            contents.SelectMany(content => content.Tags).Distinct(StringComparer.Ordinal).ToArray(),
-            contents[0].RecordedAt ?? segments[0].Segment.Source.RecordedAt, chapters.OrderBy(chapter => chapter.Position).ToArray(), thumbnails.OrderBy(thumbnail => thumbnail.Position).Take(20).ToArray());
+        var contents = output.Segments.Select(segment => metadata[segment.Source.RelativePath]).DistinctBy(content => content).ToArray();
+        var first = metadata[output.Segments[0].Source.RelativePath];
+        var start = output.Segments[0].Start;
+        var (recordedAt, recordedAtText) = first.RecordedAt is { } recorded && start > TimeSpan.Zero && RecordedDate.HasTimeOfDay(first.RecordedAtText)
+            ? (recorded + start, "")
+            : (first.RecordedAt ?? output.Segments[0].Source.RecordedAt, first.RecordedAt is null ? "" : first.RecordedAtText);
+        return new VideoMetadata(output.Title,
+            string.Join("\n", contents.Select(content => content.Description).Where(description => description.Length > 0)),
+            MetadataText.NormalizeTags(contents.SelectMany(content => content.Tags)), recordedAt,
+            chapters.OrderBy(chapter => chapter.Position).ToArray(), thumbnails.OrderBy(thumbnail => thumbnail.Position).Take(20).ToArray())
+        {
+            RecordedAtText = recordedAtText,
+        };
     }
 
-    private static void ValidateRange(LibraryVideo source, TimeSpan start, TimeSpan end)
+    private async Task<EditSource> ProbeAsync(LibraryVideo source, CancellationToken cancellationToken) =>
+        await _probe.ProbeAsync(_catalog.GetVideoPath(source.RelativePath), cancellationToken);
+
+    private async Task<T> WithScratchAsync<T>(Func<string, Task<T>> action)
     {
-        if (start < TimeSpan.Zero || end > source.Duration || end <= start || end - start < TimeSpan.FromMilliseconds(100))
+        var scratch = Path.Combine(_catalog.Paths.ScratchDirectory, "edit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        try { return await action(scratch); }
+        finally { ScratchFiles.TryDeleteDirectory(scratch); }
+    }
+
+    private static void EnsureFreeSpace(string scratch, EditSource source, TimeSpan length, double factor)
+    {
+        var bytes = new FileInfo(source.Path).Length * Math.Min(1, length.Ticks / (double)Math.Max(1, source.VideoEnd.Ticks));
+        ScratchFiles.EnsureFreeSpace(scratch, (long)(bytes * factor));
+    }
+
+    /// <summary>Ranges are checked against the file's probed video length, not the catalog's possibly stale duration.</summary>
+    private static void ValidateRange(EditSource source, TimeSpan start, TimeSpan end)
+    {
+        if (start < TimeSpan.Zero || end > source.VideoEnd + CutPlanner.Epsilon || end <= start || end - start < MinimumLength)
             throw new ArgumentOutOfRangeException(nameof(start), "Choose an ordered range inside the video, at least 0.1 seconds long.");
     }
+
     private static string TitleOrDefault(string title, string fallback) => string.IsNullOrWhiteSpace(title) ? fallback : title.Trim();
-    private static string Seconds(TimeSpan time) => time.TotalSeconds.ToString("R", CultureInfo.InvariantCulture);
-    private sealed record Segment(LibraryVideo Source, TimeSpan Start, TimeSpan End);
-    private sealed record EditJob(string Title, IReadOnlyList<Segment> Segments);
-    private static double ParseRatio(string value, double fallback)
+
+    /// <param name="Start">Where the segment begins in the source (actual, after snapping).</param>
+    /// <param name="Offset">Where the segment begins in the output.</param>
+    private sealed record Segment(LibraryVideo Source, TimeSpan Start, TimeSpan End, TimeSpan Offset);
+
+    private sealed record RenderedOutput(string Title, string StagedPath, IReadOnlyList<Segment> Segments, TimeSpan Duration,
+        IReadOnlyList<ExpectedTrack> Tracks, IReadOnlyList<TimeSpan> Boundaries, IReadOnlyList<(TimeSpan Start, TimeSpan End)> ReencodedRanges,
+        bool IsMerge);
+
+    /// <summary>Weighted overall progress plus warnings, reported to the caller as they happen.</summary>
+    private sealed class EditProgress
     {
-        var parts = value.Split(['/', ':']);
-        return parts.Length == 2 && double.TryParse(parts[0], CultureInfo.InvariantCulture, out var numerator) &&
-            double.TryParse(parts[1], CultureInfo.InvariantCulture, out var denominator) && denominator > 0 && numerator > 0 ? numerator / denominator : fallback;
+        private readonly IProgress<ClipEditProgress>? _sink;
+        private readonly WeightedProgress _weighted;
+        private string _stage = "";
+        private double? _last;
+
+        public EditProgress(IProgress<ClipEditProgress>? sink, double totalWeight)
+        {
+            _sink = sink;
+            _weighted = new WeightedProgress(totalWeight, (stage, fraction) =>
+            {
+                _last = fraction;
+                sink?.Report(new ClipEditProgress(stage, fraction));
+            });
+        }
+
+        public void Begin(string stage, double weight, bool determinate = true)
+        {
+            _stage = stage;
+            _weighted.Begin(stage, weight, determinate);
+        }
+
+        public void Report(double local) => _weighted.Report(local);
+        public void Complete(string stage) => _weighted.Complete(stage);
+        public void Warn(string warning) => _sink?.Report(new ClipEditProgress(_stage, _last, warning));
     }
-    private sealed record Probe(TimeSpan Duration, bool HasAudio, ClipOutputFormat Format);
 }
