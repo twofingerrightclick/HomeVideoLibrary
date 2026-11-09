@@ -1,0 +1,132 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <!-- Blue-green VFD phosphor, the other common deck display color. -->
+  <Color x:Key="Vcr.Color.Vfd.Green">#5CF5D2</Color>
+  <Color x:Key="Vcr.Color.Vfd.Green.Ghost">#0C211D</Color>
+  <SolidColorBrush x:Key="Vcr.Brush.Vfd.Green" Color="{StaticResource Vcr.Color.Vfd.Green}"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Vfd.Green.Ghost" Color="{StaticResource Vcr.Color.Vfd.Green.Ghost}"/>
+
+  <!--
+    Display anatomy:
+      PART_Bezel  recessed frame in the chassis.
+      PART_Glass  smoked window with an inset shadow; PART_Sheen is the reflection across its top half.
+      Digits      DSEG layers in one cell: the unlit ghost, wide and tight blurred bold copies of the lit
+                  text for the phosphor bloom, and the lit text itself. DSEG regular and bold share
+                  advance widths, so the layers stay registered.
+  -->
+  <ControlTheme x:Key="{x:Type c:LcdCounter}" TargetType="c:LcdCounter">
+    <Setter Property="Glow" Value="{DynamicResource Vcr.Brush.Amber}"/>
+    <Setter Property="Ghost" Value="{DynamicResource Vcr.Brush.Amber.Ghost}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Segment}"/>
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="Padding" Value="10,7"/>
+    <Setter Property="HorizontalAlignment" Value="Left"/>
+    <Setter Property="VerticalAlignment" Value="Top"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Bezel"
+                Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                CornerRadius="{DynamicResource Vcr.Radius.Well}"
+                BoxShadow="{DynamicResource Vcr.Shadow.Well}"
+                Padding="3">
+          <Panel>
+            <Border Name="PART_Glass"
+                    Background="{DynamicResource Vcr.Brush.Glass}"
+                    BorderBrush="{DynamicResource Vcr.Brush.Glass.Edge}"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource Vcr.Radius.Field}"
+                    BoxShadow="0 2 6 0 #F2000000 inset, 0 0 1 0 #0AFFFFFF inset"
+                    Padding="{TemplateBinding Padding}">
+              <DockPanel>
+                <TextBlock Name="PART_Caption"
+                           DockPanel.Dock="Left"
+                           Text="{TemplateBinding Caption}"
+                           IsVisible="{TemplateBinding Caption, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           Foreground="{TemplateBinding Glow}"
+                           Opacity="0.75"
+                           FontFamily="{DynamicResource Vcr.Font.Legend}"
+                           FontSize="9"
+                           FontWeight="SemiBold"
+                           LetterSpacing="{DynamicResource Vcr.LetterSpacing.Legend}"
+                           VerticalAlignment="Top"
+                           Margin="0,0,7,0"/>
+                <Panel Name="PART_Digits" VerticalAlignment="Center">
+                  <TextBlock Name="PART_Ghost"
+                             Text="{TemplateBinding GhostText}"
+                             Foreground="{TemplateBinding Ghost}"/>
+                  <TextBlock Name="PART_Halo"
+                             Text="{TemplateBinding DisplayText}"
+                             Foreground="{TemplateBinding Glow}"
+                             FontWeight="Bold"
+                             Opacity="0.7"
+                             Effect="blur(14)"/>
+                  <TextBlock Name="PART_Bloom"
+                             Text="{TemplateBinding DisplayText}"
+                             Foreground="{TemplateBinding Glow}"
+                             FontWeight="Bold"
+                             Effect="blur(5)"/>
+                  <TextBlock Name="PART_Lit"
+                             Text="{TemplateBinding DisplayText}"
+                             Foreground="{TemplateBinding Glow}"/>
+                </Panel>
+              </DockPanel>
+            </Border>
+            <Border Name="PART_Sheen"
+                    Background="{DynamicResource Vcr.Brush.Glass.Sheen}"
+                    CornerRadius="{DynamicResource Vcr.Radius.Field}"
+                    IsHitTestVisible="False"/>
+          </Panel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+
+    <!-- Size variants: small for inline status (list rows, footers), large for the player's main readout. -->
+    <Style Selector="^.small">
+      <Setter Property="FontSize" Value="15"/>
+      <Setter Property="Padding" Value="7,5"/>
+      <Style Selector="^ /template/ TextBlock#PART_Caption">
+        <Setter Property="FontSize" Value="8"/>
+        <Setter Property="Margin" Value="0,0,5,0"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Halo">
+        <Setter Property="Effect" Value="blur(9)"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Bloom">
+        <Setter Property="Effect" Value="blur(3)"/>
+      </Style>
+    </Style>
+    <Style Selector="^.large">
+      <Setter Property="FontSize" Value="40"/>
+      <Setter Property="Padding" Value="14,10"/>
+      <Style Selector="^ /template/ TextBlock#PART_Caption">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Margin" Value="0,0,10,0"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Halo">
+        <Setter Property="Effect" Value="blur(22)"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Bloom">
+        <Setter Property="Effect" Value="blur(8)"/>
+      </Style>
+    </Style>
+
+    <!-- Blue-green phosphor instead of amber. -->
+    <Style Selector="^.vfd-green">
+      <Setter Property="Glow" Value="{DynamicResource Vcr.Brush.Vfd.Green}"/>
+      <Setter Property="Ghost" Value="{DynamicResource Vcr.Brush.Vfd.Green.Ghost}"/>
+    </Style>
+
+    <!-- A powered-down tube: only the unlit segments remain. -->
+    <Style Selector="^:disabled">
+      <Style Selector="^ /template/ TextBlock#PART_Lit, ^ /template/ TextBlock#PART_Bloom, ^ /template/ TextBlock#PART_Halo">
+        <Setter Property="IsVisible" Value="False"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_Caption">
+        <Setter Property="Foreground" Value="{TemplateBinding Ghost}"/>
+        <Setter Property="Opacity" Value="1"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>

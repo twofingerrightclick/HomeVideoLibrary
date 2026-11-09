@@ -1,0 +1,34 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Style Selector="TextBlock.gallery-title">
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="22"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+    <Setter Property="LetterSpacing" Value="1"/>
+  </Style>
+  <Style Selector="TextBlock.gallery-note">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <Style Selector="TextBlock.state">
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="Margin" Value="0,6,0,0"/>
+    <Setter Property="LetterSpacing" Value="0.6"/>
+  </Style>
+  <Style Selector="StackPanel.specimen">
+    <Setter Property="Orientation" Value="Vertical"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="Border.gallery-plate">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Faceplate}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Panel}"/>
+    <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Bezel}"/>
+    <Setter Property="Padding" Value="20,18"/>
+    <Setter Property="Margin" Value="0,0,0,18"/>
+  </Style>
+</Styles>

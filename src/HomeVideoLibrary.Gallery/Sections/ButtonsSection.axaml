@@ -1,0 +1,157 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             x:Class="HomeVideoLibrary.Gallery.Sections.ButtonsSection">
+  <StackPanel Spacing="0">
+    <TextBlock Classes="gallery-title" Text="BUTTONS" Margin="0,0,0,14"/>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="PlasticButton — states (rest, hover, pressed, focus-visible, disabled)"/>
+        <StackPanel Orientation="Horizontal" Spacing="22">
+          <StackPanel Classes="specimen"><c:PlasticButton Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT"/><TextBlock Classes="state" Text="REST"/></StackPanel>
+          <StackPanel Classes="specimen"><c:PlasticButton Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT" g:ForcedState.States=":pointerover"/><TextBlock Classes="state" Text="HOVER"/></StackPanel>
+          <StackPanel Classes="specimen"><c:PlasticButton Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT" g:ForcedState.States=":pointerover :pressed"/><TextBlock Classes="state" Text="PRESSED"/></StackPanel>
+          <StackPanel Classes="specimen"><c:PlasticButton Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT" g:ForcedState.States=":focus-visible"/><TextBlock Classes="state" Text="FOCUS"/></StackPanel>
+          <StackPanel Classes="specimen"><c:PlasticButton Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT" IsEnabled="False"/><TextBlock Classes="state" Text="DISABLED"/></StackPanel>
+          <StackPanel Classes="specimen"><Button Content="Plain Button"/><TextBlock Classes="state" Text="STOCK BUTTON"/></StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="Transport keys with legends printed above (LegendFrame) — like the REC / PAUSE reference"/>
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <c:LegendFrame Legend="REW"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Rewind}"/></c:LegendFrame>
+          <c:LegendFrame Legend="PLAY"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Play}"/></c:LegendFrame>
+          <c:LegendFrame Legend="PAUSE"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Pause}"/></c:LegendFrame>
+          <c:LegendFrame Legend="STOP"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Stop}"/></c:LegendFrame>
+          <c:LegendFrame Legend="FF"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.FastForward}"/></c:LegendFrame>
+          <c:LegendFrame Legend="REC" LegendDot="{StaticResource Vcr.Brush.Red.Led}"><c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Record}" Foreground="{StaticResource Vcr.Brush.Red}"/></c:LegendFrame>
+          <Border Width="18"/>
+          <c:LegendFrame Legend="TRACK SEARCH">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Previous}"/>
+              <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Next}"/>
+            </StackPanel>
+          </c:LegendFrame>
+          <c:LegendFrame Legend="PLAY/PAUSE"><c:PlasticButton Classes="transport" MinWidth="84" Icon="{StaticResource Vcr.Icon.PlayPause}" Foreground="{StaticResource Vcr.Brush.Green.Led}"/></c:LegendFrame>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Play}" Content="PLAY"/>
+          <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Eject}" Content="EJECT"/>
+          <c:PlasticButton Classes="transport" Content="CUE" MinWidth="96"/>
+          <c:LegendFrame Legend="STANDBY/ON"><c:PlasticButton Content="POWER" MinWidth="88"/></c:LegendFrame>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="Accents, toolbar size, and icon-only keys"/>
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <c:PlasticButton Classes="primary" Icon="{StaticResource Vcr.Icon.Import}" Content="IMPORT VIDEOS"/>
+          <c:PlasticButton Classes="primary" Content="SAVE" g:ForcedState.States=":pointerover :pressed"/>
+          <c:PlasticButton Classes="destructive" Content="DELETE"/>
+          <c:PlasticButton Classes="go" Icon="{StaticResource Vcr.Icon.Power}" Content="ON"/>
+          <c:PlasticButton Classes="primary" Content="DISABLED" IsEnabled="False"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Edit}" Content="Edit clips"/>
+          <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Album}" Content="Add to album"/>
+          <c:PlasticButton Classes="toolbar" Content="Settings"/>
+          <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Search}" ToolTip.Tip="Search"/>
+          <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Plus}" ToolTip.Tip="Add"/>
+          <c:PlasticButton Classes="toolbar" Content="Pressed" g:ForcedState.States=":pointerover :pressed"/>
+          <Border Width="16"/>
+          <c:PlasticButton Classes="icon" Icon="{StaticResource Vcr.Icon.Chapter}" ToolTip.Tip="Mark chapter"/>
+          <c:PlasticButton Classes="icon" Icon="{StaticResource Vcr.Icon.Close}" ToolTip.Tip="Close"/>
+          <c:PlasticButton Classes="icon" Icon="{StaticResource Vcr.Icon.Info}" ToolTip.Tip="Info"/>
+          <c:PlasticButton Classes="icon primary" Icon="{StaticResource Vcr.Icon.Check}" ToolTip.Tip="Confirm"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="LatchButton (ToggleButton) — stays in with LED lit while latched"/>
+        <StackPanel Orientation="Horizontal" Spacing="18">
+          <StackPanel Classes="specimen"><c:LatchButton Content="REPEAT"/><TextBlock Classes="state" Text="OFF"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Content="REPEAT" IsChecked="True"/><TextBlock Classes="state" Text="LATCHED"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Classes="red" Content="REC" IsChecked="True"/><TextBlock Classes="state" Text="LATCHED RED"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Content="MUTE" Icon="{StaticResource Vcr.Icon.Mute}" g:ForcedState.States=":pointerover"/><TextBlock Classes="state" Text="HOVER"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Content="MT" g:ForcedState.States=":focus-visible" IsChecked="True"/><TextBlock Classes="state" Text="FOCUS"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Content="LOCKED" IsEnabled="False" IsChecked="True"/><TextBlock Classes="state" Text="DISABLED"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LatchButton Classes="toolbar" Content="Loop" IsChecked="True"/><TextBlock Classes="state" Text="TOOLBAR"/></StackPanel>
+          <StackPanel Classes="specimen"><ToggleButton Content="Stock toggle"/><TextBlock Classes="state" Text="STOCK TOGGLE"/></StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="RubberButton — matte remote keys (round, pill, colored domes)"/>
+        <StackPanel Orientation="Horizontal" Spacing="26">
+          <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto,Auto" >
+            <Grid.Styles>
+              <Style Selector="c|RubberButton.round"><Setter Property="Margin" Value="5"/></Style>
+            </Grid.Styles>
+            <c:RubberButton Classes="round" Content="1"/>
+            <c:RubberButton Classes="round" Grid.Column="1" Content="2"/>
+            <c:RubberButton Classes="round" Grid.Column="2" Content="3"/>
+            <c:RubberButton Classes="round" Grid.Row="1" Content="4"/>
+            <c:RubberButton Classes="round" Grid.Row="1" Grid.Column="1" Content="5"/>
+            <c:RubberButton Classes="round" Grid.Row="1" Grid.Column="2" Content="6"/>
+            <c:RubberButton Classes="round" Grid.Row="2" Content="7"/>
+            <c:RubberButton Classes="round" Grid.Row="2" Grid.Column="1" Content="8"/>
+            <c:RubberButton Classes="round" Grid.Row="2" Grid.Column="2" Content="9"/>
+            <c:RubberButton Classes="round" Grid.Row="3" Grid.Column="1" Content="0"/>
+          </Grid>
+          <StackPanel Spacing="12">
+            <StackPanel Orientation="Horizontal" Spacing="16">
+              <StackPanel Classes="specimen"><c:RubberButton Classes="round" Icon="{StaticResource Vcr.Icon.Play}"/><TextBlock Classes="state" Text="REST"/></StackPanel>
+              <StackPanel Classes="specimen"><c:RubberButton Classes="round" Icon="{StaticResource Vcr.Icon.Play}" g:ForcedState.States=":pointerover"/><TextBlock Classes="state" Text="HOVER"/></StackPanel>
+              <StackPanel Classes="specimen"><c:RubberButton Classes="round" Icon="{StaticResource Vcr.Icon.Play}" g:ForcedState.States=":pointerover :pressed"/><TextBlock Classes="state" Text="PRESSED"/></StackPanel>
+              <StackPanel Classes="specimen"><c:RubberButton Classes="round" Icon="{StaticResource Vcr.Icon.Play}" g:ForcedState.States=":focus-visible"/><TextBlock Classes="state" Text="FOCUS"/></StackPanel>
+              <StackPanel Classes="specimen"><c:RubberButton Classes="round" Icon="{StaticResource Vcr.Icon.Play}" IsEnabled="False"/><TextBlock Classes="state" Text="DISABLED"/></StackPanel>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <c:LegendFrame Legend="POWER"><c:RubberButton Classes="round green" Icon="{StaticResource Vcr.Icon.Power}"/></c:LegendFrame>
+              <c:LegendFrame Legend="REC" LegendDot="{StaticResource Vcr.Brush.Red.Led}"><c:RubberButton Classes="round red" Icon="{StaticResource Vcr.Icon.Record}"/></c:LegendFrame>
+              <c:LegendFrame Legend="SEARCH"><c:RubberButton Classes="round yellow" Icon="{StaticResource Vcr.Icon.Search}"/></c:LegendFrame>
+              <c:LegendFrame Legend="CLEAR"><c:RubberButton Classes="round"/></c:LegendFrame>
+              <c:LegendFrame Legend="VOL"><StackPanel Orientation="Horizontal" Spacing="4"><c:RubberButton Icon="{StaticResource Vcr.Icon.Minus}" Width="44"/><c:RubberButton Icon="{StaticResource Vcr.Icon.Plus}" Width="44"/></StackPanel></c:LegendFrame>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <c:RubberButton Content="ENTER"/>
+              <c:RubberButton Content="MENU"/>
+              <c:RubberButton Icon="{StaticResource Vcr.Icon.Chapter}" Content="MARK"/>
+              <c:RubberButton Content="TOP MENU" g:ForcedState.States=":pointerover :pressed"/>
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="Centering check — mixed case, descenders, single glyphs, varied sizes"/>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <c:PlasticButton Content="OK" MinWidth="60"/>
+          <c:PlasticButton Content="Cancel"/>
+          <c:PlasticButton Content="Mg jpq"/>
+          <c:PlasticButton Content="A" Classes="icon"/>
+          <c:PlasticButton Content="00:12:34"/>
+          <c:PlasticButton Classes="toolbar" Content="OK"/>
+          <c:PlasticButton Classes="transport" Content="STOP"/>
+          <c:RubberButton Content="Rq"/>
+          <c:RubberButton Classes="round" Content="8"/>
+          <c:LatchButton Content="Hg"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>
