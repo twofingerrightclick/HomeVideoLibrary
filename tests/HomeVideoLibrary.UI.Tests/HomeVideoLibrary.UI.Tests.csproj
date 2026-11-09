@@ -11,5 +11,6 @@
     <PackageReference Include="Avalonia.Skia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
     <ProjectReference Include="../../src/HomeVideoLibrary.UI/HomeVideoLibrary.UI.csproj" />
+    <ProjectReference Include="../../src/HomeVideoLibrary.Gallery/HomeVideoLibrary.Gallery.csproj" />
   </ItemGroup>
 </Project>

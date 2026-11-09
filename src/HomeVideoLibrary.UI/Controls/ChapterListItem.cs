@@ -1,36 +1,35 @@
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
 using Avalonia.Controls.Primitives;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Threading;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.UI.Controls;
 
-public sealed class ChapterTitleCommittedEventArgs(RoutedEvent routedEvent, string oldTitle, string newTitle)
-    : RoutedEventArgs(routedEvent)
-{
-    public string OldTitle { get; } = oldTitle;
-
-    public string NewTitle { get; } = newTitle;
-}
-
 /// <summary>
-/// One row of the Chapters inspector: start time, title, and trailing host actions in
-/// <see cref="ContentControl.Content"/>. Clicking the row raises <see cref="JumpRequested"/>.
-/// Double-click or F2 edits the title inline; Enter or losing focus commits (raising
-/// <see cref="TitleCommitted"/>), Escape restores the previous title. With <see cref="IsPlaceholder"/>
-/// the row is the yellow "a chapter added now would go here" marker and is not editable or jumpable.
+/// One chapter row of the Chapters inspector: start time, title, and trailing host actions in
+/// <see cref="ContentControl.Content"/>. Clicking the row executes <see cref="JumpCommand"/>. Double-click
+/// or F2 sets <see cref="IsEditing"/>; while editing, a title field is created for this edit only (so its
+/// undo history never reaches another chapter) and bound to <see cref="DraftTitle"/>. Enter or leaving
+/// the field executes <see cref="CommitTitleCommand"/> with the trimmed draft when it differs from
+/// <see cref="Title"/>; Escape discards the draft. Bind <see cref="IsEditing"/> and
+/// <see cref="DraftTitle"/> two-way to the row's view model so an edit survives playhead updates.
 /// </summary>
-[TemplatePart("PART_TitleBox", typeof(TextBox))]
-[PseudoClasses(":placeholder", ":current", ":editing")]
+[TemplatePart(EditorHostPartName, typeof(ContentControl))]
+[TemplatePart(ActionsPartName, typeof(Control))]
+[PseudoClasses(":current", ":editing")]
 public class ChapterListItem : ContentControl
 {
+    public const string EditorHostPartName = "PART_Editor";
+    public const string ActionsPartName = "PART_ContentPresenter";
+
     public static readonly StyledProperty<string> TitleProperty =
-        AvaloniaProperty.Register<ChapterListItem, string>(nameof(Title), string.Empty, defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+        AvaloniaProperty.Register<ChapterListItem, string>(nameof(Title), string.Empty);
 
     public static readonly StyledProperty<TimeSpan> StartProperty =
         AvaloniaProperty.Register<ChapterListItem, TimeSpan>(nameof(Start));
@@ -42,33 +41,34 @@ public class ChapterListItem : ContentControl
     public static readonly DirectProperty<ChapterListItem, string> StartGhostTextProperty =
         AvaloniaProperty.RegisterDirect<ChapterListItem, string>(nameof(StartGhostText), o => o.StartGhostText);
 
-    public static readonly StyledProperty<bool> IsPlaceholderProperty =
-        AvaloniaProperty.Register<ChapterListItem, bool>(nameof(IsPlaceholder));
-
     /// <summary>The chapter containing the playhead.</summary>
     public static readonly StyledProperty<bool> IsCurrentProperty =
         AvaloniaProperty.Register<ChapterListItem, bool>(nameof(IsCurrent));
 
     public static readonly StyledProperty<bool> IsEditingProperty =
-        AvaloniaProperty.Register<ChapterListItem, bool>(nameof(IsEditing), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+        AvaloniaProperty.Register<ChapterListItem, bool>(nameof(IsEditing), defaultBindingMode: BindingMode.TwoWay);
 
-    /// <summary>Text shown in place of an empty title (and as the placeholder row's caption).</summary>
+    /// <summary>The title being typed; null when not editing. Seeded from <see cref="Title"/> when editing starts.</summary>
+    public static readonly StyledProperty<string?> DraftTitleProperty =
+        AvaloniaProperty.Register<ChapterListItem, string?>(nameof(DraftTitle), defaultBindingMode: BindingMode.TwoWay);
+
+    /// <summary>Text shown in place of an empty title.</summary>
     public static readonly StyledProperty<string?> TitleWatermarkProperty =
         AvaloniaProperty.Register<ChapterListItem, string?>(nameof(TitleWatermark), "Untitled chapter");
 
-    public static readonly RoutedEvent<RoutedEventArgs> JumpRequestedEvent =
-        RoutedEvent.Register<ChapterListItem, RoutedEventArgs>(nameof(JumpRequested), RoutingStrategies.Bubble);
+    public static readonly StyledProperty<ICommand?> JumpCommandProperty =
+        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(JumpCommand));
 
-    public static readonly RoutedEvent<ChapterTitleCommittedEventArgs> TitleCommittedEvent =
-        RoutedEvent.Register<ChapterListItem, ChapterTitleCommittedEventArgs>(nameof(TitleCommitted), RoutingStrategies.Bubble);
+    /// <summary>Executed with the new title string.</summary>
+    public static readonly StyledProperty<ICommand?> CommitTitleCommandProperty =
+        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(CommitTitleCommand));
 
-    private TextBox? _titleBox;
+    private ContentControl? _editorHost;
     private Control? _actions;
+    private TextBox? _editor;
     private string _startText = ScrubTimeline.FormatTimestamp(TimeSpan.Zero);
     private string _startGhostText = "8:88";
-    private bool _finishingEdit;
     private bool _pressedHere;
-    private bool _wasInEditMode;
 
     static ChapterListItem()
     {
@@ -78,18 +78,6 @@ public class ChapterListItem : ContentControl
     public ChapterListItem()
     {
         DoubleTapped += OnDoubleTapped;
-    }
-
-    public event EventHandler<RoutedEventArgs>? JumpRequested
-    {
-        add => AddHandler(JumpRequestedEvent, value);
-        remove => RemoveHandler(JumpRequestedEvent, value);
-    }
-
-    public event EventHandler<ChapterTitleCommittedEventArgs>? TitleCommitted
-    {
-        add => AddHandler(TitleCommittedEvent, value);
-        remove => RemoveHandler(TitleCommittedEvent, value);
     }
 
     public string Title
@@ -116,12 +104,6 @@ public class ChapterListItem : ContentControl
         private set => SetAndRaise(StartGhostTextProperty, ref _startGhostText, value);
     }
 
-    public bool IsPlaceholder
-    {
-        get => GetValue(IsPlaceholderProperty);
-        set => SetValue(IsPlaceholderProperty, value);
-    }
-
     public bool IsCurrent
     {
         get => GetValue(IsCurrentProperty);
@@ -134,31 +116,39 @@ public class ChapterListItem : ContentControl
         set => SetValue(IsEditingProperty, value);
     }
 
+    public string? DraftTitle
+    {
+        get => GetValue(DraftTitleProperty);
+        set => SetValue(DraftTitleProperty, value);
+    }
+
     public string? TitleWatermark
     {
         get => GetValue(TitleWatermarkProperty);
         set => SetValue(TitleWatermarkProperty, value);
     }
 
+    public ICommand? JumpCommand
+    {
+        get => GetValue(JumpCommandProperty);
+        set => SetValue(JumpCommandProperty, value);
+    }
+
+    public ICommand? CommitTitleCommand
+    {
+        get => GetValue(CommitTitleCommandProperty);
+        set => SetValue(CommitTitleCommandProperty, value);
+    }
+
     protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
         base.OnApplyTemplate(e);
-        if (_titleBox is not null)
+        CloseEditor();
+        _editorHost = e.NameScope.Find<ContentControl>(EditorHostPartName);
+        _actions = e.NameScope.Find<Control>(ActionsPartName);
+        if (IsEditing)
         {
-            _titleBox.KeyDown -= OnTitleBoxKeyDown;
-            _titleBox.LostFocus -= OnTitleBoxLostFocus;
-        }
-
-        _titleBox = e.NameScope.Find<TextBox>("PART_TitleBox");
-        _actions = e.NameScope.Find<Control>("PART_ContentPresenter");
-        if (_titleBox is not null)
-        {
-            _titleBox.KeyDown += OnTitleBoxKeyDown;
-            _titleBox.LostFocus += OnTitleBoxLostFocus;
-            if (IsInEditMode)
-            {
-                BeginEditVisuals();
-            }
+            OpenEditor();
         }
     }
 
@@ -170,35 +160,25 @@ public class ChapterListItem : ContentControl
             StartText = ScrubTimeline.FormatTimestamp(change.GetNewValue<TimeSpan>());
             StartGhostText = new string(StartText.Select(ch => char.IsDigit(ch) ? '8' : ch).ToArray());
         }
-        else if (change.Property == IsPlaceholderProperty)
-        {
-            PseudoClasses.Set(":placeholder", change.GetNewValue<bool>());
-            UpdateEditMode();
-        }
         else if (change.Property == IsCurrentProperty)
         {
             PseudoClasses.Set(":current", change.GetNewValue<bool>());
         }
         else if (change.Property == IsEditingProperty)
         {
-            UpdateEditMode();
+            // Unhook the field before :editing hides it: hiding a focused field raises its LostFocus.
+            var editing = change.GetNewValue<bool>();
+            if (editing)
+            {
+                OpenEditor();
+            }
+            else
+            {
+                CloseEditor();
+            }
+
+            PseudoClasses.Set(":editing", editing);
         }
-    }
-
-    // A placeholder row that is promoted to a real chapter may already have IsEditing set (hosts set the
-    // two in either order), so edit mode is derived from both properties rather than either change alone.
-    private bool IsInEditMode => IsEditing && !IsPlaceholder;
-
-    private void UpdateEditMode()
-    {
-        var editing = IsInEditMode;
-        PseudoClasses.Set(":editing", editing);
-        if (editing && !_wasInEditMode)
-        {
-            BeginEditVisuals();
-        }
-
-        _wasInEditMode = editing;
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -212,35 +192,17 @@ public class ChapterListItem : ContentControl
         base.OnPointerReleased(e);
         var pressedHere = _pressedHere;
         _pressedHere = false;
-        if (pressedHere && !e.Handled && !IsInEditMode && !IsPlaceholder && e.InitialPressMouseButton == MouseButton.Left)
+        if (pressedHere && !e.Handled && !IsEditing && e.InitialPressMouseButton == MouseButton.Left)
         {
             e.Handled = true;
-            RaiseEvent(new RoutedEventArgs(JumpRequestedEvent));
+            Execute(JumpCommand, null);
         }
-    }
-
-    private void OnDoubleTapped(object? sender, TappedEventArgs e)
-    {
-        // Double-clicks on the host's trailing actions (e.g. a delete key) are not rename gestures.
-        if (IsPlaceholder || IsWithinActions(e.Source))
-        {
-            return;
-        }
-
-        e.Handled = true;
-        IsEditing = true;
-    }
-
-    private bool IsWithinActions(object? source)
-    {
-        var actions = _actions;
-        return actions is not null && source is Visual visual && (visual == actions || actions.IsVisualAncestorOf(visual));
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.Handled || IsInEditMode || IsPlaceholder)
+        if (e.Handled || IsEditing || !ReferenceEquals(e.Source, this))
         {
             return;
         }
@@ -248,56 +210,62 @@ public class ChapterListItem : ContentControl
         if (e.Key == Key.F2)
         {
             e.Handled = true;
-            IsEditing = true;
+            SetCurrentValue(IsEditingProperty, true);
         }
         else if (e.Key is Key.Enter or Key.Space)
         {
             e.Handled = true;
-            RaiseEvent(new RoutedEventArgs(JumpRequestedEvent));
+            Execute(JumpCommand, null);
         }
     }
 
-    private void BeginEditVisuals()
+    private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (_titleBox is null)
+        // Double-clicks on the host's trailing actions (e.g. a delete key) are not rename gestures.
+        if (e.Source is Visual source && _actions is not null && (source == _actions || _actions.IsVisualAncestorOf(source)))
         {
             return;
         }
 
-        _titleBox.Text = Title;
-        FocusTitleBox(attemptsLeft: 3);
+        e.Handled = true;
+        SetCurrentValue(IsEditingProperty, true);
     }
 
-    // The box only becomes focusable once the :editing style has made it visible and it is laid out. If it
-    // never takes focus (row scrolled away, window inactive), leave edit mode: without focus there would be
-    // no LostFocus to ever commit or end the edit.
-    private void FocusTitleBox(int attemptsLeft)
+    private void OpenEditor()
     {
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                if (!IsInEditMode || _titleBox is null)
-                {
-                    return;
-                }
+        if (_editorHost is null || _editor is not null)
+        {
+            return;
+        }
 
-                if (_titleBox.Focus())
-                {
-                    _titleBox.SelectAll();
-                }
-                else if (attemptsLeft > 1)
-                {
-                    FocusTitleBox(attemptsLeft - 1);
-                }
-                else
-                {
-                    IsEditing = false;
-                }
-            },
-            DispatcherPriority.Loaded);
+        if (DraftTitle is null)
+        {
+            SetCurrentValue(DraftTitleProperty, Title);
+        }
+
+        var editor = new TextBox
+        {
+            MinHeight = 28,
+            Padding = new Thickness(8, 3),
+            Watermark = TitleWatermark,
+            [!TextBox.TextProperty] = this[!!DraftTitleProperty],
+        };
+        editor.KeyDown += OnEditorKeyDown;
+        editor.LostFocus += OnEditorLostFocus;
+        editor.Loaded += OnEditorLoaded;
+        _editor = editor;
+        _editorHost.Content = editor;
     }
 
-    private void OnTitleBoxKeyDown(object? sender, KeyEventArgs e)
+    private static void OnEditorLoaded(object? sender, RoutedEventArgs e)
+    {
+        var editor = (TextBox)sender!;
+        editor.Loaded -= OnEditorLoaded;
+        editor.Focus();
+        editor.SelectAll();
+    }
+
+    private void OnEditorKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {
@@ -311,37 +279,91 @@ public class ChapterListItem : ContentControl
         }
     }
 
-    private void OnTitleBoxLostFocus(object? sender, RoutedEventArgs e)
-    {
-        if (IsEditing)
-        {
-            FinishEdit(commit: true);
-        }
-    }
+    private void OnEditorLostFocus(object? sender, RoutedEventArgs e) => FinishEdit(commit: true);
 
     private void FinishEdit(bool commit)
     {
-        if (_finishingEdit || _titleBox is null)
+        var draft = DraftTitle?.Trim() ?? string.Empty;
+
+        SetCurrentValue(IsEditingProperty, false);
+        SetCurrentValue(DraftTitleProperty, null);
+        Focus();
+        if (commit && draft != Title)
+        {
+            Execute(CommitTitleCommand, draft);
+        }
+    }
+
+    private void CloseEditor()
+    {
+        if (_editor is null)
         {
             return;
         }
 
-        _finishingEdit = true;
-        try
+        _editor.KeyDown -= OnEditorKeyDown;
+        _editor.LostFocus -= OnEditorLostFocus;
+        _editor.Loaded -= OnEditorLoaded;
+        _editor = null;
+        if (_editorHost is not null)
         {
-            var oldTitle = Title;
-            var newTitle = (_titleBox.Text ?? string.Empty).Trim();
-            IsEditing = false;
-            Focus();
-            if (commit && newTitle != oldTitle)
-            {
-                Title = newTitle;
-                RaiseEvent(new ChapterTitleCommittedEventArgs(TitleCommittedEvent, oldTitle, newTitle));
-            }
+            _editorHost.Content = null;
         }
-        finally
+    }
+
+    private static void Execute(ICommand? command, object? parameter)
+    {
+        if (command?.CanExecute(parameter) == true)
         {
-            _finishingEdit = false;
+            command.Execute(parameter);
+        }
+    }
+}
+
+/// <summary>
+/// The yellow "a chapter added now goes here" row. Hosts keep one instance in the list and move it as the
+/// playhead crosses chapter starts (see <see cref="ChapterPlacement.PlaceholderIndex"/>); it is never
+/// turned into a chapter row.
+/// </summary>
+public class ChapterPlaceholderRow : TemplatedControl
+{
+    public static readonly StyledProperty<TimeSpan> StartProperty =
+        AvaloniaProperty.Register<ChapterPlaceholderRow, TimeSpan>(nameof(Start));
+
+    public static readonly DirectProperty<ChapterPlaceholderRow, string> StartTextProperty =
+        AvaloniaProperty.RegisterDirect<ChapterPlaceholderRow, string>(nameof(StartText), o => o.StartText);
+
+    public static readonly DirectProperty<ChapterPlaceholderRow, string> StartGhostTextProperty =
+        AvaloniaProperty.RegisterDirect<ChapterPlaceholderRow, string>(nameof(StartGhostText), o => o.StartGhostText);
+
+    private string _startText = ScrubTimeline.FormatTimestamp(TimeSpan.Zero);
+    private string _startGhostText = "8:88";
+
+    public TimeSpan Start
+    {
+        get => GetValue(StartProperty);
+        set => SetValue(StartProperty, value);
+    }
+
+    public string StartText
+    {
+        get => _startText;
+        private set => SetAndRaise(StartTextProperty, ref _startText, value);
+    }
+
+    public string StartGhostText
+    {
+        get => _startGhostText;
+        private set => SetAndRaise(StartGhostTextProperty, ref _startGhostText, value);
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == StartProperty)
+        {
+            StartText = ScrubTimeline.FormatTimestamp(change.GetNewValue<TimeSpan>());
+            StartGhostText = new string(StartText.Select(ch => char.IsDigit(ch) ? '8' : ch).ToArray());
         }
     }
 }
