@@ -13,6 +13,8 @@
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Tokens.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Icons.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Buttons.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Slider.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Lcd.axaml"/>
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>
@@ -22,5 +24,8 @@
   </Style>
   <Style Selector="ToggleButton">
     <Setter Property="Theme" Value="{StaticResource Vcr.Theme.LatchButton}"/>
+  </Style>
+  <Style Selector="Slider.volume">
+    <Setter Property="Theme" Value="{StaticResource Vcr.Theme.VolumeSlider}"/>
   </Style>
 </Styles>
