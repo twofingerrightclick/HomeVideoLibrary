@@ -7,13 +7,22 @@ public sealed class LibrarySettings(string? settingsPath = null)
     private readonly string _settingsPath = settingsPath ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomeVideoLibrary", "settings.json");
 
+    /// <summary>Returns the saved library root, or null when none is saved or the file is empty or corrupt.</summary>
     public async Task<string?> LoadRootAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(_settingsPath))
             return null;
         await using var stream = File.OpenRead(_settingsPath);
-        var settings = await JsonSerializer.DeserializeAsync<Settings>(stream, cancellationToken: cancellationToken);
-        return settings?.LibraryRoot;
+        try
+        {
+            var settings = await JsonSerializer.DeserializeAsync<Settings>(stream, cancellationToken: cancellationToken);
+            return string.IsNullOrWhiteSpace(settings?.LibraryRoot) ? null : settings.LibraryRoot;
+        }
+        catch (JsonException exception)
+        {
+            System.Diagnostics.Trace.TraceWarning($"Ignoring unreadable settings {_settingsPath}: {exception.Message}");
+            return null;
+        }
     }
 
     public async Task SaveRootAsync(string root, CancellationToken cancellationToken = default)
