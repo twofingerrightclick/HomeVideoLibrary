@@ -142,6 +142,7 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.False(vm.CanImport);
         Assert.Contains("mkvmerge", vm.ToolWarning);
         Assert.Equal(VideoRecordState.Pending, vm.Tapes.Single().Record.State);
+        Assert.Null(vm.CreatePreviewSession(vm.Tapes.Single()));
     }
 
     private sealed class FakeImporter(LibraryCatalog catalog, FakeMatroska files) : IVideoImporter

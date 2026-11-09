@@ -38,6 +38,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly HashSet<Guid> _selection = [];
     private LibraryModel? _model;
     private LibraryServices? _services;
+    private PreviewCache? _previews;
     private LibrarySnapshot _shown = LibrarySnapshot.Empty;
     private bool _syncQueued, _syncingAlbums;
     private Guid? _anchorId;
@@ -230,7 +231,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips));
     }
 
-    public IVideoMetadataService? CreatePreviewService() => _services?.Metadata;
+    public TapePreviewSession? CreatePreviewSession(TapeViewModel tape)
+    {
+        if (_model is not { } model || _services is not { } services || _previews is not { } previews || !ToolsReady || tape.IsMissing) return null;
+        return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
+    }
 
     public async Task OpenVideoAsync(LibraryVideo video)
     {
@@ -336,7 +341,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         CancelIndex(); _indexCancellation = null; IsIndexing = false;
         if (_model is { } previous) previous.Changed -= OnModelChanged;
-        _model = model; _services = services;
+        _model = model; _services = services; _previews = new PreviewCache(model.Catalog.Paths, services.Files);
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);
         LibraryRoot = model.Catalog.Paths.RootDirectory;
