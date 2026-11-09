@@ -1,0 +1,26 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Entry point. Include after FluentTheme:
+      <FluentTheme/>
+      <StyleInclude Source="avares://HomeVideoLibrary.UI/VcrTheme.axaml"/>
+    Resources here are searched before Fluent's, so the Fluent keys overridden in FluentOverrides.axaml
+    restyle stock controls, and the type-keyed ControlThemes supply this library's controls.
+  -->
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Tokens.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Icons.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Buttons.axaml"/>
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <Style Selector="Button">
+    <Setter Property="Theme" Value="{StaticResource Vcr.Theme.PlasticButton}"/>
+  </Style>
+  <Style Selector="ToggleButton">
+    <Setter Property="Theme" Value="{StaticResource Vcr.Theme.LatchButton}"/>
+  </Style>
+</Styles>

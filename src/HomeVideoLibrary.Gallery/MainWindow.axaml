@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:g="using:HomeVideoLibrary.Gallery"
+        xmlns:c="using:HomeVideoLibrary.UI.Controls"
+        x:Class="HomeVideoLibrary.Gallery.MainWindow"
+        x:DataType="g:MainWindow"
+        Title="VCR Component Gallery"
+        Width="1360" Height="900" MinWidth="900"
+        Background="{DynamicResource Vcr.Brush.Chassis}">
+  <DockPanel>
+    <Border DockPanel.Dock="Top"
+            Background="{DynamicResource Vcr.Brush.Faceplate}"
+            BoxShadow="0 1 0 0 #14FFFFFF inset, 0 2 8 0 #80000000"
+            Padding="18,10">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+          <ToggleSwitch x:Name="SoundSwitch" OnContent="SOUND" OffContent="SOUND" IsChecked="False"/>
+          <Slider x:Name="SoundVolume" Classes="volume" Width="140" Minimum="0" Maximum="1" Value="0.6"/>
+        </StackPanel>
+        <TextBlock Classes="gallery-title" Text="VCR COMPONENT GALLERY" VerticalAlignment="Center"/>
+      </DockPanel>
+    </Border>
+    <ListBox x:Name="SectionList"
+             DockPanel.Dock="Left"
+             Width="200"
+             Margin="0,12,0,0"
+             Background="Transparent"
+             DisplayMemberBinding="{Binding Title, DataType=g:GallerySection}"/>
+    <ScrollViewer x:Name="ContentScroller" Padding="28,22">
+      <ContentControl x:Name="SectionHost"/>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

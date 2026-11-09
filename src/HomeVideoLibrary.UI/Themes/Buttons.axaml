@@ -1,0 +1,423 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="using:HomeVideoLibrary.UI"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <!--
+    Shared key anatomy:
+      PART_Well  recessed slot in the chassis (inset shadow); carries the focus ring.
+      PART_Cap   the moving key; its BoxShadow draws the molded side wall and cast shadow, and its
+                 RenderTransform supplies Z travel. Pressing collapses both so the key sinks flush.
+    The well's extra bottom padding is the room the cap travels into.
+  -->
+  <ControlTheme x:Key="Vcr.Theme.PlasticButton" TargetType="Button">
+    <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Cap}"/>
+    <Setter Property="Padding" Value="{DynamicResource Vcr.Padding.Cap}"/>
+    <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Control}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="ui:Vcr.IconSize" Value="{DynamicResource Vcr.Size.Icon}"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Well"
+                Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                CornerRadius="{DynamicResource Vcr.Radius.Well}"
+                BoxShadow="{DynamicResource Vcr.Shadow.Well}"
+                Padding="2,2,2,4">
+          <Border Name="PART_Cap"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Cap.Raised}"
+                  RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+            <Border.Transitions>
+              <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.06"/>
+              </Transitions>
+            </Border.Transitions>
+            <c:GlyphLegendPanel Name="PART_Legend"
+                                Margin="{TemplateBinding Padding}"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+              <PathIcon Name="PART_Icon"
+                        Data="{TemplateBinding ui:Vcr.Icon}"
+                        Width="{TemplateBinding ui:Vcr.IconSize}"
+                        Height="{TemplateBinding ui:Vcr.IconSize}"
+                        IsVisible="{TemplateBinding ui:Vcr.Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <ContentPresenter Name="PART_ContentPresenter"
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                RecognizesAccessKey="True"
+                                VerticalAlignment="Center"/>
+            </c:GlyphLegendPanel>
+          </Border>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Hover}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Hover}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Pressed}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Pressed}"/>
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_Well">
+      <Setter Property="BoxShadow" Value="0 1 3 0 #CC000000 inset, 0 0 0 2 #8FC6DA"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="BoxShadow" Value="0 1 0 0 #0FFFFFFF inset, 0 1 0 0 #0A0B0C"/>
+        <Setter Property="RenderTransform" Value="translate(0px, 1px)"/>
+      </Style>
+    </Style>
+
+    <!-- Sizes. -->
+    <Style Selector="^.toolbar">
+      <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Toolbar}"/>
+      <Setter Property="Padding" Value="9,0"/>
+      <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+      <Setter Property="ui:Vcr.IconSize" Value="12"/>
+      <Style Selector="^ /template/ Border#PART_Well">
+        <Setter Property="Padding" Value="1.5,1.5,1.5,3.5"/>
+        <Setter Property="CornerRadius" Value="4"/>
+      </Style>
+    </Style>
+    <Style Selector="^.transport">
+      <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Transport}"/>
+      <Setter Property="MinWidth" Value="58"/>
+      <Setter Property="Padding" Value="12,0"/>
+      <Setter Property="ui:Vcr.IconSize" Value="15"/>
+    </Style>
+    <Style Selector="^.icon">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Control}"/>
+    </Style>
+    <Style Selector="^.icon.toolbar">
+      <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Toolbar}"/>
+    </Style>
+
+    <!-- Accent caps. -->
+    <Style Selector="^.primary">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Primary.Ink}"/>
+      <Setter Property="BorderBrush" Value="#0E1A1F"/>
+      <Style Selector="^:pointerover">
+        <Setter Property="Background" Value="#C9E0E7"/>
+      </Style>
+      <Style Selector="^:pressed">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^.destructive">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Destructive}"/>
+      <Setter Property="Foreground" Value="#FBEDEA"/>
+      <Setter Property="BorderBrush" Value="#3A0C09"/>
+      <Style Selector="^:pointerover">
+        <Setter Property="Background" Value="#D2443A"/>
+      </Style>
+      <Style Selector="^:pressed">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Destructive.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^.go">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Go}"/>
+      <Setter Property="Foreground" Value="#F1FBF5"/>
+      <Setter Property="BorderBrush" Value="#06331B"/>
+      <Style Selector="^:pointerover">
+        <Setter Property="Background" Value="#31C472"/>
+      </Style>
+      <Style Selector="^:pressed">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Go.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^.primary:disabled, ^.destructive:disabled, ^.go:disabled">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:PlasticButton}" TargetType="c:PlasticButton" BasedOn="{StaticResource Vcr.Theme.PlasticButton}"/>
+
+  <!-- Rubber keys: matte dome, gasket ring instead of a hard well, softer and slower travel. -->
+  <ControlTheme x:Key="Vcr.Theme.RubberButton" TargetType="Button">
+    <Setter Property="ui:Vcr.Sound" Value="Rubber"/>
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Pill}"/>
+    <Setter Property="Padding" Value="12,0"/>
+    <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Rubber}"/>
+    <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Rubber}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="ui:Vcr.IconSize" Value="12"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Well"
+                Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                BoxShadow="0 1 2 0 #E6000000 inset, 0 1 0 0 #14FFFFFF"
+                Padding="2,2,2,3">
+          <Border Name="PART_Cap"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Rubber.Raised}"
+                  RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+            <Border.Transitions>
+              <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.09"/>
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.09"/>
+              </Transitions>
+            </Border.Transitions>
+            <c:GlyphLegendPanel Margin="{TemplateBinding Padding}"
+                                Spacing="5"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+              <PathIcon Name="PART_Icon"
+                        Data="{TemplateBinding ui:Vcr.Icon}"
+                        Width="{TemplateBinding ui:Vcr.IconSize}"
+                        Height="{TemplateBinding ui:Vcr.IconSize}"
+                        IsVisible="{TemplateBinding ui:Vcr.Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <ContentPresenter Name="PART_ContentPresenter"
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                RecognizesAccessKey="True"
+                                VerticalAlignment="Center"/>
+            </c:GlyphLegendPanel>
+          </Border>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome.Hover}"/>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome.Pressed}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.RubberPressed}"/>
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Rubber.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_Well">
+      <Setter Property="BoxShadow" Value="0 1 2 0 #E6000000 inset, 0 0 0 2 #8FC6DA"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="Opacity" Value="0.7"/>
+    </Style>
+    <Style Selector="^.round">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Width" Value="{DynamicResource Vcr.Size.Rubber}"/>
+      <Setter Property="Height" Value="{DynamicResource Vcr.Size.Rubber}"/>
+    </Style>
+    <Style Selector="^.red">
+      <Setter Property="Background" Value="#C2352C"/>
+      <Setter Property="Foreground" Value="#FFF1EE"/>
+      <Style Selector="^:pointerover"><Setter Property="Background" Value="#CF3F35"/></Style>
+      <Style Selector="^:pressed"><Setter Property="Background" Value="#A82C24"/></Style>
+    </Style>
+    <Style Selector="^.green">
+      <Setter Property="Background" Value="#1E9B57"/>
+      <Setter Property="Foreground" Value="#F1FBF5"/>
+      <Style Selector="^:pointerover"><Setter Property="Background" Value="#25AA61"/></Style>
+      <Style Selector="^:pressed"><Setter Property="Background" Value="#188449"/></Style>
+    </Style>
+    <Style Selector="^.yellow">
+      <Setter Property="Background" Value="#E3B81E"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Yellow.Ink}"/>
+      <Style Selector="^:pointerover"><Setter Property="Background" Value="#EEC52A"/></Style>
+      <Style Selector="^:pressed"><Setter Property="Background" Value="#C9A218"/></Style>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:RubberButton}" TargetType="c:RubberButton" BasedOn="{StaticResource Vcr.Theme.RubberButton}"/>
+
+  <!-- Latching key: a plastic cap with a status LED that stays 1px in while checked. -->
+  <ControlTheme x:Key="Vcr.Theme.LatchButton" TargetType="ToggleButton">
+    <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Cap}"/>
+    <Setter Property="Padding" Value="{DynamicResource Vcr.Padding.Cap}"/>
+    <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Control}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="ui:Vcr.IconSize" Value="{DynamicResource Vcr.Size.Icon}"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Well"
+                Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                CornerRadius="{DynamicResource Vcr.Radius.Well}"
+                BoxShadow="{DynamicResource Vcr.Shadow.Well}"
+                Padding="2,2,2,4">
+          <Border Name="PART_Cap"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Cap.Raised}"
+                  RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+            <Border.Transitions>
+              <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.06"/>
+              </Transitions>
+            </Border.Transitions>
+            <Panel>
+              <Border Name="PART_Led"
+                      Width="12" Height="3"
+                      CornerRadius="1.5"
+                      Margin="0,4,0,0"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Top"
+                      Background="#1E2A22"
+                      BoxShadow="0 1 0 0 #14FFFFFF, 0 0 0 0 #00000000"/>
+              <c:GlyphLegendPanel Margin="{TemplateBinding Padding}"
+                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                <PathIcon Name="PART_Icon"
+                          Data="{TemplateBinding ui:Vcr.Icon}"
+                          Width="{TemplateBinding ui:Vcr.IconSize}"
+                          Height="{TemplateBinding ui:Vcr.IconSize}"
+                          IsVisible="{TemplateBinding ui:Vcr.Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Content="{TemplateBinding Content}"
+                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  RecognizesAccessKey="True"
+                                  VerticalAlignment="Center"/>
+              </c:GlyphLegendPanel>
+            </Panel>
+          </Border>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Hover}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Hover}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:checked">
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="RenderTransform" Value="translate(0px, 1px)"/>
+        <Setter Property="BoxShadow" Value="0 1 1 0 #40000000 inset, 0 -1 0 0 #66000000 inset, 0 1 0 0 #0A0B0C, 0 1 2 0 #80000000"/>
+      </Style>
+      <Style Selector="^ /template/ Border#PART_Led">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Green.Led}"/>
+        <Setter Property="BoxShadow" Value="0 0 0 0 #00000000, 0 0 6 1 #994BE38A"/>
+      </Style>
+    </Style>
+    <Style Selector="^.red:checked /template/ Border#PART_Led">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Red.Led}"/>
+      <Setter Property="BoxShadow" Value="0 0 0 0 #00000000, 0 0 6 1 #99FF5040"/>
+    </Style>
+    <Style Selector="^.red /template/ Border#PART_Led">
+      <Setter Property="Background" Value="#2E1C1A"/>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Pressed}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Pressed}"/>
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Pressed}"/>
+      </Style>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_Well">
+      <Setter Property="BoxShadow" Value="0 1 3 0 #CC000000 inset, 0 0 0 2 #8FC6DA"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Style Selector="^ /template/ Border#PART_Led">
+        <Setter Property="Opacity" Value="0.4"/>
+      </Style>
+    </Style>
+    <Style Selector="^.toolbar">
+      <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Toolbar}"/>
+      <Setter Property="Padding" Value="9,0"/>
+      <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+      <Setter Property="ui:Vcr.IconSize" Value="12"/>
+      <Style Selector="^ /template/ Border#PART_Well">
+        <Setter Property="Padding" Value="1.5,1.5,1.5,3.5"/>
+        <Setter Property="CornerRadius" Value="4"/>
+      </Style>
+      <Style Selector="^ /template/ Border#PART_Led">
+        <Setter Property="Margin" Value="0,2.5,0,0"/>
+        <Setter Property="Height" Value="2"/>
+      </Style>
+    </Style>
+    <Style Selector="^.icon">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Control}"/>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:LatchButton}" TargetType="c:LatchButton" BasedOn="{StaticResource Vcr.Theme.LatchButton}"/>
+
+  <!-- Chassis silkscreen legend above or below a key or a group of keys. -->
+  <ControlTheme x:Key="{x:Type c:LegendFrame}" TargetType="c:LegendFrame">
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DockPanel>
+          <StackPanel Name="PART_LegendRow"
+                      DockPanel.Dock="{TemplateBinding LegendPlacement}"
+                      Orientation="Horizontal"
+                      Spacing="4"
+                      Margin="0,0,0,5"
+                      HorizontalAlignment="Center">
+            <Ellipse Width="5" Height="5"
+                     VerticalAlignment="Center"
+                     Fill="{TemplateBinding LegendDot}"
+                     IsVisible="{TemplateBinding LegendDot, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+            <TextBlock Text="{TemplateBinding Legend}"
+                       LetterSpacing="{DynamicResource Vcr.LetterSpacing.Legend}"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
+          <ContentPresenter Name="PART_ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+        </DockPanel>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^[LegendPlacement=Bottom] /template/ StackPanel#PART_LegendRow">
+      <Setter Property="Margin" Value="0,5,0,0"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>
