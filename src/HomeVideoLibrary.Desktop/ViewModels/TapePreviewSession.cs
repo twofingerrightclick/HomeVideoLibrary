@@ -35,7 +35,7 @@ public sealed class TapePreviewSession(VideoRecord video, string mkvPath, IMatro
                 return new PreviewFrame(thumbnail.Position, await thumbnails.ExtractThumbnailAsync(mkvPath, video.Id, thumbnail, token));
             }
             var position = TimeSpan.FromSeconds(Math.Max(0, video.Duration.TotalSeconds - 0.1) * bucket / (Buckets - 1));
-            return new PreviewFrame(position, await previews.GetAsync(video.Id, mkvPath, position, bucket, token));
+            return new PreviewFrame(position, await previews.GetAsync(video.Id, video.Stamp, mkvPath, position, bucket, token));
         }
         finally { _gate.Release(); }
     }

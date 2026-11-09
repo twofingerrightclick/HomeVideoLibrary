@@ -94,6 +94,21 @@ public sealed class AlbumsAndSearchTests(ITestOutputHelper output) : IDisposable
     }
 
     [Fact]
+    public void TagFilterUsesTheSuggestionPrefixRulePhrasesStayInOneFieldAndPunctuationFiltersNothing()
+    {
+        var family = Record("family", title: "end", description: "start", tags: ["my family"]);
+        var other = Record("other");
+        var snapshot = Snapshot([family, other]);
+
+        Assert.Equal(family.Id, Assert.Single(LibrarySearch.Run(snapshot, "tag:fam")).Video.Id);
+        Assert.Equal(family.Id, Assert.Single(LibrarySearch.Run(snapshot, "tag:my")).Video.Id);
+        Assert.Empty(LibrarySearch.Run(snapshot, "tag:ily"));
+        Assert.Empty(LibrarySearch.Run(snapshot, "\"end start\""));
+        Assert.Equal(2, LibrarySearch.Run(snapshot, "!!!").Count);
+        Assert.Equal(2, LibrarySearch.Run(snapshot, "#").Count);
+    }
+
+    [Fact]
     public void AlbumFiltersAndPendingRecordsAndNewestFirstOrder()
     {
         var older = Record("older trip", recordedAt: new DateTimeOffset(1995, 1, 1, 0, 0, 0, TimeSpan.Zero), title: "trip");

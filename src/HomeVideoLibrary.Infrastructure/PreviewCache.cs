@@ -6,7 +6,7 @@ namespace HomeVideoLibrary.Infrastructure;
 /// <summary>Hover-preview frames for videos without chosen thumbnails, captured on demand to
 /// <c>.cache/preview/{videoId:N}/{bucket}.jpg</c>. The cache owns these files: it keeps at most
 /// <c>capacity</c> of them (least recently used are deleted) and runs at most <c>maxConcurrentCaptures</c>
-/// captures at once. A video whose capture failed is not retried for the rest of the session.</summary>
+/// captures at once. A capture that failed is not retried until the video file changes.</summary>
 public sealed class PreviewCache
 {
     public const int FrameWidth = 416;
@@ -17,7 +17,7 @@ public sealed class PreviewCache
     private readonly object _lock = new();
     private readonly LinkedList<(Guid VideoId, int Bucket, string Path)> _recent = new();
     private readonly Dictionary<(Guid, int), LinkedListNode<(Guid VideoId, int Bucket, string Path)>> _entries = [];
-    private readonly Dictionary<Guid, string> _failed = [];
+    private readonly Dictionary<Guid, (FileStamp? Stamp, string Reason)> _failed = [];
 
     public PreviewCache(LibraryPaths paths, IMatroskaFileEditor frames, int capacity = 400, int maxConcurrentCaptures = 2)
     {
@@ -29,8 +29,10 @@ public sealed class PreviewCache
     public int Count { get { lock (_lock) return _entries.Count; } }
 
     /// <summary>Returns the frame's JPEG path, capturing it first on a cache miss.</summary>
-    /// <exception cref="InvalidOperationException">An earlier capture for this video failed.</exception>
-    public async Task<string> GetAsync(Guid videoId, string mkvPath, TimeSpan position, int bucket, CancellationToken cancellationToken)
+    /// <param name="fileStamp">The video file's current stamp; a failure is remembered only for this version of the file.</param>
+    /// <exception cref="InvalidOperationException">An earlier capture of this version of the file failed.</exception>
+    public async Task<string> GetAsync(Guid videoId, FileStamp? fileStamp, string mkvPath, TimeSpan position, int bucket,
+        CancellationToken cancellationToken)
     {
         lock (_lock)
         {
@@ -39,8 +41,8 @@ public sealed class PreviewCache
                 _recent.Remove(node); _recent.AddFirst(node);
                 return node.Value.Path;
             }
-            if (_failed.TryGetValue(videoId, out var reason))
-                throw new InvalidOperationException("No preview is available for this video: " + reason);
+            if (_failed.TryGetValue(videoId, out var failure) && failure.Stamp == fileStamp)
+                throw new InvalidOperationException("No preview is available for this video: " + failure.Reason);
         }
         await _captures.WaitAsync(cancellationToken);
         var directory = Path.Combine(_paths.PreviewDirectory, videoId.ToString("N"));
@@ -56,7 +58,7 @@ public sealed class PreviewCache
         {
             Delete(temporary);
             if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested) throw;
-            lock (_lock) _failed[videoId] = exception.Message;
+            lock (_lock) _failed[videoId] = (fileStamp, exception.Message);
             throw;
         }
         finally { _captures.Release(); }

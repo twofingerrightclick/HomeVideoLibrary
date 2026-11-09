@@ -18,8 +18,9 @@ public sealed record SearchHit(VideoRecord Video, VideoChapterRecord? Chapter = 
 /// <summary>In-memory search over a <see cref="LibrarySnapshot"/>.</summary>
 /// <remarks>Query syntax: words match case- and diacritic-insensitively as word prefixes across the display name, title,
 /// description, tags and chapter text, and all words must match. <c>"a phrase"</c> matches as a substring, and
-/// <c>tag:name</c> or <c>tag:"two words"</c> requires a tag (video or chapter) starting with that name. When no
-/// video matches every word as a prefix, words are retried as substrings. Results are newest first.</remarks>
+/// <c>tag:name</c> or <c>tag:"two words"</c> requires a tag (video or chapter) matching by <see cref="TagRules.MatchesPrefix"/>,
+/// the rule tag suggestions use. Phrases never span two fields. When no video matches every word as a prefix, words are
+/// retried as substrings. A query without any searchable text filters nothing. Results are newest first.</remarks>
 public static partial class LibrarySearch
 {
     private const int MaxTokens = 32;
@@ -29,12 +30,20 @@ public static partial class LibrarySearch
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         var candidates = Filter(snapshot, filter);
-        if (string.IsNullOrWhiteSpace(query)) return candidates.Select(record => new SearchHit(record)).ToArray();
-        var parsed = Parse(query);
-        if (parsed.IsEmpty) return [];
+        var parsed = Parse(query ?? "");
+        if (parsed.IsEmpty) return candidates.Select(record => new SearchHit(record)).ToArray();
         var hits = Match(candidates, parsed, substrings: false);
         return hits.Count > 0 || parsed.Words.Length == 0 ? hits : Match(candidates, parsed, substrings: true);
     }
+
+    /// <summary>Builds the search text for records ahead of the first query. Runs where records are published (the model's
+    /// writer, off the UI thread); records never prepared are built on first search instead.</summary>
+    internal static void Prepare(IEnumerable<VideoRecord> records)
+    {
+        foreach (var record in records) _ = DocumentOf(record);
+    }
+
+    private static Document DocumentOf(VideoRecord record) => Documents.GetValue(record, static record => new Document(record));
 
     /// <summary>Text folds exactly like tag identity, so a word query and a <c>tag:</c> filter agree on "Été" = "ete".</summary>
     private static string Fold(string text) => TagRules.Key(text);
@@ -51,7 +60,7 @@ public static partial class LibrarySearch
         var hits = new List<SearchHit>();
         foreach (var record in candidates)
         {
-            var document = Documents.GetValue(record, static record => new Document(record));
+            var document = DocumentOf(record);
             if (!query.Tags.All(document.HasTag) ||
                 !query.Words.All(word => document.Video.Matches(word, substrings) || document.Chapters.Any(chapter => chapter.Matches(word, substrings))) ||
                 !query.Phrases.All(phrase => document.Video.Contains(phrase) || document.Chapters.Any(chapter => chapter.Contains(phrase))))
@@ -96,7 +105,7 @@ public static partial class LibrarySearch
     {
         public Document(VideoRecord record)
         {
-            Video = new Text(string.Join('\n', [record.DisplayName, record.Title, record.Description, .. record.Tags]), record.Tags);
+            Video = new Text([record.DisplayName, record.Title, record.Description, .. record.Tags], record.Tags);
             Chapters = record.Chapters.Select(chapter => new ChapterText(chapter)).ToArray();
         }
 
@@ -107,27 +116,27 @@ public static partial class LibrarySearch
 
     private class Text
     {
-        private readonly string _text;
+        private readonly string[] _fields;
         private readonly string[] _words;
         private readonly string[] _tags;
 
-        public Text(string text, IEnumerable<string> tags)
+        public Text(IEnumerable<string> fields, IEnumerable<string> tags)
         {
-            _text = Fold(text);
-            _words = WordRegex().Matches(_text).Select(match => match.Value).Distinct().ToArray();
+            _fields = fields.Select(Fold).Where(field => field.Length > 0).ToArray();
+            _words = _fields.SelectMany(field => WordRegex().Matches(field).Select(match => match.Value)).Distinct().ToArray();
             _tags = tags.Select(TagRules.Key).Where(tag => tag.Length > 0).ToArray();
         }
 
         public bool Matches(string word, bool substring) => substring
-            ? _text.Contains(word, StringComparison.Ordinal)
+            ? Contains(word)
             : _words.Any(candidate => candidate.StartsWith(word, StringComparison.Ordinal));
 
-        public bool Contains(string phrase) => _text.Contains(phrase, StringComparison.Ordinal);
-        public bool HasTag(string prefix) => _tags.Any(tag => tag.StartsWith(prefix, StringComparison.Ordinal));
+        public bool Contains(string text) => _fields.Any(field => field.Contains(text, StringComparison.Ordinal));
+        public bool HasTag(string prefix) => _tags.Any(tag => TagRules.MatchesPrefix(tag, prefix));
     }
 
     private sealed class ChapterText(VideoChapterRecord chapter)
-        : Text(string.Join('\n', [chapter.Title, chapter.Description, .. chapter.Tags]), chapter.Tags)
+        : Text([chapter.Title, chapter.Description, .. chapter.Tags], chapter.Tags)
     {
         public VideoChapterRecord Chapter { get; } = chapter;
     }

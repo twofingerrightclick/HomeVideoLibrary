@@ -80,14 +80,15 @@ public sealed class LibraryModelTests : IDisposable
         Assert.Equal(1, result.Missing);
         Assert.Empty(result.Errors);
         var missing = model.Snapshot.Find(video.Id)!;
-        Assert.Equal(VideoRecordState.Missing, missing.State);
+        Assert.True(missing.IsMissing);
+        Assert.Equal(VideoRecordState.Ok, missing.State);
         Assert.Equal(video.Id, Assert.Single(LibrarySearch.Run(model.Snapshot, "wedding")).Video.Id);
 
         await File.WriteAllBytesAsync(path, bytes);
         File.SetLastWriteTimeUtc(path, new DateTime(stamp.ModifiedTicks, DateTimeKind.Utc));
         var reads = _files.Reads;
         Assert.Equal(0, await model.StatPassAsync());
-        Assert.Equal(VideoRecordState.Ok, model.Snapshot.Find(video.Id)!.State);
+        Assert.False(model.Snapshot.Find(video.Id)!.IsMissing);
         Assert.Equal(reads, _files.Reads);
     }
 
@@ -106,9 +107,54 @@ public sealed class LibraryModelTests : IDisposable
         Assert.Equal(VideoRecordState.Unreadable, model.Snapshot.Find(bad.Id)!.State);
         Assert.Equal(VideoRecordState.Ok, model.Snapshot.Find(good.Id)!.State);
 
+        // An unchanged unreadable file is not read again on every refresh or window activation.
+        Assert.Equal(0, await model.StatPassAsync());
+        Assert.Equal(0, (await model.ReconcileAsync()).Read);
+        Assert.Equal(2, _files.Reads);
+
         _files.Failures.Clear();
+        await File.AppendAllTextAsync(catalog.GetVideoPath(bad.RelativePath), " repaired");
         Assert.Equal(1, (await model.ReconcileAsync()).Read);
         Assert.Equal(VideoRecordState.Ok, model.Snapshot.Find(bad.Id)!.State);
+        Assert.Equal(2, (await model.ReconcileAsync(force: true)).Read);
+    }
+
+    [Fact]
+    public async Task ImportsAndAlbumsRacingAReconcileAreNeverReverted()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        await AddVideoAsync(catalog, "existing");
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        for (var round = 0; round < 60; round++)
+        {
+            var reconcile = Task.Run(() => model.ReconcileAsync());
+            var imported = await AddVideoAsync(catalog, $"import {round}");
+            await model.UpsertFromFileAsync(imported);
+            var album = await model.CreateAlbumAsync($"Album {round}", [imported.Id]);
+            await reconcile;
+            Assert.NotNull(model.Snapshot.Find(imported.Id));
+            Assert.Contains(imported.Id, model.Snapshot.MembersOf(album.Id));
+        }
+    }
+
+    [Fact]
+    public async Task AFileThatKeepsChangingWhileReadIsPublishedAsPendingNotAsStaleContent()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "busy file");
+        var path = catalog.GetVideoPath(video.RelativePath);
+        _files.Set(path, VideoMetadata.Empty with { Title = "stale" });
+        _files.BeforeRead = async (_, _) => await File.AppendAllTextAsync(path, " changed");
+        var model = new LibraryModel(catalog, _files);
+
+        var record = await model.UpsertFromFileAsync(video);
+
+        Assert.Equal(VideoRecordState.Pending, record.State);
+        Assert.Null(record.Stamp);
+        Assert.Equal("", record.Title);
+        _files.BeforeRead = null;
+        Assert.Equal(1, await model.StatPassAsync());
     }
 
     [Fact]
@@ -216,7 +262,7 @@ public sealed class LibraryModelTests : IDisposable
         var video = await AddVideoAsync(catalog, "video");
         File.Delete(catalog.GetVideoPath(video.RelativePath));
         var model = new LibraryModel(catalog, _files);
-        Assert.Equal(VideoRecordState.Missing, (await model.UpsertFromFileAsync(video)).State);
+        Assert.True((await model.UpsertFromFileAsync(video)).IsMissing);
     }
 
     [Fact]

@@ -253,7 +253,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (_model is not { } model || _services is not { } services || IsBusy || HasEditor) return;
         var record = model.Snapshot.Find(video.Id);
         if (record is null) return;
-        if (record.State == VideoRecordState.Missing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return; }
+        if (record.IsMissing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return; }
         var indexed = new IndexedMetadataService(services.Metadata, model);
         indexed.IndexingFailed += warning => Status = warning;
         Editor = new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed, _dependencies.CreatePlayback(), record.ToMetadata());

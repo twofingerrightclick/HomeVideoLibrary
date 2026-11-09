@@ -19,7 +19,7 @@ public sealed class LibrarySnapshot
         ImmutableDictionary<Guid, ImmutableHashSet<Guid>>.Empty, TagIndex.Empty);
 
     public ImmutableDictionary<Guid, VideoRecord> Videos { get; }
-    /// <summary>Sorted by name, ignoring case.</summary>
+    /// <summary>Sorted by <see cref="AlbumNames.Order"/>.</summary>
     public ImmutableArray<VideoAlbum> Albums { get; }
     public ImmutableDictionary<Guid, ImmutableHashSet<Guid>> AlbumMembers { get; }
     public TagIndex Tags { get; }
@@ -38,7 +38,7 @@ public sealed class LibrarySnapshot
         new(videos ?? Videos, albums is { } sorted ? Sort(sorted) : Albums, albumMembers ?? AlbumMembers, tags ?? Tags);
 
     internal static ImmutableArray<VideoAlbum> Sort(IEnumerable<VideoAlbum> albums) =>
-        [.. albums.OrderBy(album => album.Name, StringComparer.OrdinalIgnoreCase).ThenBy(album => album.Id)];
+        [.. AlbumNames.Order(albums, album => album.Name).ThenBy(album => album.Id)];
 }
 
 /// <summary>What changed between the previous snapshot and <see cref="Snapshot"/>.</summary>
@@ -88,16 +88,17 @@ public sealed class LibraryModel
 
     /// <summary>Publishes the catalog and cached MKV metadata without starting any process or touching video files.
     /// Videos without a usable cache entry are <see cref="VideoRecordState.Pending"/>.</summary>
-    public async Task<LibraryLoadResult> LoadAsync(CancellationToken cancellationToken = default)
-    {
-        var contents = await Catalog.LoadContentsAsync(cancellationToken);
-        var videos = contents.Videos.ToImmutableDictionary(video => video.Id, video => FromCatalog(video, contents.Cache));
-        var snapshot = new LibrarySnapshot(videos, LibrarySnapshot.Sort(contents.Albums), Memberships(contents, videos),
-            TagIndex.Build(videos.Values));
-        await MutateAsync(_ => Task.FromResult<(LibrarySnapshot, LibraryDelta?, bool)>(
-            (snapshot, new LibraryDelta(snapshot, [], [], [], true, true, IsReset: true), true)), cancellationToken);
-        return new LibraryLoadResult(videos.Count, videos.Values.Count(record => record.State == VideoRecordState.Pending), contents.Issues);
-    }
+    public Task<LibraryLoadResult> LoadAsync(CancellationToken cancellationToken = default) =>
+        // The catalog is read inside the writer, so no other model write can land between the read and the publish.
+        MutateAsync(async _ =>
+        {
+            var contents = await Catalog.LoadContentsAsync(cancellationToken);
+            var videos = contents.Videos.ToImmutableDictionary(video => video.Id, video => FromCatalog(video, contents.Cache));
+            var snapshot = new LibrarySnapshot(videos, LibrarySnapshot.Sort(contents.Albums), Memberships(contents, videos),
+                TagIndex.Build(videos.Values));
+            var result = new LibraryLoadResult(videos.Count, videos.Values.Count(record => record.State == VideoRecordState.Pending), contents.Issues);
+            return (snapshot, new LibraryDelta(snapshot, [], [], [], true, true, IsReset: true), result);
+        }, cancellationToken);
 
     /// <summary>Brings the snapshot up to date with the catalog and the files: new catalog rows are added, files are
     /// stat-checked, and new, changed or unreadable files (all of them when <paramref name="force"/>) are read with
@@ -125,16 +126,16 @@ public sealed class LibraryModel
                         progress?.Report(new IndexProgress(Interlocked.Increment(ref completed), toRead.Count, batch[index].Label, outcome.Error));
                     });
                 errors.AddRange((await CommitAsync(batch.Zip(outcomes, (record, outcome) => new PendingCommit(record.Id, null, outcome)).ToArray(),
-                    keepStale: false)).Errors);
+                    publishStaleAsPending: false)).Errors);
             }
             var snapshot = Snapshot;
             return new ReconcileResult(snapshot.Videos.Count, toRead.Count,
-                snapshot.Videos.Values.Count(record => record.State == VideoRecordState.Missing), errors);
+                snapshot.Videos.Values.Count(record => record.IsMissing), errors);
         }
         finally { _reconcile.Release(); }
     }
 
-    /// <summary>The cheap part of reconcile: stats every file, publishes Missing and restored states, and returns how
+    /// <summary>The cheap part of reconcile: stats every file, publishes missing and restored files, and returns how
     /// many videos need a read. Returns 0 without doing anything while a reconcile is running.</summary>
     public async Task<int> StatPassAsync(CancellationToken cancellationToken = default)
     {
@@ -145,7 +146,8 @@ public sealed class LibraryModel
 
     /// <summary>Reads one video's MKV and publishes it, adding it to the snapshot when new (after an import or clip
     /// edit) or replacing it (after a metadata save). Read failures do not throw: the returned record is then
-    /// <see cref="VideoRecordState.Unreadable"/> or <see cref="VideoRecordState.Missing"/>.</summary>
+    /// <see cref="VideoRecordState.Unreadable"/> or <see cref="VideoRecord.IsMissing"/>. If the file keeps changing
+    /// while it is read, the record is published as <see cref="VideoRecordState.Pending"/> so the next stat pass reads it.</summary>
     public async Task<VideoRecord> UpsertFromFileAsync(LibraryVideo video, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(video);
@@ -153,7 +155,7 @@ public sealed class LibraryModel
         for (var attempt = 1; ; attempt++)
         {
             var outcome = await ReadAsync(path, cancellationToken);
-            if ((await CommitAsync([new PendingCommit(video.Id, video, outcome)], keepStale: attempt >= 3)).Applied > 0)
+            if ((await CommitAsync([new PendingCommit(video.Id, video, outcome)], publishStaleAsPending: attempt >= 3)).Applied > 0)
                 return Snapshot.Find(video.Id)!;
         }
     }
@@ -173,7 +175,7 @@ public sealed class LibraryModel
         MutateAsync(async snapshot =>
         {
             await _albums.RenameAsync(albumId, name, cancellationToken);
-            var renamed = new VideoAlbum(albumId, name.Trim());
+            var renamed = new VideoAlbum(albumId, AlbumNames.Normalize(name)!);
             var next = snapshot.With(albums: snapshot.Albums.Where(album => album.Id != albumId).Append(renamed).ToImmutableArray());
             return (next, AlbumDelta(next), renamed);
         }, cancellationToken);
@@ -211,11 +213,11 @@ public sealed class LibraryModel
 
     private static LibraryDelta AlbumDelta(LibrarySnapshot snapshot) => new(snapshot, [], [], [], AlbumsChanged: true, TagsChanged: false);
 
-    private async Task SyncCatalogAsync(CancellationToken cancellationToken)
-    {
-        var contents = await Catalog.LoadContentsAsync(cancellationToken);
-        await MutateAsync(snapshot =>
+    private Task SyncCatalogAsync(CancellationToken cancellationToken) =>
+        MutateAsync(async snapshot =>
         {
+            // Read inside the writer: an import or album edit published meanwhile must not be reverted by an older read.
+            var contents = await Catalog.LoadContentsAsync(cancellationToken);
             var catalogIds = contents.Videos.Select(video => video.Id).ToHashSet();
             var added = new List<Guid>();
             var removed = snapshot.Videos.Keys.Where(id => !catalogIds.Contains(id)).ToArray();
@@ -230,46 +232,38 @@ public sealed class LibraryModel
             var albums = LibrarySnapshot.Sort(contents.Albums);
             var members = Memberships(contents, videos);
             var albumsChanged = !albums.SequenceEqual(snapshot.Albums) || !SameMembers(members, snapshot.AlbumMembers);
-            if (added.Count == 0 && removed.Length == 0 && !albumsChanged)
-                return Task.FromResult<(LibrarySnapshot, LibraryDelta?, bool)>((snapshot, null, true));
+            if (added.Count == 0 && removed.Length == 0 && !albumsChanged) return (snapshot, (LibraryDelta?)null, true);
             var tags = snapshot.Tags.Apply(removed.Select(id => (snapshot.Videos.GetValueOrDefault(id), (VideoRecord?)null))
                 .Concat(added.Select(id => ((VideoRecord?)null, videos.GetValueOrDefault(id)))));
             var next = snapshot.With(videos, albums, members, tags);
-            return Task.FromResult<(LibrarySnapshot, LibraryDelta?, bool)>(
-                (next, new LibraryDelta(next, added, [], removed, albumsChanged, !ReferenceEquals(tags, snapshot.Tags)), true));
+            return (next, new LibraryDelta(next, added, [], removed, albumsChanged, !ReferenceEquals(tags, snapshot.Tags)), true);
         }, cancellationToken);
-    }
 
     private static bool SameMembers(ImmutableDictionary<Guid, ImmutableHashSet<Guid>> left, ImmutableDictionary<Guid, ImmutableHashSet<Guid>> right) =>
         left.Count == right.Count && left.All(pair => right.TryGetValue(pair.Key, out var other) && other.SetEquals(pair.Value));
 
-    /// <summary>Stats every file and publishes Missing/restored transitions; returns the records that need a read.</summary>
+    /// <summary>Stats every file and publishes missing/restored transitions; returns the records that need a read: those
+    /// never read, and those whose file changed since the last read attempt (successful or not), or all when forced.</summary>
     private async Task<IReadOnlyList<VideoRecord>> StatAsync(bool force, CancellationToken cancellationToken)
     {
         var snapshot = Snapshot;
         var stamps = await Task.Run(() => snapshot.Videos.Values.Select(record => (Record: record, Stamp: TryStat(record))).ToArray(), cancellationToken);
-        var transitions = new Dictionary<Guid, (VideoRecordState State, string? Error)>();
+        var presence = new Dictionary<Guid, bool>();
         var toRead = new List<VideoRecord>();
         foreach (var (record, stamp) in stamps)
         {
-            if (stamp is null)
-            {
-                if (record.State != VideoRecordState.Missing) transitions[record.Id] = (VideoRecordState.Missing, "The video file is missing.");
-                continue;
-            }
-            var unchanged = record.Stamp == stamp;
-            if (record.State == VideoRecordState.Missing && unchanged) transitions[record.Id] = (VideoRecordState.Ok, null);
-            if (force || !unchanged || record.State is VideoRecordState.Pending or VideoRecordState.Unreadable) toRead.Add(record);
+            if (record.IsMissing != stamp is null) presence[record.Id] = stamp is null;
+            if (stamp is not null && (force || record.State == VideoRecordState.Pending || record.Stamp != stamp)) toRead.Add(record);
         }
-        if (transitions.Count > 0)
+        if (presence.Count > 0)
             await MutateAsync(current =>
             {
                 var builder = current.Videos.ToBuilder();
                 var updated = new List<Guid>();
-                foreach (var (id, (state, error)) in transitions)
+                foreach (var (id, missing) in presence)
                 {
                     if (!builder.TryGetValue(id, out var record)) continue;
-                    builder[id] = record with { State = state, Error = error };
+                    builder[id] = record with { IsMissing = missing };
                     updated.Add(id);
                 }
                 var next = current.With(builder.ToImmutable());
@@ -308,9 +302,11 @@ public sealed class LibraryModel
 
     private sealed record CommitResult(int Applied, IReadOnlyList<ReconcileError> Errors);
 
-    /// <summary>Publishes read outcomes in one batch. A successful read whose file changed since it started is dropped
-    /// as stale (a newer writer publishes its own read) unless <paramref name="keepStale"/>.</summary>
-    private async Task<CommitResult> CommitAsync(IReadOnlyList<PendingCommit> outcomes, bool keepStale)
+    /// <summary>Publishes read outcomes in one batch. A read records the stamp it saw, whether it succeeded or not, so an
+    /// unreadable file is retried only once it changes. A successful read whose file changed since it started is stale:
+    /// it is dropped (a newer writer publishes its own read), or with <paramref name="publishStaleAsPending"/> the video
+    /// becomes Pending so the next stat pass reads it.</summary>
+    private async Task<CommitResult> CommitAsync(IReadOnlyList<PendingCommit> outcomes, bool publishStaleAsPending)
     {
         var errors = new List<ReconcileError>();
         // The reads are done; committing them is quick and must not be lost to a late cancellation.
@@ -329,15 +325,19 @@ public sealed class LibraryModel
                 if ((current ?? (video is null ? null : VideoRecord.FromCatalog(video))) is not { } baseRecord) continue;
                 VideoRecord next;
                 if (outcome.Stamp is null)
-                    next = baseRecord with { State = VideoRecordState.Missing, Error = "The video file is missing." };
+                    next = baseRecord with { IsMissing = true };
                 else if (outcome.Text is null)
                 {
-                    next = baseRecord with { State = VideoRecordState.Unreadable, Error = outcome.Error };
+                    next = baseRecord with { State = VideoRecordState.Unreadable, Error = outcome.Error, Stamp = outcome.Stamp, IsMissing = false };
                     errors.Add(new ReconcileError(id, baseRecord.Label, outcome.Error ?? "Unreadable"));
+                }
+                else if (FileStamp.TryRead(GetVideoPath(baseRecord)) != outcome.Stamp)
+                {
+                    if (!publishStaleAsPending) continue;
+                    next = baseRecord with { State = VideoRecordState.Pending, Stamp = null, Error = null };
                 }
                 else
                 {
-                    if (!keepStale && FileStamp.TryRead(GetVideoPath(baseRecord)) != outcome.Stamp) continue;
                     next = baseRecord.WithContent(outcome.Text, outcome.Stamp.Value);
                     writes.Add(new CatalogCacheWrite(id, new CatalogCacheEntry(next.ToCacheJson(), outcome.Stamp.Value.Length,
                         outcome.Stamp.Value.ModifiedTicks), next.Duration));
@@ -383,6 +383,9 @@ public sealed class LibraryModel
         try
         {
             var (next, delta, result) = await mutate(Snapshot);
+            // Writers run off the UI thread; building search text here keeps the first search after a change fast.
+            if (delta is not null)
+                LibrarySearch.Prepare(delta.IsReset ? next.Videos.Values : delta.Added.Concat(delta.Updated).Select(id => next.Videos[id]));
             Volatile.Write(ref _snapshot, next);
             if (delta is not null) Raise(delta);
             return result;

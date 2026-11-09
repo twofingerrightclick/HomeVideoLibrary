@@ -34,13 +34,8 @@ public sealed class TapeViewModel : ViewModelBase
     public string MonthLabel => _record.RecordedAt.ToLocalTime().ToString("MMMM yyyy");
     public string DurationLabel => _record.Duration.TotalHours >= 1 ? _record.Duration.ToString(@"h\:mm\:ss") : _record.Duration.ToString(@"m\:ss");
     public string Accent => new[] { "#947055", "#526F7B", "#7A5559", "#607563" }[_record.Id.ToByteArray()[0] % 4];
-    public bool IsMissing => _record.State == VideoRecordState.Missing;
-    public string StateLabel => _record.State switch
-    {
-        VideoRecordState.Missing => "File missing",
-        VideoRecordState.Unreadable => "Unreadable",
-        _ => "",
-    };
+    public bool IsMissing => _record.IsMissing;
+    public string StateLabel => _record.IsMissing ? "File missing" : _record.State == VideoRecordState.Unreadable ? "Unreadable" : "";
     public bool HasStateLabel => StateLabel.Length > 0;
     public string? StateDetail => _record.Error;
 

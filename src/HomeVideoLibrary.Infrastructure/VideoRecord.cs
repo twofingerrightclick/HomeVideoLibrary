@@ -5,12 +5,12 @@ namespace HomeVideoLibrary.Infrastructure;
 
 public enum VideoRecordState
 {
-    /// <summary>In the catalog, but its MKV metadata has not been read yet. Only catalog fields are known.</summary>
+    /// <summary>The MKV metadata has not been read for the current file. Content, if any, is from an older read.</summary>
     Pending,
+    /// <summary>The content was read from the file at <see cref="VideoRecord.Stamp"/>.</summary>
     Ok,
-    /// <summary>The file is gone. Cached content is kept so the video stays labelled and searchable.</summary>
-    Missing,
-    /// <summary>The last read failed; see <see cref="VideoRecord.Error"/>. Cached content, if any, is kept.</summary>
+    /// <summary>Reading the file at <see cref="VideoRecord.Stamp"/> failed; see <see cref="VideoRecord.Error"/>. Content,
+    /// if any, is from an older read. It is read again once the file changes.</summary>
     Unreadable,
 }
 
@@ -46,10 +46,14 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     /// <summary>Sorted by start.</summary>
     public IReadOnlyList<VideoChapterRecord> Chapters { get; init; } = [];
     public IReadOnlyList<VideoThumbnailRef> Thumbnails { get; init; } = [];
-    /// <summary>The file stamp the content was read from; null when it never was.</summary>
+    /// <summary>The file stamp of the last read attempt (see <see cref="State"/>); null when none counts.</summary>
     public FileStamp? Stamp { get; init; }
+    /// <summary>The outcome of the last read attempt.</summary>
     public VideoRecordState State { get; init; }
     public string? Error { get; init; }
+    /// <summary>The file was not found at the last check. Independent of <see cref="State"/>: content stays labelled and
+    /// searchable, and a file that comes back unchanged needs no new read.</summary>
+    public bool IsMissing { get; init; }
 
     /// <summary>The instant used for ordering, in UTC: the embedded date when present, else the import-time date.</summary>
     public DateTimeOffset RecordedAt => (EmbeddedRecordedAt ?? CatalogRecordedAt).ToUniversalTime();
@@ -75,8 +79,8 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
             SourceFingerprint = SourceFingerprint,
         };
 
-    /// <summary>The text metadata as last read from the MKV, without thumbnail images. Null until a read succeeded.</summary>
-    public VideoMetadata? ToMetadata() => Stamp is null ? null :
+    /// <summary>The text metadata read from the current file, without thumbnail images. Null unless <see cref="State"/> is Ok.</summary>
+    public VideoMetadata? ToMetadata() => State != VideoRecordState.Ok ? null :
         new VideoMetadata(Title, Description, Tags, EmbeddedRecordedAt,
             Chapters.Select(chapter => new VideoChapter(chapter.Uid, chapter.Start, chapter.Title, chapter.Description, chapter.Tags)).ToArray(), [])
         {
@@ -101,6 +105,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
             Stamp = stamp,
             State = VideoRecordState.Ok,
             Error = null,
+            IsMissing = false,
         };
     }
 
