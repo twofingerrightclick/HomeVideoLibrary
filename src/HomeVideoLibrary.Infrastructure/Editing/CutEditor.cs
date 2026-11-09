@@ -9,8 +9,9 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
 {
     private static readonly TimeSpan SearchRadius = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan WideSearch = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan HalfMillisecond = TimeSpan.FromTicks(5_000);
 
-    public async Task<CutPlan> PlanTrimAsync(EditSource source, TimeSpan start, TimeSpan end, ClipCutMode mode, string scratch,
+    public async Task<CutPlan> PlanTrimAsync(EditSource source, TimeSpan start, TimeSpan end, ClipCutMode mode,
         CancellationToken cancellationToken)
     {
         var nearStart = await PacketsAroundAsync(source, start, cancellationToken);
@@ -21,9 +22,9 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
             reason = await PreciseIneligibilityAsync(source);
             if (reason is null)
             {
-                var precise = CutPlanner.PlanPreciseTrim(nearStart, nearEnd, start, end, source.VideoEnd, source.FrameDuration);
+                var precise = CutPlanner.PlanPreciseTrim(nearStart, nearEnd, start, end, source.VideoEnd);
                 if (precise.IsLossless) return precise;
-                reason = await OpenGopReasonAsync(source, precise, scratch, cancellationToken);
+                reason = await OpenGopReasonAsync(source, precise, cancellationToken);
                 if (reason is null) return precise;
             }
         }
@@ -75,12 +76,18 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
         yield return "!" + string.Join(',', source.Mkv.AppAttachmentIds.Select(id => id.ToString(CultureInfo.InvariantCulture)));
     }
 
+    /// <summary>Re-encodes the frames next to each cut, copies the GOPs between them, and joins the pieces as raw
+    /// (Annex-B) video so each piece carries its own parameter sets. Raw video has no timestamps; mkvmerge gets the
+    /// source's own presentation times, so variable frame rates and dropped frames stay in sync.</summary>
     private async Task RenderSmartCutAsync(EditSource source, CutPlan plan, string output, string scratch, Action<double> progress,
         CancellationToken cancellationToken)
     {
         var (bitstreamFilter, rawFormat) = VideoEncoding.AnnexB(source.Video.CodecName)!.Value;
         var encode = VideoEncoding.MatchingVideoArguments(source.Video)!;
-        var frame = source.FrameDuration;
+        // ffprobe stops at the first packet past the interval in decode order, so read a margin for reordered frames.
+        var frames = (await probe.ReadPacketsAsync(source.Path, plan.ActualStart, plan.Duration + SearchRadius, cancellationToken))
+            .Where(packet => packet.Pts >= plan.ActualStart - CutPlanner.Epsilon && packet.Pts < plan.ActualEnd - CutPlanner.Epsilon)
+            .Select(packet => packet.Pts).ToArray();
         var total = (double)plan.Duration.Ticks;
         var done = 0d;
         void Step(TimeSpan length, double local) => progress(Math.Clamp((done + length.Ticks * local) / total * 0.8, 0, 0.8));
@@ -89,14 +96,14 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
         foreach (var (piece, index) in plan.Pieces.Select((piece, index) => (piece, index)))
         {
             var length = piece.End - piece.Start;
+            var expected = frames.Count(pts => pts >= piece.Start - CutPlanner.Epsilon && pts < piece.End - CutPlanner.Epsilon);
             var path = Path.Combine(scratch, $"piece-{index}.{rawFormat}");
+            long written;
             if (piece.Kind == PieceKind.Encode)
             {
-                var frames = CutPlanner.FrameCount(piece.Start, piece.End, frame);
-                var seek = piece.Start - frame / 2;
-                await commands.FfmpegAsync(["-ss", MediaProbe.Seconds(seek < TimeSpan.Zero ? TimeSpan.Zero : seek), "-i", source.Path,
-                    "-map", "0:v:0", "-an", "-sn", "-dn", "-frames:v", frames.ToString(CultureInfo.InvariantCulture), .. encode,
-                    "-f", rawFormat, path], length, local => Step(length, local), cancellationToken);
+                written = await commands.FfmpegAsync(["-ss", source.Timeline.Seek(piece.Start - HalfMillisecond), "-i", source.Path,
+                    "-map", "0:v:0", "-an", "-sn", "-dn", "-frames:v", expected.ToString(CultureInfo.InvariantCulture), "-fps_mode", "passthrough",
+                    .. encode, "-f", rawFormat, path], length, local => Step(length, local), cancellationToken);
             }
             else
             {
@@ -105,31 +112,29 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
                     "--split", "parts:" + SplitTime(piece.Start) + "-" + EndTime(source, piece.End),
                     "-A", "-S", "-B", "-M", "-T", "--no-chapters", "--no-global-tags", "-d", source.VideoTrack.Id.ToString(CultureInfo.InvariantCulture), source.Path],
                     local => Step(length, local / 2), cancellationToken);
-                await commands.FfmpegAsync(["-i", copy, "-map", "0:v:0", "-c", "copy", "-bsf:v", bitstreamFilter, "-f", rawFormat, path],
+                written = await commands.FfmpegAsync(["-i", copy, "-map", "0:v:0", "-c", "copy", "-bsf:v", bitstreamFilter, "-f", rawFormat, path],
                     length, local => Step(length, 0.5 + local / 2), cancellationToken);
                 File.Delete(copy);
             }
+            if (written != expected)
+                throw new InvalidDataException($"A cut piece has {written} frames; the source has {expected} there.");
             pieces.Add(path);
             done += length.Ticks;
         }
 
+        var timestamps = Path.Combine(scratch, "timestamps.txt");
+        await TimestampFile.WriteAsync(timestamps, frames.Select(pts => pts - plan.ActualStart), cancellationToken);
         var others = Path.Combine(scratch, "other-tracks.mkv");
-        var hasOthers = source.Mkv.Tracks.Any(track => track.Type != "video") || source.Mkv.Attachments.Count > source.Mkv.AppAttachmentIds.Count;
+        var hasOthers = source.Mkv.Tracks.Any(track => track.Type != "video") || source.Mkv.ForeignAttachments.Count > 0;
         if (hasOthers)
             await commands.MkvMergeAsync(["--no-date", "-o", others,
                 "--split", "parts:" + MediaProbe.Seconds(plan.ActualStart) + "s-" + MediaProbe.Seconds(plan.ActualEnd) + "s",
                 "-D", .. SourceOptions(source), source.Path], null, cancellationToken);
 
-        var video = source.VideoTrack;
-        var arguments = new List<string> { "--no-date", "-o", output, "--language", "0:" + video.Language,
-            "--default-duration", "0:" + (frame.Ticks * 100).ToString(CultureInfo.InvariantCulture) + "ns" };
-        if (video.Name.Length > 0) arguments.AddRange(["--track-name", "0:" + video.Name]);
-        if (video.DisplayDimensions.Length > 0) arguments.AddRange(["--display-dimensions", "0:" + video.DisplayDimensions]);
-        arguments.Add("(");
-        arguments.AddRange(pieces);
-        arguments.Add(")");
-        if (hasOthers) arguments.Add(others);
-        await commands.MkvMergeAsync(arguments, local => progress(0.8 + local * 0.2), cancellationToken);
+        await commands.MkvMergeAsync(["--no-date", "-o", output, .. source.VideoTrack.HeaderArguments(0), "--timestamps", "0:" + timestamps,
+            "(", .. pieces, ")", .. hasOthers ? [others] : Array.Empty<string>()], local => progress(0.8 + local * 0.2), cancellationToken);
+        if (source.VideoTrack.DefaultDurationNanoseconds > 0)
+            await commands.SetVideoFrameDurationAsync(output, source.FrameDuration, cancellationToken);
     }
 
     private async Task<IReadOnlyList<VideoPacket>> PacketsAroundAsync(EditSource source, TimeSpan time, CancellationToken cancellationToken)
@@ -151,7 +156,6 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
         if (VideoEncoding.AnnexB(source.Video.CodecName) is null) return $"{prefix} ({source.Video.CodecName} video).";
         if (source.Mkv.Tracks.Count(track => track.Type == "video") != 1) return $"{prefix} (more than one video track).";
         if (!source.Video.IsProgressive) return $"{prefix} (interlaced or unknown field order).";
-        if (!source.IsConstantFrameRate) return $"{prefix} (variable frame rate).";
         if (VideoEncoding.MatchingVideoArguments(source.Video) is null) return $"{prefix} ({source.Video.Profile} {source.Video.PixelFormat}).";
         if (!await VideoEncoding.CanEncodeAsync(tools, process, source.Video.CodecName)) return $"{prefix} (no {source.Video.CodecName} encoder).";
         return null;
@@ -159,22 +163,17 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
 
     /// <summary>Copied pieces must start on, and end before, IDR frames: an open-GOP keyframe's leading pictures
     /// reference frames that the cut removes.</summary>
-    private async Task<string?> OpenGopReasonAsync(EditSource source, CutPlan plan, string scratch, CancellationToken cancellationToken)
+    private async Task<string?> OpenGopReasonAsync(EditSource source, CutPlan plan, CancellationToken cancellationToken)
     {
-        var (filter, format) = VideoEncoding.AnnexB(source.Video.CodecName)!.Value;
+        var lengthSize = NalUnits.LengthSize(source.VideoTrack.CodecPrivate, source.Video.CodecName);
         var keyframes = plan.Pieces.Where(piece => piece.Kind == PieceKind.Copy)
             .SelectMany(piece => new[] { piece.Start, piece.End }).Where(time => time < source.VideoEnd - CutPlanner.Epsilon).Distinct();
         foreach (var keyframe in keyframes)
         {
-            var path = Path.Combine(scratch, $"keyframe-{Guid.NewGuid():N}.{format}");
-            try
-            {
-                await commands.FfmpegAsync(["-ss", MediaProbe.Seconds(keyframe), "-i", source.Path, "-map", "0:v:0", "-c", "copy",
-                    "-bsf:v", filter, "-frames:v", "1", "-f", format, path], TimeSpan.Zero, null, cancellationToken);
-                if (!AnnexBStream.StartsWithIdr(await File.ReadAllBytesAsync(path, cancellationToken), source.Video.CodecName))
-                    return "Frame-accurate cutting is unavailable for this video (open-GOP keyframes).";
-            }
-            finally { ScratchFiles.TryDelete(path); }
+            var packet = await probe.ReadPacketAsync(source.Path, keyframe, cancellationToken);
+            if (packet is not { } read || (read.Pts - keyframe).Duration() > CutPlanner.Epsilon ||
+                !NalUnits.StartsWithIdr(read.Data, lengthSize, source.Video.CodecName))
+                return "Frame-accurate cutting is unavailable for this video (open-GOP keyframes).";
         }
         return null;
     }

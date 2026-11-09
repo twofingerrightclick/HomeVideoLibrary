@@ -334,12 +334,12 @@ public sealed class ImportTests : IDisposable
     }
 
     /// <summary>Overwrites the payload of a few transport packets, like dropouts on a digitized tape.</summary>
-    internal static void CorruptTransportPackets(string path)
+    internal static void CorruptTransportPackets(string path, IReadOnlyList<double>? fractions = null)
     {
         var bytes = File.ReadAllBytes(path);
         var packets = bytes.Length / 188;
         var random = new Random(1);
-        foreach (var fraction in new[] { 0.3, 0.5, 0.7 })
+        foreach (var fraction in fractions ?? [0.3, 0.5, 0.7])
             for (var packet = (int)(packets * fraction); packet < (int)(packets * fraction) + 3; packet++)
                 random.NextBytes(bytes.AsSpan(packet * 188 + 4, 184));
         File.WriteAllBytes(path, bytes);
