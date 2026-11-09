@@ -13,6 +13,7 @@
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Tokens.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Icons.axaml"/>
         <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/Buttons.axaml"/>
+        <ResourceInclude Source="avares://HomeVideoLibrary.UI/Themes/TagChipInput.axaml"/>
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>
