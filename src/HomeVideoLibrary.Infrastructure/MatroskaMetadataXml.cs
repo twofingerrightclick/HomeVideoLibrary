@@ -10,12 +10,12 @@ internal static class MatroskaMetadataXml
 
     public static VideoMetadata Read(XDocument tags, XDocument chapters)
     {
-        var global = tags.Root?.Elements("Tag").Where(IsGlobal).ToArray() ?? [];
+        var global = tags.Root?.Elements("Tag").Where(IsVideoLevel).ToArray() ?? [];
         var edition = PrimaryEdition(chapters);
         var chapterModels = edition?.Elements("ChapterAtom").Select(atom =>
         {
             var uid = ulong.Parse(atom.Element("ChapterUID")!.Value, CultureInfo.InvariantCulture);
-            var chapterTags = tags.Root?.Elements("Tag").Where(tag => tag.Element("Targets")?.Element("ChapterUID")?.Value == uid.ToString(CultureInfo.InvariantCulture)).ToArray() ?? [];
+            var chapterTags = ChapterTags(tags, uid).ToArray();
             return new VideoChapter(uid, ParseTime(atom.Element("ChapterTimeStart")!.Value),
                 atom.Element("ChapterDisplay")?.Element("ChapterString")?.Value ?? "",
                 Value(chapterTags, "DESCRIPTION"), Values(chapterTags, "KEYWORDS"));
@@ -30,12 +30,12 @@ internal static class MatroskaMetadataXml
     {
         if (tags.Root is null) tags.Add(new XElement("Tags"));
         if (chapters.Root is null) chapters.Add(new XElement("Chapters"));
-        var global = tags.Root!.Elements("Tag").Where(IsGlobal).ToArray();
+        var global = tags.Root!.Elements("Tag").Where(IsVideoLevel).ToArray();
         foreach (var tag in global) RemoveOwned(tag, OwnedTags);
         var target = global.FirstOrDefault();
         if (target is null)
         {
-            target = new XElement("Tag", new XElement("Targets"));
+            target = new XElement("Tag", new XElement("Targets", new XElement("TargetTypeValue", "50"), new XElement("TargetType", "MOVIE")));
             tags.Root.Add(target);
         }
         Add(target, "TITLE", metadata.Title);
@@ -84,7 +84,8 @@ internal static class MatroskaMetadataXml
             var chapterTarget = chapterTags.FirstOrDefault();
             if (chapterTarget is null)
             {
-                chapterTarget = new XElement("Tag", new XElement("Targets", new XElement("ChapterUID", chapter.Uid)));
+                chapterTarget = new XElement("Tag", new XElement("Targets", new XElement("TargetTypeValue", "30"),
+                    new XElement("TargetType", "CHAPTER"), new XElement("ChapterUID", chapter.Uid)));
                 tags.Root.Add(chapterTarget);
             }
             Add(chapterTarget, "DESCRIPTION", chapter.Description);
@@ -95,10 +96,27 @@ internal static class MatroskaMetadataXml
 
     private static XElement? PrimaryEdition(XDocument chapters) => chapters.Root?.Elements("EditionEntry")
         .OrderByDescending(edition => edition.Element("EditionFlagDefault")?.Value == "1").FirstOrDefault();
-    private static IEnumerable<XElement> ChapterTags(XDocument tags, ulong uid) => tags.Root!.Elements("Tag")
-        .Where(tag => tag.Element("Targets")?.Element("ChapterUID")?.Value == uid.ToString(CultureInfo.InvariantCulture));
-    private static bool IsGlobal(XElement tag) => tag.Element("Targets")?.Elements()
-        .Any(element => element.Name.LocalName.EndsWith("UID", StringComparison.Ordinal)) != true;
+    private static IEnumerable<XElement> ChapterTags(XDocument tags, ulong uid) => (tags.Root?.Elements("Tag") ?? [])
+        .Where(tag =>
+        {
+            var targets = tag.Element("Targets")?.Elements().Where(IsUidTarget).ToArray() ?? [];
+            // Multi-target tags also describe foreign tracks/chapters; leave their complete XML alone.
+            return targets.Length == 1 && targets[0].Name.LocalName == "ChapterUID" &&
+                targets[0].Value == uid.ToString(CultureInfo.InvariantCulture);
+        });
+
+    private static bool IsVideoLevel(XElement tag)
+    {
+        var targets = tag.Element("Targets");
+        if (targets?.Elements().Any(IsUidTarget) == true) return false;
+        // RFC 9559 defaults an omitted logical level to 50. Other levels, and explicitly
+        // named audio/foreign targets, must retain their independent descriptions and titles.
+        var level = targets?.Element("TargetTypeValue")?.Value;
+        var type = targets?.Element("TargetType")?.Value;
+        return (level is null || level == "50") && (type is null || type is "MOVIE" or "EPISODE" or "CONCERT");
+    }
+
+    private static bool IsUidTarget(XElement element) => element.Name.LocalName.EndsWith("UID", StringComparison.Ordinal);
     private static string Value(IEnumerable<XElement> tags, string name) => Values(tags, name).FirstOrDefault() ?? "";
     private static string[] Values(IEnumerable<XElement> tags, string name) => tags.SelectMany(tag => tag.Elements("Simple"))
         .Where(simple => simple.Element("Name")?.Value == name).Select(simple => simple.Element("String")?.Value ?? "").Where(value => value.Length > 0).ToArray();

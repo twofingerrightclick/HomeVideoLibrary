@@ -41,3 +41,11 @@ Focused verification passed four tests: a physically truncated MKV whose FFprobe
 - Capture extracts a cancellable JPEG preview to cache without saving metadata. UI preview callers can debounce requests; only an explicit save chooses attachments.
 - Safe writes serialize per video, copy to staging, run mkvpropedit, reread and verify metadata/thumbnail hashes plus track identity/duration, then atomically replace. Cancellation and errors leave the original unchanged and clean up staging.
 - Focused `MetadataTests` passed five cases: real reopen/roundtrip, external chapter/unknown tag/edition/attachment preservation, limits/positions, failed/pre-cancelled atomic safety, and cancellation after staging begins. No unrelated tests were rerun.
+
+### Stage 3 review fixes: preserve foreign tag targets
+
+Terra found two cases where ownership was too broad: UID-free collection/season tags were treated as video-level fields, and mixed chapter/track targets were treated as exclusive chapter metadata. The editor now owns only UID-free default/50 video-level targets, preserving other hierarchy levels and explicitly named foreign audio targets. Exclusive chapter editing requires exactly one chapter UID and no other UID targets; mixed targets remain untouched even when the chapter is removed. New tags explicitly declare MOVIE/50 or CHAPTER/30.
+
+Target levels were verified against [RFC 9559 section 5.1.8.1.1](https://www.rfc-editor.org/rfc/rfc9559.html#section-5.1.8.1.1): omitted TargetTypeValue defaults to 50, and COLLECTION uses 70. The preservation policy additionally treats explicitly named foreign target types conservatively.
+
+Focused verification passed the two new real-MKV regressions (collection/season/album preservation and chapter-plus-track preservation through edit/removal) plus the directly affected standard metadata roundtrip. No unrelated tests were rerun.

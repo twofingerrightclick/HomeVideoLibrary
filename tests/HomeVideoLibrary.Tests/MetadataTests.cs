@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Xml.Linq;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure;
 using Xunit;
@@ -114,6 +115,75 @@ public sealed class MetadataTests : IDisposable
     }
 
     [Fact]
+    public async Task PreservesCollectionSeasonAndExplicitAudioMetadataWhileEditingVideoLevelTags()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var fixture = new XDocument(new XElement("Tags",
+            new[] { ("70", "COLLECTION"), ("60", "SEASON"), ("50", "ALBUM"), ("50", "MOVIE") }.Select(pair =>
+                new XElement("Tag", new XElement("Targets", new XElement("TargetTypeValue", pair.Item1), new XElement("TargetType", pair.Item2)),
+                    new XElement("Simple", new XElement("Name", "TITLE"), new XElement("String", pair.Item2 + " title")),
+                    new XElement("Simple", new XElement("Name", "DESCRIPTION"), new XElement("String", pair.Item2 + " description")),
+                    new XElement("Simple", new XElement("Name", "KEYWORDS"), new XElement("String", pair.Item2 + " keyword")),
+                    new XElement("Simple", new XElement("Name", "DATE_RECORDED"), new XElement("String", "1997-07-03T12:00:00Z"))))));
+        var tagsPath = Path.Combine(_root, "target-levels.xml");
+        fixture.Save(tagsPath);
+        var path = catalog.GetVideoPath(video.RelativePath);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--tags", "all:" + tagsPath]);
+        var before = await ExtractTagsAsync(path, "before-levels.xml");
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var read = await service.ReadAsync(video);
+        Assert.Equal("MOVIE title", read.Title);
+        Assert.Equal("MOVIE description", read.Description);
+        Assert.Equal(["MOVIE keyword"], read.Tags);
+
+        await service.SaveAsync(video, read with { Title = "Video title", Description = "Video edit", Tags = ["video"], RecordedAt = null });
+
+        var after = await ExtractTagsAsync(path, "after-levels.xml");
+        foreach (var type in new[] { "COLLECTION", "SEASON", "ALBUM" })
+        {
+            var originalTag = before.Root!.Elements("Tag").Single(tag => tag.Element("Targets")?.Element("TargetType")?.Value == type);
+            var writtenTag = after.Root!.Elements("Tag").Single(tag => tag.Element("Targets")?.Element("TargetType")?.Value == type);
+            Assert.True(XNode.DeepEquals(originalTag, writtenTag), type + " metadata changed");
+        }
+        Assert.Equal("Video edit", (await service.ReadAsync(video)).Description);
+    }
+
+    [Fact]
+    public async Task PreservesMultiTargetChapterTrackTagsWhenChapterIsEditedAndRemoved()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var chaptersPath = Path.Combine(_root, "mixed-target-chapters.xml");
+        await File.WriteAllTextAsync(chaptersPath, """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Chapters><EditionEntry><ChapterAtom><ChapterUID>222</ChapterUID><ChapterTimeStart>00:00:00.000000000</ChapterTimeStart><ChapterDisplay><ChapterString>Chapter</ChapterString><ChapterLanguage>eng</ChapterLanguage></ChapterDisplay></ChapterAtom></EditionEntry></Chapters>
+            """);
+        var tagsPath = Path.Combine(_root, "mixed-target-tags.xml");
+        await File.WriteAllTextAsync(tagsPath, """
+            <Tags>
+              <Tag><Targets><ChapterUID>222</ChapterUID><TrackUID>987654</TrackUID></Targets><Simple><Name>DESCRIPTION</Name><String>Shared foreign description</String></Simple><Simple><Name>KEYWORDS</Name><String>Shared foreign keyword</String></Simple></Tag>
+              <Tag><Targets><ChapterUID>222</ChapterUID></Targets><Simple><Name>DESCRIPTION</Name><String>Chapter description</String></Simple></Tag>
+            </Tags>
+            """);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--tags", "all:" + tagsPath, "--chapters", chaptersPath]);
+        var before = await ExtractTagsAsync(path, "before-mixed.xml");
+        var originalMixed = before.Root!.Elements("Tag").Single(tag => tag.Element("Targets")?.Element("TrackUID") is not null);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var read = await service.ReadAsync(video);
+        Assert.Equal("Chapter description", Assert.Single(read.Chapters).Description);
+        Assert.Empty(read.Chapters[0].Tags);
+
+        await service.SaveAsync(video, read with { Chapters = [read.Chapters[0] with { Description = "Chapter edited", Tags = ["chapter"] }] });
+        var edited = await ExtractTagsAsync(path, "edited-mixed.xml");
+        Assert.True(XNode.DeepEquals(originalMixed, edited.Root!.Elements("Tag").Single(tag => tag.Element("Targets")?.Element("TrackUID") is not null)));
+        await service.SaveAsync(video, (await service.ReadAsync(video)) with { Chapters = [] });
+
+        var removed = await ExtractTagsAsync(path, "removed-mixed.xml");
+        Assert.True(XNode.DeepEquals(originalMixed, removed.Root!.Elements("Tag").Single(tag => tag.Element("Targets")?.Element("TrackUID") is not null)));
+        Assert.Empty((await service.ReadAsync(video)).Chapters);
+    }
+
+    [Fact]
     public async Task CancellationAfterStagingStartsLeavesOriginalByteIdentical()
     {
         var (catalog, video) = await CreateVideoAsync();
@@ -167,6 +237,13 @@ public sealed class MetadataTests : IDisposable
         var result = await new MediaProcess().RunAsync(tool, arguments, TimeSpan.FromSeconds(30));
         Assert.True(result.ExitCode == 0, result.StandardError + result.StandardOutput);
         return result;
+    }
+
+    private async Task<XDocument> ExtractTagsAsync(string videoPath, string filename)
+    {
+        var path = Path.Combine(_root, filename);
+        await ToolAsync(_tools.MkvExtract, [videoPath, "tags", path]);
+        return XDocument.Load(path);
     }
 
     public void Dispose()
