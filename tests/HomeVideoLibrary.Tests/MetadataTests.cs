@@ -229,7 +229,7 @@ public sealed class MetadataTests : IDisposable
         await catalog.InitializeAsync();
         var source = Path.Combine(_root, "source.mkv");
         await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", source]);
-        return (catalog, await new VideoImporter(catalog, _tools).ImportAsync(source));
+        return (catalog, (await new VideoImporter(catalog, _tools).ImportAsync(source)).Video);
     }
 
     private async Task<MediaProcessResult> ToolAsync(string tool, string[] arguments)

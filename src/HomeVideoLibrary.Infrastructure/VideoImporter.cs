@@ -8,7 +8,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
 {
     private readonly MediaProcess _process = process ?? new MediaProcess();
 
-    public async Task<LibraryVideo> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null,
+    public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
@@ -61,7 +61,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             await catalog.AddAsync(video, cancellationToken);
             published = false; // Database commit is the import's completion point.
             progress?.Report(new ImportProgress("Imported", 1));
-            return video;
+            return new ImportResult(ImportOutcome.Imported, video, []);
         }
         finally
         {

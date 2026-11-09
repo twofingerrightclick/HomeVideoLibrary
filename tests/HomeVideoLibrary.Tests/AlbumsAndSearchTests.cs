@@ -157,7 +157,7 @@ public sealed class AlbumsAndSearchTests : IDisposable
         var generated = await new MediaProcess().RunAsync(tools.Ffmpeg,
             ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", source], TimeSpan.FromSeconds(30));
         Assert.Equal(0, generated.ExitCode);
-        var video = await new VideoImporter(catalog, tools).ImportAsync(source);
+        var video = (await new VideoImporter(catalog, tools).ImportAsync(source)).Video;
         var metadata = new MatroskaMetadataService(catalog, tools);
         await metadata.SaveAsync(video, VideoMetadata.Empty with { Description = "before external edit" });
         var index = new LibrarySearchIndex(catalog, metadata);
@@ -185,17 +185,21 @@ public sealed class AlbumsAndSearchTests : IDisposable
     public async Task MigratesVersionOneCatalogWithoutLosingItsVideos()
     {
         var paths = new LibraryPaths(Path.Combine(_root, "legacy")); Directory.CreateDirectory(paths.RootDirectory);
+        var id = Guid.NewGuid();
         await using (var connection = new SqliteConnection($"Data Source={paths.DatabasePath};Pooling=False"))
         {
             await connection.OpenAsync(); await using var command = connection.CreateCommand();
-            command.CommandText = "CREATE TABLE videos(id TEXT PRIMARY KEY,relative_path TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,duration_ticks INTEGER NOT NULL,imported_at TEXT NOT NULL,recorded_at TEXT NOT NULL); PRAGMA user_version=1;";
+            command.CommandText = """
+                CREATE TABLE videos(id TEXT PRIMARY KEY,relative_path TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,duration_ticks INTEGER NOT NULL,imported_at TEXT NOT NULL,recorded_at TEXT NOT NULL);
+                INSERT INTO videos VALUES ($id,'Videos/legacy.mkv','Legacy',10000000,$now,$now);
+                PRAGMA user_version=1;
+                """;
+            command.Parameters.AddWithValue("$id", id.ToString()); command.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("O"));
             await command.ExecuteNonQueryAsync();
         }
         var catalog = new LibraryCatalog(paths);
-        var video = new LibraryVideo(Guid.NewGuid(), "Videos/legacy.mkv", "Legacy", TimeSpan.FromSeconds(1), DateTimeOffset.Now, DateTimeOffset.Now);
-        await catalog.AddAsync(video);
         await catalog.InitializeAsync(); await catalog.InitializeAsync();
-        Assert.Equal(video.Id, Assert.Single(await catalog.ListAsync()).Id);
+        Assert.Equal(id, Assert.Single(await catalog.ListAsync()).Id);
         Assert.NotNull(await new AlbumRepository(catalog).CreateAsync("Migrated album"));
     }
 

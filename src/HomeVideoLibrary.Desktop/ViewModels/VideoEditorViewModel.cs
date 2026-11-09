@@ -13,6 +13,7 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     private readonly string _path;
     private readonly IVideoMetadataService _metadata;
     private readonly IVideoPlayback _playback;
+    private readonly VideoMetadata? _initialMetadata;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _operationCancellation;
     private string _title = "", _description = "", _tags = "", _recordedAt = "", _status = "Loading video…";
@@ -21,9 +22,11 @@ public sealed class VideoEditorViewModel : ViewModelBase, IAsyncDisposable
     private double _position, _seekPosition, _volume = 80;
     private MediaPlayer? _player;
 
-    public VideoEditorViewModel(LibraryVideo video, string path, IVideoMetadataService metadata, IVideoPlayback playback)
+    /// <param name="initialMetadata">Cached metadata to show before the MKV read completes.</param>
+    public VideoEditorViewModel(LibraryVideo video, string path, IVideoMetadataService metadata, IVideoPlayback playback,
+        VideoMetadata? initialMetadata = null)
     {
-        _video = video; _path = path; _metadata = metadata; _playback = playback;
+        _video = video; _path = path; _metadata = metadata; _playback = playback; _initialMetadata = initialMetadata;
         _playback.Updated += PlaybackUpdated;
         Chapters.CollectionChanged += (_, args) =>
         {

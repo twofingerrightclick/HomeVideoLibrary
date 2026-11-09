@@ -1,5 +1,7 @@
 namespace HomeVideoLibrary.Core;
 
+/// <param name="Fraction">Overall 0..1 for the whole operation; never goes backwards. Null means indeterminate:
+/// show an indeterminate bar rather than resetting to 0.</param>
 public sealed record ClipEditProgress(string Stage, double? Fraction = null);
 public sealed record ClipOutputFormat(int Width, int Height, string FrameRate, string SampleAspectRatio);
 

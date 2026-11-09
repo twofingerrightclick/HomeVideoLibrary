@@ -7,7 +7,8 @@ using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
-public sealed class MatroskaMetadataService(LibraryCatalog catalog, MediaTools tools, MediaProcess? process = null) : IVideoMetadataService
+public sealed class MatroskaMetadataService(LibraryCatalog catalog, MediaTools tools, MediaProcess? process = null)
+    : IVideoMetadataService, IMatroskaFileEditor
 {
     private const string ManifestName = "home-video-library.thumbnails.v1.json";
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -21,6 +22,33 @@ public sealed class MatroskaMetadataService(LibraryCatalog catalog, MediaTools t
         try { return (await ReadStateAsync(path, cancellationToken)).Metadata; }
         finally { gate.Release(); }
     }
+
+    // TODO: read without extracting thumbnail JPEGs and report manifest problems as warnings (chunk 2 of the overhaul).
+    public async Task<VideoTextMetadata> ReadTextAsync(string mkvPath, CancellationToken cancellationToken = default)
+    {
+        var path = Path.GetFullPath(mkvPath);
+        var gate = Gates.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await ReadStateAsync(path, cancellationToken);
+            var thumbnails = state.Manifest
+                .Select(item => new VideoThumbnailRef(item.Id, TimeSpan.FromTicks(item.PositionTicks), item.Name, item.Sha256))
+                .ToArray();
+            return new VideoTextMetadata(state.Metadata with { Thumbnails = [] }, thumbnails,
+                TimeSpan.FromTicks(state.DurationNanoseconds / 100), []);
+        }
+        finally { gate.Release(); }
+    }
+
+    public Task WriteStagedAsync(string mkvPath, VideoMetadata metadata, MetadataWriteOptions? options = null,
+        CancellationToken cancellationToken = default) => throw new NotImplementedException("chunk 2");
+
+    public Task<string> ExtractThumbnailAsync(string mkvPath, Guid videoId, VideoThumbnailRef thumbnail,
+        CancellationToken cancellationToken = default) => throw new NotImplementedException("chunk 2");
+
+    public Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960,
+        CancellationToken cancellationToken = default) => throw new NotImplementedException("chunk 2");
 
     public async Task SaveAsync(LibraryVideo video, VideoMetadata metadata, CancellationToken cancellationToken = default)
     {

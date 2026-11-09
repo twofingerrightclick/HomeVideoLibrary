@@ -132,8 +132,21 @@ public sealed class MainWindowViewModel : ViewModelBase
     public async Task OpenClipEditorAsync()
     {
         if (!CanEditClips || _catalog is null) return;
-        ClipEditor = new ClipEditorViewModel(SelectedVideos.ToArray(), new ClipEditingService(_catalog, MediaTools.Discover()), _searchIndex);
+        var index = _searchIndex;
+        ClipEditor = new ClipEditorViewModel(SelectedVideos.ToArray(), new ClipEditingService(_catalog, MediaTools.Discover()),
+            index is null ? null : outputs => UpdateIndexAsync(index, outputs));
         await ClipEditor.LoadFormatAsync();
+    }
+
+    private static async Task UpdateIndexAsync(LibrarySearchIndex index, IReadOnlyList<LibraryVideo> videos)
+    {
+        var errors = new List<string>();
+        foreach (var video in videos)
+        {
+            try { await index.UpdateVideoAsync(video, cancellationToken: CancellationToken.None); }
+            catch (Exception exception) { errors.Add(exception.Message); }
+        }
+        if (errors.Count > 0) throw new InvalidOperationException(string.Join(" ", errors));
     }
 
     public Task<EditorExitDestination> RequestCloseEditorAsync(bool closeWindow = false)
@@ -215,6 +228,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         using var cancellation = new CancellationTokenSource();
         _importCancellation = cancellation;
         var imported = 0;
+        var notes = new List<string>();
         var errors = new List<string>();
         try
         {
@@ -229,7 +243,14 @@ public sealed class MainWindowViewModel : ViewModelBase
                 });
                 try
                 {
-                    var video = await Task.Run(() => importer.ImportAsync(source, progress, cancellation.Token));
+                    var result = await Task.Run(() => importer.ImportAsync(source, progress, cancellation.Token));
+                    var video = result.Video;
+                    notes.AddRange(result.Warnings.Select(warning => $"{Path.GetFileName(source)}: {warning}"));
+                    if (result.Outcome == ImportOutcome.AlreadyInLibrary)
+                    {
+                        notes.Add($"{Path.GetFileName(source)}: already in library");
+                        continue;
+                    }
                     imported++;
                     if (_searchIndex is { } index)
                     {
@@ -242,7 +263,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 catch (OperationCanceledException) { throw; }
                 catch (Exception exception) { errors.Add($"{Path.GetFileName(source)}: {exception.Message}"); }
             }
-            Status = errors.Count == 0 ? $"Imported {imported} video(s)." : $"Imported {imported}; {errors.Count} issue(s). {string.Join(Environment.NewLine, errors)}";
+            Status = (errors.Count == 0 ? $"Imported {imported} video(s)." : $"Imported {imported}; {errors.Count} issue(s). {string.Join(Environment.NewLine, errors)}")
+                + string.Concat(notes.Select(note => Environment.NewLine + note));
         }
         catch (OperationCanceledException) { Status = $"Import cancelled. {imported} completed video(s) kept; originals unchanged."; }
         finally { _importCancellation = null; IsBusy = false; await RefreshVideosAsync(); }
