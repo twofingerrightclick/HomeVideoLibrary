@@ -60,7 +60,6 @@
   <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver" Color="#5C646B"/>
   <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed" Color="#5C646B"/>
   <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled" Color="#2C3034"/>
-  <StaticResource x:Key="CheckBoxCheckBackgroundStrokeChecked" ResourceKey="Vcr.Brush.Green"/>
   <StaticResource x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" ResourceKey="Vcr.Brush.Green.Led"/>
   <StaticResource x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" ResourceKey="Vcr.Brush.Green"/>
   <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedDisabled" Color="#2C3034"/>

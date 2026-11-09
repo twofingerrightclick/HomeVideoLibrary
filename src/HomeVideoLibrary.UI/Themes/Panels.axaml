@@ -37,6 +37,7 @@
   </ControlTheme>
 
   <ControlTheme x:Key="{x:Type c:VcrDialog}" TargetType="c:VcrDialog">
+    <Setter Property="ClipToBounds" Value="False"/>
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Faceplate}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
     <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Panel}"/>
@@ -45,10 +46,10 @@
       <ControlTemplate>
         <Border Background="{TemplateBinding Background}"
                 CornerRadius="{TemplateBinding CornerRadius}"
-                BoxShadow="{DynamicResource Vcr.Shadow.Bezel}"
-                ClipToBounds="True">
+                BoxShadow="{DynamicResource Vcr.Shadow.Bezel}">
           <DockPanel>
             <Border DockPanel.Dock="Top"
+                    CornerRadius="6,6,0,0"
                     Padding="20,12,20,10"
                     BoxShadow="0 -1 0 0 #66000000 inset">
               <Border.Background>
@@ -69,6 +70,7 @@
               </StackPanel>
             </Border>
             <Border DockPanel.Dock="Bottom"
+                    CornerRadius="0,0,6,6"
                     Background="{DynamicResource Vcr.Brush.Chassis}"
                     BoxShadow="0 1 0 0 #66000000 inset, 0 2 0 0 #0DFFFFFF inset"
                     Padding="16,10"

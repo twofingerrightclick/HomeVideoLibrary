@@ -63,7 +63,7 @@
         <StackPanel Spacing="10">
           <c:SectionHeader Title="LIST"/>
           <Border Classes="well" Height="196">
-            <ListBox SelectedIndex="1">
+            <ListBox Classes="vcr" SelectedIndex="1">
               <ListBoxItem Content="All tapes"/>
               <ListBoxItem Content="Family"/>
               <ListBoxItem Content="Holidays"/>

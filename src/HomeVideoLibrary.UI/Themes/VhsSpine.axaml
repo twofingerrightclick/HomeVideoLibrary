@@ -134,6 +134,7 @@
                                  Foreground="{TemplateBinding Foreground}"
                                  TextTrimming="CharacterEllipsis"
                                  TextWrapping="NoWrap"
+                                 MaxLines="1"
                                  VerticalAlignment="Center"
                                  RenderTransform="translate(0px, -2px)"/>
                     </Panel>

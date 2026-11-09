@@ -5,6 +5,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.UI.Controls;
@@ -62,9 +63,12 @@ public class ChapterListItem : ContentControl
         RoutedEvent.Register<ChapterListItem, ChapterTitleCommittedEventArgs>(nameof(TitleCommitted), RoutingStrategies.Bubble);
 
     private TextBox? _titleBox;
+    private Control? _actions;
     private string _startText = ScrubTimeline.FormatTimestamp(TimeSpan.Zero);
     private string _startGhostText = "8:88";
     private bool _finishingEdit;
+    private bool _pressedHere;
+    private bool _wasInEditMode;
 
     static ChapterListItem()
     {
@@ -146,11 +150,12 @@ public class ChapterListItem : ContentControl
         }
 
         _titleBox = e.NameScope.Find<TextBox>("PART_TitleBox");
+        _actions = e.NameScope.Find<Control>("PART_ContentPresenter");
         if (_titleBox is not null)
         {
             _titleBox.KeyDown += OnTitleBoxKeyDown;
             _titleBox.LostFocus += OnTitleBoxLostFocus;
-            if (IsEditing)
+            if (IsInEditMode)
             {
                 BeginEditVisuals();
             }
@@ -167,12 +172,8 @@ public class ChapterListItem : ContentControl
         }
         else if (change.Property == IsPlaceholderProperty)
         {
-            var placeholder = change.GetNewValue<bool>();
-            PseudoClasses.Set(":placeholder", placeholder);
-            if (placeholder)
-            {
-                IsEditing = false;
-            }
+            PseudoClasses.Set(":placeholder", change.GetNewValue<bool>());
+            UpdateEditMode();
         }
         else if (change.Property == IsCurrentProperty)
         {
@@ -180,19 +181,38 @@ public class ChapterListItem : ContentControl
         }
         else if (change.Property == IsEditingProperty)
         {
-            var editing = change.GetNewValue<bool>() && !IsPlaceholder;
-            PseudoClasses.Set(":editing", editing);
-            if (editing)
-            {
-                BeginEditVisuals();
-            }
+            UpdateEditMode();
         }
+    }
+
+    // A placeholder row that is promoted to a real chapter may already have IsEditing set (hosts set the
+    // two in either order), so edit mode is derived from both properties rather than either change alone.
+    private bool IsInEditMode => IsEditing && !IsPlaceholder;
+
+    private void UpdateEditMode()
+    {
+        var editing = IsInEditMode;
+        PseudoClasses.Set(":editing", editing);
+        if (editing && !_wasInEditMode)
+        {
+            BeginEditVisuals();
+        }
+
+        _wasInEditMode = editing;
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (!e.Handled && !IsEditing && !IsPlaceholder && e.InitialPressMouseButton == MouseButton.Left)
+        var pressedHere = _pressedHere;
+        _pressedHere = false;
+        if (pressedHere && !e.Handled && !IsInEditMode && !IsPlaceholder && e.InitialPressMouseButton == MouseButton.Left)
         {
             e.Handled = true;
             RaiseEvent(new RoutedEventArgs(JumpRequestedEvent));
@@ -201,17 +221,26 @@ public class ChapterListItem : ContentControl
 
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (!IsPlaceholder)
+        // Double-clicks on the host's trailing actions (e.g. a delete key) are not rename gestures.
+        if (IsPlaceholder || IsWithinActions(e.Source))
         {
-            e.Handled = true;
-            IsEditing = true;
+            return;
         }
+
+        e.Handled = true;
+        IsEditing = true;
+    }
+
+    private bool IsWithinActions(object? source)
+    {
+        var actions = _actions;
+        return actions is not null && source is Visual visual && (visual == actions || actions.IsVisualAncestorOf(visual));
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.Handled || IsEditing || IsPlaceholder)
+        if (e.Handled || IsInEditMode || IsPlaceholder)
         {
             return;
         }
@@ -236,16 +265,36 @@ public class ChapterListItem : ContentControl
         }
 
         _titleBox.Text = Title;
+        FocusTitleBox(attemptsLeft: 3);
+    }
 
-        // The box only becomes visible after the :editing style applies, so focus on the next pass.
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (IsEditing && _titleBox is not null)
+    // The box only becomes focusable once the :editing style has made it visible and it is laid out. If it
+    // never takes focus (row scrolled away, window inactive), leave edit mode: without focus there would be
+    // no LostFocus to ever commit or end the edit.
+    private void FocusTitleBox(int attemptsLeft)
+    {
+        Dispatcher.UIThread.Post(
+            () =>
             {
-                _titleBox.Focus();
-                _titleBox.SelectAll();
-            }
-        });
+                if (!IsInEditMode || _titleBox is null)
+                {
+                    return;
+                }
+
+                if (_titleBox.Focus())
+                {
+                    _titleBox.SelectAll();
+                }
+                else if (attemptsLeft > 1)
+                {
+                    FocusTitleBox(attemptsLeft - 1);
+                }
+                else
+                {
+                    IsEditing = false;
+                }
+            },
+            DispatcherPriority.Loaded);
     }
 
     private void OnTitleBoxKeyDown(object? sender, KeyEventArgs e)

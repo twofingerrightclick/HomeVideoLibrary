@@ -26,11 +26,13 @@ public sealed class Vcr
         AvaloniaProperty.RegisterAttached<Vcr, Control, ClickSoundKind>("Sound");
 
     private static RoutedEventArgs? _lastSounded;
+    private static Key? _heldKey;
 
     static Vcr()
     {
         InputElement.PointerPressedEvent.AddClassHandler<Control>(OnPointerPressed, RoutingStrategies.Bubble, handledEventsToo: true);
         InputElement.KeyDownEvent.AddClassHandler<Control>(OnKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
+        InputElement.KeyUpEvent.AddClassHandler<Control>(OnKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
     private Vcr()
@@ -57,11 +59,29 @@ public sealed class Vcr
         }
     }
 
+    // Only buttons activate from the keyboard (tabs select with arrows), and auto-repeat while a key is
+    // held must not re-click.
     private static void OnKeyDown(Control control, KeyEventArgs e)
     {
-        if (e.Key is Key.Space or Key.Enter && control.IsFocused)
+        if (e.Key is not (Key.Space or Key.Enter) || control is not Button || !control.IsFocused)
         {
-            PlayOnce(control, e);
+            return;
+        }
+
+        if (_heldKey == e.Key)
+        {
+            return;
+        }
+
+        _heldKey = e.Key;
+        PlayOnce(control, e);
+    }
+
+    private static void OnKeyUp(Control control, KeyEventArgs e)
+    {
+        if (_heldKey == e.Key)
+        {
+            _heldKey = null;
         }
     }
 

@@ -25,8 +25,10 @@ public enum SpineSticker
 /// One ~60px VHS tape spine as seen on a shelf. The sticker's printed artwork (brand marks, "VIDEO
 /// CASSETTE" bands) is rotated a quarter turn the way a real spine label is printed, while the user's
 /// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. Hover lifts the
-/// tape out of the stack. Activation (click, Enter) raises <see cref="Activated"/>; selection is the
-/// host's concern and is only displayed via <see cref="IsSelected"/>.
+/// tape out of the stack. A single unmodified left click (pressed and released on the spine), or Enter
+/// or Space while the spine itself has focus, raises <see cref="Activated"/> once; modifier clicks and
+/// input handled by <see cref="LeadingContent"/> do not. Selection is the host's concern and is only
+/// displayed via <see cref="IsSelected"/>.
 /// </summary>
 [PseudoClasses(":selected", ":branded", ":graph", ":cream", ":has-leading")]
 public class VhsSpine : TemplatedControl
@@ -63,6 +65,8 @@ public class VhsSpine : TemplatedControl
     {
         FocusableProperty.OverrideDefaultValue<VhsSpine>(true);
     }
+
+    private bool _pressedHere;
 
     public VhsSpine()
     {
@@ -134,10 +138,22 @@ public class VhsSpine : TemplatedControl
         }
     }
 
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+
+        // The second press of a double-click must not open the tape a second time.
+        _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed
+            && e.ClickCount == 1;
+    }
+
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (e.InitialPressMouseButton == MouseButton.Left
+        var pressedHere = _pressedHere;
+        _pressedHere = false;
+        if (pressedHere
+            && e.InitialPressMouseButton == MouseButton.Left
             && e.KeyModifiers == KeyModifiers.None
             && new Rect(Bounds.Size).Contains(e.GetPosition(this)))
         {
@@ -149,7 +165,7 @@ public class VhsSpine : TemplatedControl
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.Key == Key.Enter && !e.Handled)
+        if (!e.Handled && e.Key is Key.Enter or Key.Space && ReferenceEquals(e.Source, this))
         {
             e.Handled = true;
             RaiseEvent(new RoutedEventArgs(ActivatedEvent));

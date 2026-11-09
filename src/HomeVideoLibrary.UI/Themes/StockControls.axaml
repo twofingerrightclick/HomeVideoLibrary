@@ -4,6 +4,10 @@
     Shape and depth for stock Fluent controls whose colors come from FluentResources.axaml. Selectors
     target Fluent template parts (PART_BorderElement, PART_ContentPresenter); app Styles outrank
     ControlTheme styles, so these apply on top of Fluent's templates.
+
+    Restyling every stock control is intentional: the app should look like one device without converting
+    each view. Global rules change only color, corners, and depth; rules that change layout (row padding
+    and margins) are opt-in through the "vcr" class so existing lists keep their measured pitch.
   -->
 
   <!-- Text fields: inset well. Class "area" is a multi-line editor; "paper" is a printed label;
@@ -66,20 +70,34 @@
   <Style Selector="CheckBox">
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
   </Style>
+  <!-- Fluent has no resource for the checked rim at rest (only its hover/pressed variants). -->
+  <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Green}"/>
+  </Style>
+  <Style Selector="CheckBox:checked:disabled /template/ Border#NormalRectangle">
+    <Setter Property="BorderBrush" Value="#2C3034"/>
+  </Style>
   <Style Selector="CheckBox /template/ Border#NormalRectangle">
     <Setter Property="CornerRadius" Value="3"/>
     <Setter Property="BoxShadow" Value="0 1 2 0 #B3000000 inset, 0 1 0 0 #14FFFFFF"/>
   </Style>
 
-  <!-- List rows: flat by default, a selection tint with a lit edge when selected. -->
+  <!-- List rows: flat by default, a selection tint when selected. ListBox.vcr adds the rounded inset row
+       layout and a lit left edge (reserved at all times so selecting never shifts content). -->
   <Style Selector="ListBox">
     <Setter Property="Background" Value="Transparent"/>
   </Style>
   <Style Selector="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem">
     <Setter Property="Padding" Value="10,7"/>
     <Setter Property="CornerRadius" Value="3"/>
     <Setter Property="Margin" Value="2,1"/>
-    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="2,0,0,0"/>
   </Style>
   <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
     <Setter Property="Background" Value="#14FFFFFF"/>
@@ -91,12 +109,12 @@
   <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:pressed /template/ ContentPresenter#PART_ContentPresenter">
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
-    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
-    <Setter Property="BorderThickness" Value="2,0,0,0"/>
   </Style>
-  <Style Selector="ListBoxItem:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+  <Style Selector="ListBox.vcr ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
     <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
-    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
   </Style>
 
   <!-- Menus: rounded raised plate with the legend face for rows. -->
@@ -109,10 +127,9 @@
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
   </Style>
 
-  <!-- Separators read as a molded groove: a dark line over a faint highlight. -->
+  <!-- Separators read as a molded groove: a dark line over a faint highlight. Margins stay the host's. -->
   <Style Selector="Separator">
     <Setter Property="Height" Value="2"/>
-    <Setter Property="Margin" Value="0,6"/>
     <Setter Property="Background">
       <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
         <GradientStop Offset="0" Color="#E6000000"/>

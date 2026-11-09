@@ -275,6 +275,12 @@
       <Style Selector="^:pointerover"><Setter Property="Background" Value="#EEC52A"/></Style>
       <Style Selector="^:pressed"><Setter Property="Background" Value="#C9A218"/></Style>
     </Style>
+      <!-- Declared after the dome colors: Avalonia applies equal-specificity styles in order, so a colored
+         key would otherwise keep its bright dome and legend while disabled. -->
+    <Style Selector="^.red:disabled, ^.green:disabled, ^.yellow:disabled">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+    </Style>
   </ControlTheme>
 
   <ControlTheme x:Key="{x:Type c:RubberButton}" TargetType="c:RubberButton" BasedOn="{StaticResource Vcr.Theme.RubberButton}"/>
