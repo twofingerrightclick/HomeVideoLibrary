@@ -32,3 +32,12 @@ Verification: solution build passed with zero warnings/errors. The focused `Impo
 Terra found that header probing alone allowed truncated MKV footage to enter the library. Import now decodes every video/audio stream with FFmpeg error escalation before publication and compares the observed decoded timeline against the expected duration (one percent tolerance, with a 250 ms floor). Both the scan and staging cleanup honor cancellation. The full scan adds work proportional to playback decoding; originals remain untouched.
 
 Focused verification passed four tests: a physically truncated MKV whose FFprobe duration still reports twelve seconds, cancellation at playback validation, valid MP4/MKV import preservation, and subtitle-transcode fallback. No unrelated tests were rerun.
+
+## Stage 3: embedded Matroska metadata
+
+- Added `IVideoMetadataService` and concrete metadata/chapter/thumbnail records. Title, description, keywords, recording date, and chapter-targeted descriptions/keywords use Matroska tags; chapters retain stable unsigned 64-bit UIDs.
+- MKVToolNix reads and edits XML metadata. Unknown XML tags, track tags, alternative editions, nested chapter content, and external attachments are retained. Editing targets the default edition's top-level chapters; deleting a parent with nested chapters or colliding with another edition's UID is refused.
+- Up to twenty JPEG attachments persist alongside a versioned attachment manifest of IDs, timestamps, names, and SHA-256 hashes. Reopening reconstructs cached images from the MKV alone.
+- Capture extracts a cancellable JPEG preview to cache without saving metadata. UI preview callers can debounce requests; only an explicit save chooses attachments.
+- Safe writes serialize per video, copy to staging, run mkvpropedit, reread and verify metadata/thumbnail hashes plus track identity/duration, then atomically replace. Cancellation and errors leave the original unchanged and clean up staging.
+- Focused `MetadataTests` passed five cases: real reopen/roundtrip, external chapter/unknown tag/edition/attachment preservation, limits/positions, failed/pre-cancelled atomic safety, and cancellation after staging begins. No unrelated tests were rerun.

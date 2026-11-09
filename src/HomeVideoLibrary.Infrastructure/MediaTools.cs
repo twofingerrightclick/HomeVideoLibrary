@@ -2,6 +2,9 @@ namespace HomeVideoLibrary.Infrastructure;
 
 public sealed record MediaTools(string Ffmpeg, string Ffprobe)
 {
+    public string MkvExtract { get; init; } = Find("mkvextract");
+    public string MkvMerge { get; init; } = Find("mkvmerge");
+    public string MkvPropEdit { get; init; } = Find("mkvpropedit");
     public static MediaTools Discover() => new(Find("ffmpeg"), Find("ffprobe"));
 
     private static string Find(string name)
