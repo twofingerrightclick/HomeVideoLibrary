@@ -20,6 +20,7 @@
       <Grid Grid.Column="1" Margin="12,0,10,0">
        <Border BorderBrush="#C4C6BA" BorderThickness="0,0,0,1" Height="1" VerticalAlignment="Top" Margin="0,32,0,0"/>
        <TextBlock Text="{Binding Label}" Foreground="#252D30" FontFamily="avares://HomeVideoLibrary/Assets/Caveat.ttf#Caveat" FontSize="27" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,-4,0,0"/>
+       <TextBlock Text="{Binding StateLabel}" IsVisible="{Binding HasStateLabel}" ToolTip.Tip="{Binding StateDetail}" FontSize="10" FontWeight="SemiBold" Foreground="#8A2F25" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,0,0"/>
       </Grid>
      </Grid>
     </Border>

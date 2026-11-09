@@ -3,7 +3,7 @@
  x:Class="HomeVideoLibrary.Desktop.Views.MainWindow" x:DataType="vm:MainWindowViewModel" Title="{Binding Title}"
  Width="1440" Height="900" MinWidth="900" MinHeight="600" Background="#191D1F">
  <Grid ColumnDefinitions="Auto,*">
-  <Border x:Name="LibraryDrawer" Width="236" IsVisible="{Binding IsDrawerOpen}" Background="#23282B" BorderBrush="#353C40" BorderThickness="0,0,1,0" DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop">
+  <Border x:Name="LibraryDrawer" Width="236" IsVisible="{Binding IsDrawerOpen}" Background="#23282B" BorderBrush="#353C40" BorderThickness="0,0,1,0">
    <Grid RowDefinitions="Auto,*,Auto" Margin="20,28,20,18" IsEnabled="{Binding !HasEditor}">
     <StackPanel Spacing="20">
      <TextBlock Text="Home Video Library" FontSize="18" FontWeight="SemiBold"/>
@@ -14,7 +14,8 @@
      <StackPanel Spacing="12">
       <TextBlock Text="Albums" FontSize="13" FontWeight="SemiBold" Foreground="#B3BDC2"/>
       <ListBox ItemsSource="{Binding Albums}" SelectedItem="{Binding CurrentAlbum, Mode=TwoWay}" Background="Transparent"
-       DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.Drop="AlbumDrop" AutomationProperties.Name="Albums, drop selected videos onto an album">
+       DragDrop.AllowDrop="True" DragDrop.DragOver="AlbumDragOver" DragDrop.DragLeave="AlbumDragLeave" DragDrop.Drop="AlbumDrop" AutomationProperties.Name="Albums, drop selected videos onto an album">
+       <ListBox.Styles><Style Selector="ListBoxItem.dropTarget /template/ ContentPresenter"><Setter Property="Background" Value="#4A6A76"/></Style></ListBox.Styles>
        <ListBox.ItemTemplate><DataTemplate x:DataType="core:VideoAlbum"><TextBlock Text="{Binding Name}" Padding="4,8" TextTrimming="CharacterEllipsis"/></DataTemplate></ListBox.ItemTemplate>
       </ListBox>
       <Expander Header="Manage albums" HorizontalAlignment="Stretch">
@@ -34,7 +35,7 @@
       <Button Content="Refresh search index" Click="RefreshIndexClicked" IsEnabled="{Binding !IsIndexing}"/>
       <Button Content="Rebuild from MKVs" Click="RebuildIndexClicked" IsEnabled="{Binding !IsIndexing}"/>
       <Button Content="Cancel index refresh" Click="CancelIndexClicked" IsVisible="{Binding IsIndexing}"/>
-      <TextBlock Text="{Binding IndexStatus}" TextWrapping="Wrap" FontSize="11" Foreground="#B8C2C7"/>
+      <TextBlock Text="{Binding IndexStatus}" TextWrapping="Wrap" FontSize="11" Foreground="#B8C2C7" ToolTip.Tip="{Binding IndexErrorsText}"/>
      </StackPanel>
     </Expander>
    </Grid>
@@ -52,9 +53,12 @@
      </StackPanel>
      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
       <Button Content="Import videos…" Classes="primary" Click="ImportClicked" IsEnabled="{Binding CanImport}" IsVisible="{Binding !HasEditor}"/>
-      <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsBusy}"/>
+      <Button Content="Cancel import" Click="CancelClicked" IsVisible="{Binding IsImporting}"/>
      </StackPanel>
     </Grid>
+    <Border IsVisible="{Binding HasToolWarning}" Padding="12" Background="#3A2A26" CornerRadius="4">
+     <TextBlock Text="{Binding ToolWarning}" TextWrapping="Wrap"/>
+    </Border>
     <WrapPanel IsVisible="{Binding !HasEditor}">
      <Button Content="Play" Click="OpenSelectedClicked" IsEnabled="{Binding CanOpenSelected}" Margin="0,0,8,8"/>
      <Button Content="Edit clips" Click="EditClipsClicked" IsEnabled="{Binding CanEditClips}" Margin="0,0,16,8"/>
@@ -109,15 +113,18 @@
       </ContentControl>
 
    <StackPanel Grid.Row="2" Spacing="8" Margin="3,14,3,0">
-    <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" Height="3" IsVisible="{Binding IsBusy}"/>
+    <ProgressBar Value="{Binding Progress}" IsIndeterminate="{Binding IsProgressIndeterminate}" Minimum="0" Maximum="100" Height="3" IsVisible="{Binding IsImporting}"/>
     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
      <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Status}" Foreground="#A3B0B7" FontSize="11"/>
-     <TextBlock Grid.Column="1" Text="Click to play · check to select" Foreground="#A3B0B7" FontSize="11" IsVisible="{Binding !HasEditor}"/>
+     <TextBlock Grid.Column="1" Text="Click to play · check, ⌘/Ctrl- or Shift-click to select" Foreground="#A3B0B7" FontSize="11" IsVisible="{Binding !HasEditor}"/>
     </Grid>
    </StackPanel>
   </Grid>
   <Border Grid.ColumnSpan="2" IsVisible="{Binding IsDraggingTapes}" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0" Padding="16,10" CornerRadius="4" Background="#EAE5D5">
    <TextBlock Text="Drop on an album to add selected videos" Foreground="#252D30"/>
+  </Border>
+  <Border Grid.ColumnSpan="2" IsVisible="{Binding HasToast}" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,48" Padding="16,10" CornerRadius="4" Background="#EAE5D5">
+   <TextBlock Text="{Binding Toast}" Foreground="#252D30"/>
   </Border>
  </Grid>
 </Window>
