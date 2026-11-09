@@ -1,0 +1,94 @@
+using System.Collections.Concurrent;
+using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Infrastructure;
+
+namespace HomeVideoLibrary.Tests;
+
+/// <summary>An in-memory stand-in for the MKV tools: text metadata per file path, and fake JPEG output.</summary>
+internal sealed class FakeMatroska : IMatroskaFileEditor
+{
+    private int _reads, _extracts, _captures;
+    public ConcurrentDictionary<string, VideoTextMetadata> Content { get; } = new();
+    public ConcurrentDictionary<string, string> Failures { get; } = new();
+    public Func<string, CancellationToken, Task>? BeforeRead { get; set; }
+    public Func<CancellationToken, Task>? BeforeCapture { get; set; }
+    public string OutputDirectory { get; } = Path.Combine(Path.GetTempPath(), "hvl-fake-" + Guid.NewGuid().ToString("N"));
+    public int Reads => _reads;
+    public int Extracts => _extracts;
+    public int Captures => _captures;
+
+    public static VideoTextMetadata Text(VideoMetadata metadata, TimeSpan? duration = null, params VideoThumbnailRef[] thumbnails) =>
+        new(metadata, thumbnails, duration ?? TimeSpan.FromSeconds(10), []);
+
+    public void Set(string path, VideoMetadata metadata, TimeSpan? duration = null, params VideoThumbnailRef[] thumbnails) =>
+        Content[Path.GetFullPath(path)] = Text(metadata, duration, thumbnails);
+
+    public async Task<VideoTextMetadata> ReadTextAsync(string mkvPath, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _reads);
+        // Like a real read, the content is what the file held when the read began.
+        var path = Path.GetFullPath(mkvPath);
+        var failed = Failures.TryGetValue(path, out var failure);
+        var text = Content.TryGetValue(path, out var content) ? content : Text(VideoMetadata.Empty);
+        if (BeforeRead is { } before) await before(mkvPath, cancellationToken);
+        return failed ? throw new InvalidDataException(failure) : text;
+    }
+
+    public Task WriteStagedAsync(string mkvPath, VideoMetadata metadata, MetadataWriteOptions? options = null,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    public async Task<string> ExtractThumbnailAsync(string mkvPath, Guid videoId, VideoThumbnailRef thumbnail, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _extracts);
+        Directory.CreateDirectory(OutputDirectory);
+        var path = Path.Combine(OutputDirectory, $"{thumbnail.Id:N}.jpg");
+        await File.WriteAllTextAsync(path, "chosen", cancellationToken);
+        return path;
+    }
+
+    public async Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960,
+        CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _captures);
+        if (BeforeCapture is { } before) await before(cancellationToken);
+        await File.WriteAllTextAsync(outputPath, $"frame {position}", cancellationToken);
+    }
+}
+
+internal static class TestLibrary
+{
+    public static async Task<LibraryCatalog> CreateCatalogAsync(string root)
+    {
+        var catalog = new LibraryCatalog(new LibraryPaths(root));
+        await catalog.InitializeAsync();
+        return catalog;
+    }
+
+    /// <summary>Registers a placeholder video file (not real media) in the catalog.</summary>
+    public static async Task<LibraryVideo> AddVideoAsync(LibraryCatalog catalog, string name, DateTimeOffset? recordedAt = null)
+    {
+        var id = Guid.NewGuid();
+        var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), name, TimeSpan.FromSeconds(10), DateTimeOffset.UtcNow,
+            recordedAt ?? DateTimeOffset.UtcNow);
+        await File.WriteAllTextAsync(catalog.GetVideoPath(video.RelativePath), "source " + name);
+        await catalog.AddAsync(video);
+        return video;
+    }
+
+    public static VideoRecord Record(string name, DateTimeOffset? recordedAt = null, string title = "", string description = "",
+        IReadOnlyList<string>? tags = null, IReadOnlyList<VideoChapterRecord>? chapters = null, VideoRecordState state = VideoRecordState.Ok)
+    {
+        var id = Guid.NewGuid();
+        return new VideoRecord(id, LibraryPaths.VideoRelativePath(id), name, TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow,
+            recordedAt ?? DateTimeOffset.UtcNow)
+        {
+            Title = title, Description = description, Tags = tags ?? [], Chapters = chapters ?? [], State = state,
+            Stamp = state == VideoRecordState.Pending ? null : new FileStamp(1, DateTime.UtcNow.Ticks),
+        };
+    }
+
+    public static void DeleteDirectory(string path)
+    {
+        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+    }
+}

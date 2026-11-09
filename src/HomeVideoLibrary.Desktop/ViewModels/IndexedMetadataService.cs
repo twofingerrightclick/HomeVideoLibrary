@@ -3,8 +3,8 @@ using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-/// <summary>Keeps the disposable search projection current after an explicit MKV save.</summary>
-public sealed class IndexedMetadataService(IVideoMetadataService metadata, LibrarySearchIndex index) : IVideoMetadataService
+/// <summary>Publishes every successful MKV save to the library model, so search, tags and tapes reflect it at once.</summary>
+public sealed class IndexedMetadataService(IVideoMetadataService metadata, LibraryModel model) : IVideoMetadataService
 {
     public event Action<string>? IndexingFailed;
     public Task<VideoMetadata> ReadAsync(LibraryVideo video, CancellationToken cancellationToken = default) => metadata.ReadAsync(video, cancellationToken);
@@ -12,8 +12,12 @@ public sealed class IndexedMetadataService(IVideoMetadataService metadata, Libra
     public async Task SaveAsync(LibraryVideo video, VideoMetadata content, CancellationToken cancellationToken = default)
     {
         await metadata.SaveAsync(video, content, cancellationToken);
-        // The MKV commit succeeded. An index failure must not misreport it as an unsaved edit.
-        try { await Task.Run(() => index.UpdateVideoAsync(video, cancellationToken: cancellationToken)); }
-        catch (Exception exception) { IndexingFailed?.Invoke("Changes saved. Search refresh needed: " + exception.Message); }
+        // The MKV commit succeeded and must not be reported as unsaved, nor its publish cancelled by the save's token.
+        try
+        {
+            var record = await Task.Run(() => model.UpsertFromFileAsync(video, CancellationToken.None));
+            if (record.State != VideoRecordState.Ok) IndexingFailed?.Invoke("Changes saved. Library refresh needed: " + record.Error);
+        }
+        catch (Exception exception) { IndexingFailed?.Invoke("Changes saved. Library refresh needed: " + exception.Message); }
     }
 }

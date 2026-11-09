@@ -1,30 +1,70 @@
+using System.Diagnostics;
+using System.Globalization;
 using HomeVideoLibrary.Core;
 using Microsoft.Data.Sqlite;
 
 namespace HomeVideoLibrary.Infrastructure;
 
+/// <summary>A cached MKV projection for one video, keyed to the file stamp it was read from.</summary>
+public sealed record CatalogCacheEntry(string RecordJson, long FileLength, long ModifiedTicks);
+
+/// <param name="Duration">When set, also replaces the catalog's duration for the video.</param>
+public sealed record CatalogCacheWrite(Guid VideoId, CatalogCacheEntry Entry, TimeSpan? Duration = null);
+
+/// <param name="Issues">Rows that could not be read and were skipped, as user-facing text.</param>
+public sealed record CatalogContents(IReadOnlyList<LibraryVideo> Videos, IReadOnlyList<VideoAlbum> Albums,
+    IReadOnlyList<(Guid AlbumId, Guid VideoId)> Memberships, IReadOnlyDictionary<Guid, CatalogCacheEntry> Cache,
+    IReadOnlyList<string> Issues);
+
 public sealed class LibraryCatalog(LibraryPaths paths)
 {
+    public const int SchemaVersion = 4;
+
     public LibraryPaths Paths { get; } = paths;
 
+    /// <summary>Creates or migrates the database. Before migrating an existing database it is backed up to
+    /// <c>.cache/backup-v{version}.sqlite3</c>; each migration step commits on its own.</summary>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         Directory.CreateDirectory(Paths.RootDirectory);
         Directory.CreateDirectory(Paths.VideosDirectory);
         Directory.CreateDirectory(Paths.CacheDirectory);
         await using var connection = await OpenAsync(cancellationToken);
-        long version;
-        await using (var versionCommand = connection.CreateCommand())
-        {
-            versionCommand.CommandText = "PRAGMA user_version";
-            version = Convert.ToInt64(await versionCommand.ExecuteScalarAsync(cancellationToken));
-            if (version > 3)
-                throw new InvalidDataException("This library was created by a newer version of Home Video Library.");
-        }
+        var version = await ScalarAsync(connection, null, "PRAGMA user_version", cancellationToken);
+        if (version > SchemaVersion)
+            throw new InvalidDataException("This library was created by a newer version of Home Video Library.");
+        if (version < SchemaVersion && await ScalarAsync(connection, null,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='videos'", cancellationToken) > 0)
+            BackUp(connection, version);
+        // WAL persists in the file, so readers no longer wait on a reconcile batch.
+        await ExecuteAsync(connection, null, "PRAGMA journal_mode=WAL", cancellationToken);
+        if (version == SchemaVersion) return;
+        if (version < 2) await MigrateAsync(connection, 2, CreateV2Async, cancellationToken);
+        if (version < 3) await MigrateAsync(connection, 3, AddSourceFingerprintAsync, cancellationToken);
+        if (version < 4) await MigrateAsync(connection, 4, CreateVideoCacheAsync, cancellationToken);
+    }
+
+    private void BackUp(SqliteConnection connection, long version)
+    {
+        var backup = Path.Combine(Paths.CacheDirectory, $"backup-v{version}.sqlite3");
+        if (File.Exists(backup))
+            backup = Path.Combine(Paths.CacheDirectory, $"backup-v{version}-{DateTime.UtcNow:yyyyMMddHHmmss}.sqlite3");
+        using var destination = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = backup, Pooling = false }.ToString());
+        destination.Open();
+        connection.BackupDatabase(destination);
+    }
+
+    private static async Task MigrateAsync(SqliteConnection connection, int target,
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, Task> step, CancellationToken cancellationToken)
+    {
         await using var transaction = connection.BeginTransaction();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
+        await step(connection, transaction, cancellationToken);
+        await ExecuteAsync(connection, transaction, $"PRAGMA user_version = {target}", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static Task CreateV2Async(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, """
             CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY, relative_path TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL, duration_ticks INTEGER NOT NULL,
@@ -37,45 +77,73 @@ public sealed class LibraryCatalog(LibraryPaths paths)
                 PRIMARY KEY (album_id,video_id)
             );
             CREATE INDEX IF NOT EXISTS album_videos_video ON album_videos(video_id);
-            CREATE TABLE IF NOT EXISTS search_cache (
-                rowid INTEGER PRIMARY KEY, video_id TEXT NOT NULL UNIQUE REFERENCES videos(id) ON DELETE CASCADE,
-                title TEXT NOT NULL, description TEXT NOT NULL, tags TEXT NOT NULL, chapters TEXT NOT NULL,
-                recorded_at TEXT NOT NULL, file_length INTEGER NOT NULL, modified_ticks INTEGER NOT NULL
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS video_fts USING fts5(title,description,tags,chapters,
-                content='search_cache',content_rowid='rowid',tokenize='unicode61 remove_diacritics 2');
-            CREATE TRIGGER IF NOT EXISTS cache_insert AFTER INSERT ON search_cache BEGIN
-                INSERT INTO video_fts(rowid,title,description,tags,chapters) VALUES(new.rowid,new.title,new.description,new.tags,new.chapters);
-            END;
-            CREATE TRIGGER IF NOT EXISTS cache_delete AFTER DELETE ON search_cache BEGIN
-                INSERT INTO video_fts(video_fts,rowid,title,description,tags,chapters) VALUES('delete',old.rowid,old.title,old.description,old.tags,old.chapters);
-            END;
-            CREATE TRIGGER IF NOT EXISTS cache_update AFTER UPDATE ON search_cache BEGIN
-                INSERT INTO video_fts(video_fts,rowid,title,description,tags,chapters) VALUES('delete',old.rowid,old.title,old.description,old.tags,old.chapters);
-                INSERT INTO video_fts(rowid,title,description,tags,chapters) VALUES(new.rowid,new.title,new.description,new.tags,new.chapters);
-            END;
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        if (version < 3)
-        {
-            command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name = 'source_fingerprint'";
-            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
-            {
-                command.CommandText = "ALTER TABLE videos ADD COLUMN source_fingerprint TEXT NULL";
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
-        }
-        command.CommandText = """
-            CREATE INDEX IF NOT EXISTS videos_source_fingerprint ON videos(source_fingerprint);
-            PRAGMA user_version = 3;
-            """;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            """, cancellationToken);
+
+    private static async Task AddSourceFingerprintAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (await ScalarAsync(connection, transaction,
+                "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name = 'source_fingerprint'", cancellationToken) == 0)
+            await ExecuteAsync(connection, transaction, "ALTER TABLE videos ADD COLUMN source_fingerprint TEXT NULL", cancellationToken);
+        await ExecuteAsync(connection, transaction,
+            "CREATE INDEX IF NOT EXISTS videos_source_fingerprint ON videos(source_fingerprint)", cancellationToken);
     }
 
+    /// <summary>Replaces the FTS search cache with <c>video_cache</c>, makes album names unique ignoring case,
+    /// and rewrites Windows-style stored paths.</summary>
+    private static async Task CreateVideoCacheAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(connection, transaction, """
+            DROP TRIGGER IF EXISTS cache_insert;
+            DROP TRIGGER IF EXISTS cache_delete;
+            DROP TRIGGER IF EXISTS cache_update;
+            DROP TABLE IF EXISTS video_fts;
+            DROP TABLE IF EXISTS search_cache;
+            CREATE TABLE IF NOT EXISTS video_cache (
+                video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+                record_json TEXT NOT NULL, file_length INTEGER NOT NULL, modified_ticks INTEGER NOT NULL
+            );
+            """, cancellationToken);
+        await SuffixDuplicateAlbumNamesAsync(connection, transaction, cancellationToken);
+        await ExecuteAsync(connection, transaction,
+            "CREATE UNIQUE INDEX IF NOT EXISTS albums_name ON albums(name COLLATE NOCASE)", cancellationToken);
+        await ExecuteAsync(connection, transaction, """
+            UPDATE OR IGNORE videos SET relative_path = replace(relative_path, char(92), '/')
+            WHERE instr(relative_path, char(92)) > 0
+            """, cancellationToken);
+    }
+
+    private static async Task SuffixDuplicateAlbumNamesAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken)
+    {
+        var albums = new List<(string Id, string Name)>();
+        await using (var list = connection.CreateCommand())
+        {
+            list.Transaction = transaction;
+            list.CommandText = "SELECT id,name FROM albums ORDER BY rowid";
+            await using var reader = await list.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) albums.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        var taken = new HashSet<string>(albums.Select(album => album.Name), StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, name) in albums)
+        {
+            if (seen.Add(name)) continue;
+            var suffix = 2;
+            while (taken.Contains($"{name} ({suffix})")) suffix++;
+            var renamed = $"{name} ({suffix})";
+            taken.Add(renamed); seen.Add(renamed);
+            await using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE albums SET name=$name WHERE id=$id";
+            update.Parameters.AddWithValue("$name", renamed); update.Parameters.AddWithValue("$id", id);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>Resolves a stored path inside the Videos directory. Accepts <c>\</c> separators from Windows-created rows.</summary>
     public string GetVideoPath(string relativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        relativePath = NormalizeRelativePath(relativePath);
         if (Path.IsPathRooted(relativePath))
             throw new ArgumentException("The catalog requires a relative video path.", nameof(relativePath));
         var fullPath = Path.GetFullPath(Path.Combine(Paths.RootDirectory, relativePath));
@@ -85,16 +153,65 @@ public sealed class LibraryCatalog(LibraryPaths paths)
         return fullPath;
     }
 
+    private static string NormalizeRelativePath(string relativePath) => relativePath.Replace('\\', '/');
+
+    /// <summary>Lists videos newest first, skipping rows that cannot be read.</summary>
     public async Task<IReadOnlyList<LibraryVideo>> ListAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {VideoColumns} FROM videos ORDER BY recorded_at DESC";
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var videos = new List<LibraryVideo>();
-        while (await reader.ReadAsync(cancellationToken))
-            videos.Add(ReadVideo(reader));
-        return videos;
+        var videos = await ReadVideosAsync(connection, [], cancellationToken);
+        return videos.OrderByDescending(video => video.RecordedAt).ThenBy(video => video.Id).ToArray();
+    }
+
+    /// <summary>Reads every video, album, membership and cache row in one consistent read transaction.</summary>
+    public async Task<CatalogContents> LoadContentsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(deferred: true);
+        var issues = new List<string>();
+        var videos = await ReadVideosAsync(connection, issues, cancellationToken, transaction);
+        var known = videos.Select(video => video.Id).ToHashSet();
+        var albums = new List<VideoAlbum>();
+        await ReadRowsAsync(connection, transaction, "SELECT id,name FROM albums ORDER BY name COLLATE NOCASE,id", issues, "album",
+            reader => albums.Add(new VideoAlbum(Guid.Parse(reader.GetString(0)), reader.GetString(1))), cancellationToken);
+        var memberships = new List<(Guid, Guid)>();
+        await ReadRowsAsync(connection, transaction, "SELECT album_id,video_id FROM album_videos", issues, "album membership",
+            reader => memberships.Add((Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)))), cancellationToken);
+        var cache = new Dictionary<Guid, CatalogCacheEntry>();
+        await ReadRowsAsync(connection, transaction, "SELECT video_id,record_json,file_length,modified_ticks FROM video_cache", issues, "cache",
+            reader =>
+            {
+                var id = Guid.Parse(reader.GetString(0));
+                if (known.Contains(id)) cache[id] = new CatalogCacheEntry(reader.GetString(1), reader.GetInt64(2), reader.GetInt64(3));
+            }, cancellationToken);
+        return new CatalogContents(videos, albums, memberships, cache, issues);
+    }
+
+    /// <summary>Writes cache rows (and refreshed durations) for videos still in the catalog, in one transaction.</summary>
+    public async Task WriteCacheAsync(IReadOnlyList<CatalogCacheWrite> writes, CancellationToken cancellationToken = default)
+    {
+        if (writes.Count == 0) return;
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        foreach (var write in writes)
+        {
+            await using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO video_cache(video_id,record_json,file_length,modified_ticks)
+                SELECT $id,$json,$length,$modified WHERE EXISTS(SELECT 1 FROM videos WHERE id=$id)
+                ON CONFLICT(video_id) DO UPDATE SET record_json=excluded.record_json,
+                    file_length=excluded.file_length, modified_ticks=excluded.modified_ticks
+                """;
+            command.Parameters.AddWithValue("$id", write.VideoId.ToString()); command.Parameters.AddWithValue("$json", write.Entry.RecordJson);
+            command.Parameters.AddWithValue("$length", write.Entry.FileLength); command.Parameters.AddWithValue("$modified", write.Entry.ModifiedTicks);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            if (write.Duration is not { } duration) continue;
+            await using var update = connection.CreateCommand(); update.Transaction = transaction;
+            update.CommandText = "UPDATE videos SET duration_ticks=$duration WHERE id=$id";
+            update.Parameters.AddWithValue("$id", write.VideoId.ToString()); update.Parameters.AddWithValue("$duration", duration.Ticks);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<LibraryVideo?> FindBySourceFingerprintAsync(string fingerprint, CancellationToken cancellationToken = default)
@@ -110,20 +227,51 @@ public sealed class LibraryCatalog(LibraryPaths paths)
 
     private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";
 
+    private async Task<List<LibraryVideo>> ReadVideosAsync(SqliteConnection connection, List<string> issues,
+        CancellationToken cancellationToken, SqliteTransaction? transaction = null)
+    {
+        var videos = new List<LibraryVideo>();
+        await ReadRowsAsync(connection, transaction, $"SELECT {VideoColumns} FROM videos", issues, "video",
+            reader => videos.Add(ReadVideo(reader)), cancellationToken);
+        return videos;
+    }
+
+    private static async Task ReadRowsAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql, List<string> issues,
+        string kind, Action<SqliteDataReader> read, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            try { read(reader); }
+            catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or OverflowException)
+            {
+                var row = reader.IsDBNull(0) ? "(null)" : reader.GetValue(0).ToString();
+                Trace.TraceWarning($"Skipped unreadable {kind} row {row}: {exception}");
+                issues.Add($"Skipped an unreadable {kind} entry ({row}): {exception.Message}");
+            }
+        }
+    }
+
     private LibraryVideo ReadVideo(SqliteDataReader reader)
     {
-        var relativePath = reader.GetString(1);
+        var relativePath = NormalizeRelativePath(reader.GetString(1));
         _ = GetVideoPath(relativePath);
         return new LibraryVideo(Guid.Parse(reader.GetString(0)), relativePath, reader.GetString(2),
-            TimeSpan.FromTicks(reader.GetInt64(3)), DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture),
-            DateTimeOffset.Parse(reader.GetString(5), System.Globalization.CultureInfo.InvariantCulture))
+            TimeSpan.FromTicks(reader.GetInt64(3)), ParseDate(reader.GetString(4)), ParseDate(reader.GetString(5)))
         {
             SourceFingerprint = reader.IsDBNull(6) ? null : reader.GetString(6),
         };
     }
 
+    private static DateTimeOffset ParseDate(string text) =>
+        DateTimeOffset.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
     public Task AddAsync(LibraryVideo video, CancellationToken cancellationToken = default) => AddBatchAsync([video], cancellationToken);
 
+    /// <summary>Inserts videos in one transaction. Dates are stored in UTC and paths with <c>/</c> separators.</summary>
     public async Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
@@ -133,9 +281,10 @@ public sealed class LibraryCatalog(LibraryPaths paths)
             _ = GetVideoPath(video.RelativePath);
             await using var command = connection.CreateCommand(); command.Transaction = transaction;
             command.CommandText = $"INSERT INTO videos ({VideoColumns}) VALUES ($id,$path,$name,$duration,$imported,$recorded,$fingerprint)";
-            command.Parameters.AddWithValue("$id", video.Id.ToString()); command.Parameters.AddWithValue("$path", video.RelativePath);
+            command.Parameters.AddWithValue("$id", video.Id.ToString()); command.Parameters.AddWithValue("$path", NormalizeRelativePath(video.RelativePath));
             command.Parameters.AddWithValue("$name", video.DisplayName); command.Parameters.AddWithValue("$duration", video.Duration.Ticks);
-            command.Parameters.AddWithValue("$imported", video.ImportedAt.ToString("O")); command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToString("O"));
+            command.Parameters.AddWithValue("$imported", video.ImportedAt.ToUniversalTime().ToString("O"));
+            command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToUniversalTime().ToString("O"));
             command.Parameters.AddWithValue("$fingerprint", (object?)video.SourceFingerprint ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -145,10 +294,14 @@ public sealed class LibraryCatalog(LibraryPaths paths)
 
     internal async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Paths.DatabasePath, Pooling = false, ForeignKeys = true }.ToString());
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Paths.DatabasePath, Pooling = false, ForeignKeys = true,
+        }.ToString());
         try
         {
             await connection.OpenAsync(cancellationToken);
+            await ExecuteAsync(connection, null, "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000", cancellationToken);
             return connection;
         }
         catch
@@ -156,5 +309,21 @@ public sealed class LibraryCatalog(LibraryPaths paths)
             await connection.DisposeAsync();
             throw;
         }
+    }
+
+    private static async Task ExecuteAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<long> ScalarAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
     }
 }

@@ -1,19 +1,68 @@
 using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-public sealed class TapeViewModel(LibraryVideo video, Action selectionChanged, bool isSelected = false) : ViewModelBase
+/// <summary>One tape on the shelf. Instances are kept per video id and updated in place, so containers, focus and
+/// scroll position survive library changes.</summary>
+public sealed class TapeViewModel : ViewModelBase
 {
-    private bool _isSelected = isSelected;
-    public LibraryVideo Video { get; } = video;
-    public string Label => Video.Label.Replace('\n', ' ').Replace('\r', ' ');
-    public string DateLabel => Video.RecordedAt.ToString("MMM yyyy");
-    public string DurationLabel => Video.Duration.TotalHours >= 1 ? Video.Duration.ToString(@"h\:mm\:ss") : Video.Duration.ToString(@"m\:ss");
-    public string Accent => new[] { "#947055", "#526F7B", "#7A5559", "#607563" }[Video.Id.ToByteArray()[0] % 4];
-    public bool IsSelected { get => _isSelected; set { if (SetProperty(ref _isSelected, value)) selectionChanged(); } }
+    private readonly Action<TapeViewModel, bool> _selectionToggled;
+    private VideoRecord _record;
+    private LibraryVideo _video;
+    private bool _isSelected;
+    private VideoChapterRecord? _matchedChapter;
+
+    /// <param name="selectionToggled">Called when the user changes <see cref="IsSelected"/> (for example, its checkbox).</param>
+    public TapeViewModel(VideoRecord record, Action<TapeViewModel, bool> selectionToggled, bool isSelected = false)
+    {
+        _record = record; _video = record.ToLibraryVideo(); _selectionToggled = selectionToggled; _isSelected = isSelected;
+    }
+
+    public Guid Id => _record.Id;
+    public VideoRecord Record => _record;
+    public LibraryVideo Video => _video;
+    public string Label => _record.Label.Replace('\n', ' ').Replace('\r', ' ');
+    public string DateLabel => _record.RecordedAt.ToLocalTime().ToString("MMM yyyy");
+    public string MonthLabel => _record.RecordedAt.ToLocalTime().ToString("MMMM yyyy");
+    public string DurationLabel => _record.Duration.TotalHours >= 1 ? _record.Duration.ToString(@"h\:mm\:ss") : _record.Duration.ToString(@"m\:ss");
+    public string Accent => new[] { "#947055", "#526F7B", "#7A5559", "#607563" }[_record.Id.ToByteArray()[0] % 4];
+    public bool IsMissing => _record.State == VideoRecordState.Missing;
+    public string StateLabel => _record.State switch
+    {
+        VideoRecordState.Missing => "File missing",
+        VideoRecordState.Unreadable => "Unreadable",
+        _ => "",
+    };
+    public bool HasStateLabel => StateLabel.Length > 0;
+    public string? StateDetail => _record.Error;
+
+    /// <summary>The first chapter matching the current search, if any.</summary>
+    public VideoChapterRecord? MatchedChapter { get => _matchedChapter; internal set => SetProperty(ref _matchedChapter, value); }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set { if (SetProperty(ref _isSelected, value)) _selectionToggled(this, value); }
+    }
+
+    internal void SetSelected(bool value) => SetProperty(ref _isSelected, value, nameof(IsSelected));
+
+    internal void Update(VideoRecord record)
+    {
+        if (ReferenceEquals(record, _record)) return;
+        _record = record; _video = record.ToLibraryVideo();
+        foreach (var name in new[] { nameof(Record), nameof(Video), nameof(Label), nameof(DateLabel), nameof(MonthLabel), nameof(DurationLabel),
+                     nameof(IsMissing), nameof(StateLabel), nameof(HasStateLabel), nameof(StateDetail) })
+            OnPropertyChanged(name);
+    }
 }
 
-public sealed record TapeRow(TapeViewModel Left, TapeViewModel? Right)
+/// <summary>A shelf row of one or two tapes, keyed by its left tape.</summary>
+public sealed class TapeRow(TapeViewModel left) : ViewModelBase
 {
+    private TapeViewModel? _right;
+    public TapeViewModel Left { get; } = left;
+    public TapeViewModel? Right { get => _right; internal set { if (SetProperty(ref _right, value)) OnPropertyChanged(nameof(HasRight)); } }
     public bool HasRight => Right is not null;
 }

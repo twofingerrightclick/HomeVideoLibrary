@@ -1,0 +1,155 @@
+using System.Text.Json;
+using HomeVideoLibrary.Core;
+
+namespace HomeVideoLibrary.Infrastructure;
+
+public enum VideoRecordState
+{
+    /// <summary>In the catalog, but its MKV metadata has not been read yet. Only catalog fields are known.</summary>
+    Pending,
+    Ok,
+    /// <summary>The file is gone. Cached content is kept so the video stays labelled and searchable.</summary>
+    Missing,
+    /// <summary>The last read failed; see <see cref="VideoRecord.Error"/>. Cached content, if any, is kept.</summary>
+    Unreadable,
+}
+
+/// <param name="End">The next chapter's start, or the video duration for the last chapter.</param>
+public sealed record VideoChapterRecord(ulong Uid, TimeSpan Start, TimeSpan End, string Title, string Description, IReadOnlyList<string> Tags);
+
+/// <param name="ModifiedTicks">Last write time in UTC ticks.</param>
+public readonly record struct FileStamp(long Length, long ModifiedTicks)
+{
+    public static FileStamp? TryRead(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? new FileStamp(info.Length, info.LastWriteTimeUtc.Ticks) : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return null; }
+    }
+}
+
+/// <summary>An immutable in-memory view of one library video: catalog membership fields plus the MKV content
+/// projection (title, description, tags, chapters, thumbnail refs), which is only ever a cache of the MKV.</summary>
+public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayName, TimeSpan Duration, DateTimeOffset ImportedAt,
+    DateTimeOffset CatalogRecordedAt)
+{
+    public string? SourceFingerprint { get; init; }
+    public string Title { get; init; } = "";
+    public string Description { get; init; } = "";
+    public IReadOnlyList<string> Tags { get; init; } = [];
+    /// <summary>DATE_RECORDED from the MKV, when it parsed to an instant.</summary>
+    public DateTimeOffset? EmbeddedRecordedAt { get; init; }
+    public string RecordedAtText { get; init; } = "";
+    /// <summary>Sorted by start.</summary>
+    public IReadOnlyList<VideoChapterRecord> Chapters { get; init; } = [];
+    public IReadOnlyList<VideoThumbnailRef> Thumbnails { get; init; } = [];
+    /// <summary>The file stamp the content was read from; null when it never was.</summary>
+    public FileStamp? Stamp { get; init; }
+    public VideoRecordState State { get; init; }
+    public string? Error { get; init; }
+
+    /// <summary>The instant used for ordering, in UTC: the embedded date when present, else the import-time date.</summary>
+    public DateTimeOffset RecordedAt => (EmbeddedRecordedAt ?? CatalogRecordedAt).ToUniversalTime();
+
+    public string Label => !string.IsNullOrWhiteSpace(Description) ? Description : !string.IsNullOrWhiteSpace(Title) ? Title : DisplayName;
+
+    /// <summary>When the record's content last changed, for tag recency: the file's write time, else its import time.</summary>
+    public DateTimeOffset LastModifiedUtc => Stamp is { } stamp ? new DateTimeOffset(stamp.ModifiedTicks, TimeSpan.Zero) : ImportedAt.ToUniversalTime();
+
+    public static VideoRecord FromCatalog(LibraryVideo video) =>
+        new(video.Id, video.RelativePath, video.DisplayName, video.Duration, video.ImportedAt, video.RecordedAt)
+        {
+            SourceFingerprint = video.SourceFingerprint,
+            Title = video.Title,
+            Description = video.Description,
+        };
+
+    public LibraryVideo ToLibraryVideo() =>
+        new(Id, RelativePath, DisplayName, Duration, ImportedAt, RecordedAt)
+        {
+            Title = Title,
+            Description = Description,
+            SourceFingerprint = SourceFingerprint,
+        };
+
+    /// <summary>The text metadata as last read from the MKV, without thumbnail images. Null until a read succeeded.</summary>
+    public VideoMetadata? ToMetadata() => Stamp is null ? null :
+        new VideoMetadata(Title, Description, Tags, EmbeddedRecordedAt,
+            Chapters.Select(chapter => new VideoChapter(chapter.Uid, chapter.Start, chapter.Title, chapter.Description, chapter.Tags)).ToArray(), [])
+        {
+            RecordedAtText = RecordedAtText,
+        };
+
+    public VideoRecord WithContent(VideoTextMetadata text, FileStamp stamp)
+    {
+        var metadata = text.Metadata;
+        var duration = text.Duration > TimeSpan.Zero ? text.Duration : Duration;
+        return this with
+        {
+            Duration = duration,
+            Title = metadata.Title,
+            Description = metadata.Description,
+            Tags = metadata.Tags.ToArray(),
+            EmbeddedRecordedAt = metadata.RecordedAt,
+            RecordedAtText = metadata.RecordedAtText,
+            Chapters = BuildChapters(metadata.Chapters.Select(chapter =>
+                (chapter.Uid, chapter.Position, chapter.Title, chapter.Description, chapter.Tags)), duration),
+            Thumbnails = text.Thumbnails.OrderBy(thumbnail => thumbnail.Position).ToArray(),
+            Stamp = stamp,
+            State = VideoRecordState.Ok,
+            Error = null,
+        };
+    }
+
+    private static VideoChapterRecord[] BuildChapters(
+        IEnumerable<(ulong Uid, TimeSpan Start, string Title, string Description, IReadOnlyList<string> Tags)> chapters, TimeSpan duration)
+    {
+        var sorted = chapters.OrderBy(chapter => chapter.Start).ThenBy(chapter => chapter.Uid).ToArray();
+        return sorted.Select((chapter, index) => new VideoChapterRecord(chapter.Uid, chapter.Start,
+            index + 1 < sorted.Length ? sorted[index + 1].Start : TimeSpan.FromTicks(Math.Max(duration.Ticks, chapter.Start.Ticks)),
+            chapter.Title, chapter.Description, chapter.Tags.ToArray())).ToArray();
+    }
+
+    internal string ToCacheJson() => JsonSerializer.Serialize(new CachedContent(CachedContent.CurrentVersion, Duration.Ticks, Title, Description,
+        Tags, EmbeddedRecordedAt, RecordedAtText,
+        Chapters.Select(chapter => new CachedChapter(chapter.Uid, chapter.Start.Ticks, chapter.Title, chapter.Description, chapter.Tags)).ToArray(),
+        Thumbnails.Select(thumbnail => new CachedThumbnail(thumbnail.Id, thumbnail.Position.Ticks, thumbnail.AttachmentName, thumbnail.Sha256)).ToArray()));
+
+    /// <summary>Applies cached content; returns null when the cache entry is unreadable or from another format version.</summary>
+    internal VideoRecord? WithCachedContent(CatalogCacheEntry entry)
+    {
+        CachedContent? content;
+        try { content = JsonSerializer.Deserialize<CachedContent>(entry.RecordJson); }
+        catch (JsonException) { return null; }
+        if (content is null || content.Version != CachedContent.CurrentVersion) return null;
+        var duration = content.DurationTicks > 0 ? TimeSpan.FromTicks(content.DurationTicks) : Duration;
+        return this with
+        {
+            Duration = duration,
+            Title = content.Title ?? "",
+            Description = content.Description ?? "",
+            Tags = content.Tags ?? [],
+            EmbeddedRecordedAt = content.RecordedAt,
+            RecordedAtText = content.RecordedAtText ?? "",
+            Chapters = BuildChapters((content.Chapters ?? []).Select(chapter => (chapter.Uid, TimeSpan.FromTicks(chapter.StartTicks),
+                chapter.Title ?? "", chapter.Description ?? "", (IReadOnlyList<string>)(chapter.Tags ?? []))), duration),
+            Thumbnails = (content.Thumbnails ?? []).Select(thumbnail => new VideoThumbnailRef(thumbnail.Id, TimeSpan.FromTicks(thumbnail.PositionTicks),
+                thumbnail.AttachmentName ?? "", thumbnail.Sha256 ?? "")).OrderBy(thumbnail => thumbnail.Position).ToArray(),
+            Stamp = new FileStamp(entry.FileLength, entry.ModifiedTicks),
+            State = VideoRecordState.Ok,
+            Error = null,
+        };
+    }
+
+    private sealed record CachedContent(int Version, long DurationTicks, string? Title, string? Description, IReadOnlyList<string>? Tags,
+        DateTimeOffset? RecordedAt, string? RecordedAtText, IReadOnlyList<CachedChapter>? Chapters, IReadOnlyList<CachedThumbnail>? Thumbnails)
+    {
+        public const int CurrentVersion = 1;
+    }
+
+    private sealed record CachedChapter(ulong Uid, long StartTicks, string? Title, string? Description, IReadOnlyList<string>? Tags);
+    private sealed record CachedThumbnail(Guid Id, long PositionTicks, string? AttachmentName, string? Sha256);
+}
