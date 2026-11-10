@@ -204,7 +204,8 @@ public sealed class ClipEditingService : IClipEditingService
             }
 
             report.Begin("Publishing the new videos", PublishWeight, determinate: false);
-            await LibraryPublisher.PublishAsync(_catalog, prepared, cancellationToken);
+            if ((await LibraryPublisher.PublishAsync(_catalog, prepared, cancellationToken)).Unfinished.Count > 0)
+                report.Warn(PublishResult.UnfinishedNotice);
             report.Complete("Saved new videos; originals unchanged");
             return prepared.Select(item => item.Video).ToArray();
         }

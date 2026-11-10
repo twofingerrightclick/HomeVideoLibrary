@@ -20,4 +20,7 @@ public sealed class LibraryPaths
     public string PreviewDirectory => Path.Combine(CacheDirectory, "preview");
 
     public static string VideoRelativePath(Guid id) => $"Videos/{id:N}.mkv";
+
+    /// <summary>Where a video waits between being moved into the library and being registered; see LibraryPublisher.</summary>
+    public string PendingVideoPath(Guid id) => Path.Combine(VideosDirectory, $".{id:N}.pending.mkv");
 }

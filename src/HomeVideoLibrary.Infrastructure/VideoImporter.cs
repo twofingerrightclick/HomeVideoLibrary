@@ -61,6 +61,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             throw new FileNotFoundException("The selected source video no longer exists.", sourcePath);
         var report = new WeightedProgress(1, (stage, fraction) => progress?.Report(new ImportProgress(stage, fraction)));
         report.Begin("Inspecting source", 0, determinate: false);
+        var sourceStamp = Stamp(sourcePath);
         var fingerprint = await ComputeFingerprintAsync(sourcePath, cancellationToken);
         if (await catalog.FindBySourceFingerprintAsync(fingerprint, cancellationToken) is { } existing)
             return new ImportResult(ImportOutcome.AlreadyInLibrary, existing, []);
@@ -94,6 +95,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             }
             else expected = await ConvertAsync(sourcePath, staging, source, report, warnings, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (Stamp(sourcePath) != sourceStamp) throw new IOException(SourceChanged);
 
             report.Begin("Writing title and recorded date into the MKV", MetadataWeight, determinate: false);
             var metadata = await WriteMetadataAsync(staging, sourcePath, fingerprint, recordedAt, cancellationToken);
@@ -124,7 +126,11 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
                 Description = metadata.Description,
                 SourceFingerprint = fingerprint,
             };
-            try { await LibraryPublisher.PublishAsync(catalog, [(video, staging)], cancellationToken); }
+            try
+            {
+                if ((await LibraryPublisher.PublishAsync(catalog, [(video, staging)], cancellationToken)).Unfinished.Count > 0)
+                    warnings.Add(PublishResult.UnfinishedNotice);
+            }
             catch (SqliteException exception) when (LibraryCatalog.IsDuplicateSourceFingerprint(exception))
             {
                 // Another import of the same source committed first; the unique index made that the deciding insert.
@@ -210,12 +216,10 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         return new MatroskaInspection(mkv, timeline, reasons);
     }
 
-    /// <summary>Copies the bytes. A source that changes while it is read (a recorder still writing it) is refused, since
-    /// the copy would mix two versions; the full decode afterwards checks the content.</summary>
+    /// <summary>Copies the bytes; the full decode afterwards checks the content.</summary>
     private static async Task CopyAsync(string sourcePath, string staging, WeightedProgress report, CancellationToken cancellationToken)
     {
-        var before = new FileInfo(sourcePath);
-        var (length, modified) = (before.Length, before.LastWriteTimeUtc);
+        var length = new FileInfo(sourcePath).Length;
         await using (var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBuffer, useAsync: true))
         await using (var output = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true))
         {
@@ -228,11 +232,18 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
                 copied += read;
                 report.Report(length > 0 ? copied / (double)length : 1);
             }
-            if (copied != length) throw new IOException("The video changed while it was being copied. Import it again once it is complete.");
+            if (copied != length) throw new IOException(SourceChanged);
         }
-        var after = new FileInfo(sourcePath);
-        if (after.Length != length || after.LastWriteTimeUtc != modified)
-            throw new IOException("The video changed while it was being copied. Import it again once it is complete.");
+    }
+
+    private const string SourceChanged = "The video changed while it was being imported. Import it again once it is complete.";
+
+    /// <summary>Size and write time, compared before and after the source is read: a recorder still writing the file
+    /// would otherwise leave a copy, remux or conversion of a partial recording.</summary>
+    private static (long Length, DateTime Modified) Stamp(string path)
+    {
+        var file = new FileInfo(path);
+        return (file.Length, file.LastWriteTimeUtc);
     }
 
     /// <summary>Rewrites a Matroska source with mkvmerge, keeping every track, chapter, tag and attachment, and moving

@@ -139,17 +139,43 @@ public sealed class ImportTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(catalog.Paths.VideosDirectory, $".{orphan:N}.pending.mkv"), "orphaned video");
         using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
 
-        var quarantined = await LibraryPublisher.RecoverAsync(catalog, owner);
+        var first = await LibraryPublisher.RecoverAsync(catalog, owner);
         var again = await LibraryPublisher.RecoverAsync(catalog, owner);
 
-        Assert.Equal((1, 0), (quarantined, again));
+        Assert.Equal((1, 1, 0), (first.Finished, first.Quarantined, first.Stuck));
+        Assert.Equal(PublishRecovery.None, again);
         Assert.Equal("committed video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
-        Assert.Equal("orphaned video", await File.ReadAllTextAsync(Path.Combine(LibraryPublisher.OrphanedDirectory(catalog.Paths), $"{orphan:N}.mkv")));
+        Assert.Equal("orphaned video", await File.ReadAllTextAsync(Assert.Single(Directory.GetFiles(LibraryPublisher.OrphanedDirectory(catalog.Paths),
+            $"{orphan:N}-*.mkv"))));
     }
 
     [Fact]
-    public async Task ACommittedVideoWhoseFileCannotBePutInPlaceIsReportedAndKeptPending()
+    public async Task RecoveryReportsStuckPendingFilesAndRegistrationLessVideosButTouchesNeither()
+    {
+        var catalog = await CreateCatalogAsync();
+        var blocked = new LibraryVideo(Guid.NewGuid(), "", "blocked", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        blocked = blocked with { RelativePath = LibraryPaths.VideoRelativePath(blocked.Id) };
+        await catalog.AddAsync(blocked);
+        await File.WriteAllTextAsync(catalog.GetFinalVideoPath(blocked.RelativePath), "in the way");
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(blocked.Id), "pending");
+        using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
+        await LibraryPublisher.RecoverAsync(catalog, owner);
+        var unregistered = Path.Combine(catalog.Paths.VideosDirectory, $"{Guid.NewGuid():N}.mkv");
+        await File.WriteAllTextAsync(unregistered, "lost commit");
+
+        var started = DateTime.UtcNow;
+        var recovery = await LibraryPublisher.RecoverAsync(catalog, owner);
+
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(1));
+        Assert.Equal(1, recovery.Stuck);
+        Assert.Equal([Path.GetFileName(unregistered)], recovery.Unregistered);
+        Assert.Equal("pending", await File.ReadAllTextAsync(catalog.Paths.PendingVideoPath(blocked.Id)));
+        Assert.Equal("lost commit", await File.ReadAllTextAsync(unregistered));
+    }
+
+    [Fact]
+    public async Task ACommittedVideoWhoseRenameIsRefusedIsPublishedAndReadableUntilRecoveryFinishesIt()
     {
         var source = await CreateSourceAsync();
         var catalog = await CreateCatalogAsync();
@@ -158,13 +184,31 @@ public sealed class ImportTests : IDisposable
         File.Copy(source, staged);
         var id = Guid.NewGuid();
         var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), "blocked", TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-        // Something already occupies the final name, as a share violation would keep the rename from happening.
-        await File.WriteAllTextAsync(catalog.GetVideoPath(video.RelativePath), "in the way");
+        var final = catalog.GetVideoPath(video.RelativePath);
+        // A directory of the same name refuses the rename, as a share violation would.
+        Directory.CreateDirectory(final);
 
-        await Assert.ThrowsAsync<IOException>(() => LibraryPublisher.PublishAsync(catalog, [(video, staged)], CancellationToken.None));
+        var result = await LibraryPublisher.PublishAsync(catalog, [(video, staged)], CancellationToken.None);
 
+        Assert.Equal([id], result.Unfinished);
         Assert.True(await catalog.ContainsVideoAsync(id));
-        Assert.True(File.Exists(Path.Combine(catalog.Paths.VideosDirectory, $".{id:N}.pending.mkv")));
+        Assert.Equal(catalog.Paths.PendingVideoPath(id), catalog.GetVideoPath(video.RelativePath));
+        Directory.Delete(final);
+        Assert.Equal(1, await LibraryPublisher.FinishCommittedAsync(catalog));
+        Assert.Equal(final, catalog.GetVideoPath(video.RelativePath));
+        Assert.True(File.Exists(final));
+    }
+
+    [Fact]
+    public async Task FinishingDuringOtherPublicationsLeavesUncommittedPendingFilesAlone()
+    {
+        var catalog = await CreateCatalogAsync();
+        var inFlight = catalog.Paths.PendingVideoPath(Guid.NewGuid());
+        await File.WriteAllTextAsync(inFlight, "being published");
+
+        Assert.Equal(0, await LibraryPublisher.FinishCommittedAsync(catalog));
+
+        Assert.True(File.Exists(inFlight));
     }
 
     [Fact]
@@ -200,6 +244,23 @@ public sealed class ImportTests : IDisposable
         Assert.Contains(damagedResult.Warnings, warning => warning.Contains("damaged", StringComparison.Ordinal));
         Assert.Contains(liveResult.Warnings, warning => warning.Contains("no duration", StringComparison.Ordinal));
         Assert.InRange(liveResult.Video.Duration.TotalSeconds, 2.9, 3.1);
+    }
+
+    [Fact]
+    public async Task ASourceThatChangesDuringAConversionIsRefused()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var progress = new InlineProgress(update =>
+        {
+            if (update.Stage == "Copying streams to MKV") File.SetLastWriteTimeUtc(source, DateTime.UtcNow.AddMinutes(1));
+        });
+
+        var error = await Assert.ThrowsAsync<IOException>(() => new VideoImporter(catalog, _tools).ImportAsync(source, progress));
+
+        Assert.Contains("changed while it was being imported", error.Message, StringComparison.Ordinal);
+        Assert.Empty(await catalog.ListAsync());
+        AssertNoStaging(catalog);
     }
 
     [Fact]

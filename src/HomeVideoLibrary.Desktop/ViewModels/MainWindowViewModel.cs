@@ -408,7 +408,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         LibraryServices services;
         LibraryLoadResult load;
         IReadOnlyList<string> unavailable;
-        int recoverySnapshots, orphanedVideos = 0;
+        int recoverySnapshots;
+        var publications = PublishRecovery.None;
         try
         {
             owner = await Task.Run(() => LibraryLock.TryAcquire(paths));
@@ -420,7 +421,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try { orphanedVideos = await LibraryPublisher.RecoverAsync(catalog, owner); }
+            try { publications = await LibraryPublisher.RecoverAsync(catalog, owner); }
             catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
             try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
             catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
@@ -446,9 +447,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         RecoveryNotice = recoverySnapshots == 0 ? "" :
             $"{recoverySnapshots} metadata recovery snapshot(s) are in {MatroskaMetadataService.RecoveryDirectory(paths)}. " +
             "A save could not restore its video's previous metadata; the README explains how to restore it by hand.";
-        if (orphanedVideos > 0)
-            RecoveryNotice = (RecoveryNotice + $" {orphanedVideos} video(s) from an interrupted import or edit are in " +
-                $"{LibraryPublisher.OrphanedDirectory(paths)}; import them again to add them to the library.").Trim();
+        if (publications.Quarantined > 0)
+            RecoveryNotice += $" {publications.Quarantined} video(s) from an interrupted import or edit are in " +
+                $"{LibraryPublisher.OrphanedDirectory(paths)}; import them again to add them to the library.";
+        if (publications.Stuck > 0)
+            RecoveryNotice += $" {publications.Stuck} video(s) in {paths.VideosDirectory} still have temporary names; see the log.";
+        if (publications.Unregistered.Count > 0)
+            RecoveryNotice += $" Videos not in the library: {string.Join(", ", publications.Unregistered)}; import them to add them.";
+        RecoveryNotice = RecoveryNotice.Trim();
         LibraryRoot = paths.RootDirectory;
         _tapeIndex.Clear(); _rowIndex.Clear(); _selection.Clear(); _anchorId = null; _shown = LibrarySnapshot.Empty;
         _currentAlbum = null; _targetAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";
@@ -579,6 +585,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (_model is not { } model) return;
         if (!ToolsReady) { IndexStatus = "Library refresh needs the missing media tools."; return; }
+        try { await LibraryPublisher.FinishCommittedAsync(model.Catalog); }
+        catch (Exception exception) { Trace.TraceWarning($"Could not finish pending publications: {exception}"); }
         using var cancellation = new CancellationTokenSource(); _indexCancellation = cancellation;
         IsIndexing = true;
         var progress = new Progress<IndexProgress>(update =>

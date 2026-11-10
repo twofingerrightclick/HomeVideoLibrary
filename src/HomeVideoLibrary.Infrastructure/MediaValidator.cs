@@ -188,7 +188,6 @@ public sealed class MediaValidator(MediaTools tools, MediaProcess process)
             throw new InvalidDataException($"The edited video's stream {required.Min()} is empty.");
     }
 
-    /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
     /// <summary>Decodes every video and audio stream to ffmpeg's null sink, the integrity check ffmpeg's documentation
     /// describes, with frames passed on with their own timestamps (<c>-fps_mode passthrough</c>, demuxer time base) so
     /// a variable frame rate, which Matroska allows, is not re-timed by the sink. See <see cref="DecodeLog"/> for how the

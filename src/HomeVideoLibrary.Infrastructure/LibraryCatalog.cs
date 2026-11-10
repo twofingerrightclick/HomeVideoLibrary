@@ -115,11 +115,12 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     /// <summary>Marks stored source fingerprints with the format that made them (<c>v1:</c> before content sampling
     /// replaced the file name), so a fingerprint can only ever match one made the same way, and makes them unique: the
     /// insert, not a prior lookup, decides that a source is already in the library. Of duplicates from the earlier,
-    /// unenforced format, the oldest row keeps its fingerprint.</summary>
+    /// unenforced format, the first-inserted row (lowest rowid) keeps its fingerprint; empty values become NULL.</summary>
     private static Task VersionFingerprintsAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken) =>
         ExecuteAsync(connection, transaction, """
+            UPDATE videos SET source_fingerprint = NULL WHERE source_fingerprint = '';
             UPDATE videos SET source_fingerprint = 'v1:' || source_fingerprint
-            WHERE source_fingerprint IS NOT NULL AND source_fingerprint NOT LIKE 'v_:%';
+            WHERE source_fingerprint IS NOT NULL AND source_fingerprint NOT GLOB 'v[0-9]:*';
             UPDATE videos SET source_fingerprint = NULL
             WHERE source_fingerprint IS NOT NULL AND rowid NOT IN
                 (SELECT MIN(rowid) FROM videos WHERE source_fingerprint IS NOT NULL GROUP BY source_fingerprint);
@@ -219,7 +220,19 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     }
 
     /// <summary>Resolves a stored path inside the Videos directory. Accepts <c>\</c> separators from Windows-created rows.</summary>
+    /// <summary>The file for a stored relative path. When the file is missing because its publication has not been
+    /// finished yet (a committed video still under its pending name), the pending file is returned, so the video
+    /// plays and edits until recovery renames it.</summary>
     public string GetVideoPath(string relativePath)
+    {
+        var path = GetFinalVideoPath(relativePath);
+        if (File.Exists(path) || !Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out var id)) return path;
+        var pending = Paths.PendingVideoPath(id);
+        return File.Exists(pending) ? pending : path;
+    }
+
+    /// <summary>The file a stored relative path names, without the pending fallback of <see cref="GetVideoPath"/>.</summary>
+    internal string GetFinalVideoPath(string relativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
         relativePath = NormalizeRelativePath(relativePath);
@@ -294,18 +307,38 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     }
 
     /// <summary>Whether a video row with this id exists, without reading the row, so an unreadable row still counts.</summary>
-    public async Task<bool> ContainsVideoAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<bool> ContainsVideoAsync(Guid id, CancellationToken cancellationToken = default) =>
+        await GetRelativePathAsync(id, cancellationToken) is not null;
+
+    /// <summary>The stored relative path of the video with this id, or null when no such row exists. Reads only the
+    /// path column, so a row that is otherwise unreadable still answers.</summary>
+    public async Task<string?> GetRelativePathAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM videos WHERE id = $id)";
+        command.CommandText = "SELECT relative_path FROM videos WHERE id = $id";
         command.Parameters.AddWithValue("$id", id.ToString());
-        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) == 1;
+        return await command.ExecuteScalarAsync(cancellationToken) is string path ? NormalizeRelativePath(path) : null;
+    }
+
+    /// <summary>Every stored relative path, read without parsing the rest of the rows.</summary>
+    public async Task<IReadOnlySet<string>> ListRelativePathsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT relative_path FROM videos";
+        var paths = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (!reader.IsDBNull(0)) paths.Add(NormalizeRelativePath(reader.GetString(0)));
+        return paths;
     }
 
     /// <summary>True when <paramref name="exception"/> is the insert of a source fingerprint that is already stored.</summary>
     public static bool IsDuplicateSourceFingerprint(SqliteException exception) =>
-        exception.SqliteErrorCode == 19 && exception.Message.Contains("source_fingerprint", StringComparison.Ordinal);
+        exception.SqliteExtendedErrorCode == SqliteConstraintUnique && exception.Message.Contains("source_fingerprint", StringComparison.Ordinal);
+
+    private const int SqliteConstraintUnique = 2067;
 
     public async Task<LibraryVideo?> FindBySourceFingerprintAsync(string fingerprint, CancellationToken cancellationToken = default)
     {
@@ -365,9 +398,21 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     public Task AddAsync(LibraryVideo video, CancellationToken cancellationToken = default) => AddBatchAsync([video], cancellationToken);
 
     /// <summary>Inserts videos in one transaction. Dates are stored in UTC and paths with <c>/</c> separators.</summary>
-    public async Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, CancellationToken cancellationToken = default)
+    public Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, CancellationToken cancellationToken = default) =>
+        AddBatchAsync(videos, durable: false, cancellationToken);
+
+    /// <summary>Like <see cref="AddBatchAsync(IReadOnlyList{LibraryVideo}, CancellationToken)"/>, but the commit is on
+    /// disk when this returns. The library's connections otherwise use <c>synchronous=NORMAL</c>, under which a WAL
+    /// commit survives a crash but can be lost on power failure; publishing renames files after this commit, so the
+    /// commit must not be lost.</summary>
+    public Task AddBatchDurablyAsync(IReadOnlyList<LibraryVideo> videos, CancellationToken cancellationToken = default) =>
+        AddBatchAsync(videos, durable: true, cancellationToken);
+
+    private async Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, bool durable, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken);
+        // fullfsync makes SQLite flush the drive's own cache on macOS, where plain fsync does not.
+        if (durable) await ExecuteAsync(connection, null, "PRAGMA synchronous=FULL; PRAGMA fullfsync=ON", cancellationToken);
         await using var transaction = connection.BeginTransaction();
         foreach (var video in videos)
         {
