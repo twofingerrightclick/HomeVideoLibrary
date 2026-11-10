@@ -14,7 +14,8 @@ namespace HomeVideoLibrary.UI.Controls;
 
 /// <summary>
 /// One chapter row of the Chapters inspector: start time, title, and trailing host actions in
-/// <see cref="ContentControl.Content"/>. Clicking the row executes <see cref="JumpCommand"/>. Double-click
+/// <see cref="ContentControl.Content"/>. Clicking the row, or Enter on it, executes <see cref="JumpCommand"/>;
+/// clicking its start time executes <see cref="SeekCommand"/> instead, when one is set. Double-click
 /// or F2 sets <see cref="IsEditing"/>; while editing, a title field is created for this edit only (so its
 /// undo history never reaches another chapter) and bound to <see cref="DraftTitle"/>. Enter or leaving
 /// the field executes <see cref="CommitTitleCommand"/> with the trimmed draft when it differs from
@@ -27,12 +28,14 @@ namespace HomeVideoLibrary.UI.Controls;
 [TemplatePart(EditorHostPartName, typeof(ContentControl))]
 [TemplatePart(ActionsPartName, typeof(Control))]
 [TemplatePart(ExpandedPartName, typeof(Control))]
+[TemplatePart(StartPartName, typeof(Control))]
 [PseudoClasses(":current", ":editing", ":expanded")]
 public class ChapterListItem : ContentControl
 {
     public const string EditorHostPartName = "PART_Editor";
     public const string ActionsPartName = "PART_ContentPresenter";
     public const string ExpandedPartName = "PART_ExpandedPresenter";
+    public const string StartPartName = "PART_Start";
 
     public static readonly StyledProperty<string> TitleProperty =
         AvaloniaProperty.Register<ChapterListItem, string>(nameof(Title), string.Empty);
@@ -76,6 +79,10 @@ public class ChapterListItem : ContentControl
     public static readonly StyledProperty<ICommand?> JumpCommandProperty =
         AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(JumpCommand));
 
+    /// <summary>Executed by a click on the start time.</summary>
+    public static readonly StyledProperty<ICommand?> SeekCommandProperty =
+        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(SeekCommand));
+
     /// <summary>Executed with the new title string.</summary>
     public static readonly StyledProperty<ICommand?> CommitTitleCommandProperty =
         AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(CommitTitleCommand));
@@ -83,10 +90,12 @@ public class ChapterListItem : ContentControl
     private ContentControl? _editorHost;
     private Control? _actions;
     private Control? _expanded;
+    private Control? _start;
     private TextBox? _editor;
     private string _startText = ScrubTimeline.FormatTimestamp(TimeSpan.Zero);
     private string _startGhostText = "8:88";
     private bool _pressedHere;
+    private bool _pressedStart;
 
     static ChapterListItem()
     {
@@ -170,6 +179,12 @@ public class ChapterListItem : ContentControl
         set => SetValue(JumpCommandProperty, value);
     }
 
+    public ICommand? SeekCommand
+    {
+        get => GetValue(SeekCommandProperty);
+        set => SetValue(SeekCommandProperty, value);
+    }
+
     public ICommand? CommitTitleCommand
     {
         get => GetValue(CommitTitleCommandProperty);
@@ -183,6 +198,7 @@ public class ChapterListItem : ContentControl
         _editorHost = e.NameScope.Find<ContentControl>(EditorHostPartName);
         _actions = e.NameScope.Find<Control>(ActionsPartName);
         _expanded = e.NameScope.Find<Control>(ExpandedPartName);
+        _start = e.NameScope.Find<Control>(StartPartName);
         if (IsEditing)
         {
             OpenEditor();
@@ -227,17 +243,18 @@ public class ChapterListItem : ContentControl
         base.OnPointerPressed(e);
         _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed
             && e.ClickCount == 1 && !IsWithin(e.Source, _expanded);
+        _pressedStart = _pressedHere && IsWithin(e.Source, _start);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        var pressedHere = _pressedHere;
-        _pressedHere = false;
+        var (pressedHere, pressedStart) = (_pressedHere, _pressedStart);
+        (_pressedHere, _pressedStart) = (false, false);
         if (pressedHere && !e.Handled && !IsEditing && e.InitialPressMouseButton == MouseButton.Left)
         {
             e.Handled = true;
-            Execute(JumpCommand, null);
+            Execute(pressedStart && SeekCommand is { } seek ? seek : JumpCommand, null);
         }
     }
 
@@ -263,9 +280,9 @@ public class ChapterListItem : ContentControl
 
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        // Double-clicks on the host's trailing actions (e.g. a delete key) or its expanded editor are not rename
-        // gestures, and an expanded row is edited in its expanded content.
-        if (IsExpanded || IsWithin(e.Source, _actions) || IsWithin(e.Source, _expanded))
+        // Double-clicks on the host's trailing actions (e.g. a delete key), the start time (a seek) or its expanded
+        // editor are not rename gestures, and an expanded row is edited in its expanded content.
+        if (IsExpanded || IsWithin(e.Source, _actions) || IsWithin(e.Source, _expanded) || IsWithin(e.Source, _start) && SeekCommand is not null)
         {
             return;
         }

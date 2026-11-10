@@ -110,6 +110,28 @@ public sealed class ChapterListItemBehaviorTests
     }
 
     [AvaloniaFact]
+    public void A_click_on_the_start_time_seeks_and_does_not_expand_or_rename()
+    {
+        var seeks = new RecordingCommand();
+        var row = new ChapterListItem { Title = "Cake", Start = TimeSpan.FromSeconds(30), SeekCommand = seeks };
+        var expand = new ExpandCommand(row);
+        row.JumpCommand = expand;
+        var (window, _) = Host(row);
+        var start = row.GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
+        var point = Headless.At(start, 0.5);
+
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(seeks.Calls);
+        Assert.Equal(0, expand.Calls);
+        Assert.False(row.IsEditing);
+    }
+
+    [AvaloniaFact]
     public void F2_does_not_open_the_inline_field_on_an_expanded_row()
     {
         var (window, row) = Host(new ChapterListItem { Title = "Cake", IsExpanded = true });

@@ -25,7 +25,9 @@
                                 ContentTemplate="{TemplateBinding ExpandedContentTemplate}"/>
               <Grid ColumnDefinitions="3,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
                 <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
-                <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+                <!-- Transparent, so a click anywhere on the time seeks. -->
+                <Panel Name="PART_Start" Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center"
+                       Background="Transparent" Cursor="Hand">
                   <TextBlock Text="{TemplateBinding StartGhostText}"
                              FontFamily="{DynamicResource Vcr.Font.Segment}"
                              FontSize="11"
