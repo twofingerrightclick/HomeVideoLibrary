@@ -508,8 +508,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (unavailable.Count == 0)
         {
             var store = new HoverStripStore(paths, services.Files);
-            var live = model.Snapshot.Videos.Keys.ToHashSet();
-            _ = Task.Run(() => store.Prune(live));
+            _ = store.LoadAsync(model.Snapshot.Videos.Keys.ToHashSet());
             _strips = new HoverStripScheduler(store, model.GetVideoPath, Jobs);
         }
         _unavailableTools = unavailable;
