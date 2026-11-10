@@ -228,7 +228,8 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
                 StartAt = at ?? TimeSpan.Zero,
                 StartTab = tab,
-                Edits = ClipEditsFor(model),
+                Edits = ToolsReady ? ClipEditsFor(model) : null,
+                Jobs = Jobs,
                 Previews = ToolsReady ? _previews : null,
                 Back = () => NavigateAsync(() => null),
                 ShowAlbum = async album =>

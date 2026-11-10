@@ -129,19 +129,21 @@ internal static class VideoPages
     }
 
     /// <summary>A page whose waits complete at once unless <paramref name="delay"/> says otherwise.</summary>
+    /// <param name="configure">Adjusts the page's dependencies (edits, jobs, start tab) before it is built.</param>
     public static VideoPageViewModel Create(FakeMetadata metadata, FakePlayback playback, VideoRecord? record = null,
         bool releasePlayback = false, VideoPageSession? session = null, LibrarySnapshot? snapshot = null,
-        TagSuggestionProvider? suggest = null, TimeProvider? time = null, ClipEdits? edits = null)
+        TagSuggestionProvider? suggest = null, TimeProvider? time = null, Func<VideoPageDependencies, VideoPageDependencies>? configure = null)
     {
         record ??= Record(metadata.Stored);
-        return new VideoPageViewModel(new VideoPageDependencies
+        var dependencies = new VideoPageDependencies
         {
             Record = record, Path = "/unused/test.mkv", Metadata = metadata, Playback = playback,
             Snapshot = snapshot ?? LibrarySnapshot.Empty, SuggestTags = suggest ?? ((_, _, _) => []),
             Session = session ?? new VideoPageSession(), Post = action => action(),
             ReleasePlaybackDuringSave = releasePlayback, Time = time ?? TimeProvider.System,
-            Edits = edits ?? new ClipEdits(new UnusedClipEditing(), new JobQueue(_ => Task.CompletedTask), _ => Task.CompletedTask),
-        });
+            Edits = new ClipEdits(new UnusedClipEditing(), new JobQueue(_ => Task.CompletedTask), _ => Task.CompletedTask),
+        };
+        return new VideoPageViewModel(configure?.Invoke(dependencies) ?? dependencies);
     }
 }
 

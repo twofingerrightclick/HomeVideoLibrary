@@ -19,7 +19,7 @@ public sealed class MergePageViewModel : PageViewModel
 {
     private readonly ClipEdits _edits;
     private MergeSource? _selectedSource;
-    private string _outputTitle = "Merged home video";
+    private string _outputTitle = "";
     private JobViewModel? _job;
 
     /// <param name="edits">Plans the merge and runs it as a render job, which keeps running if the page closes.</param>
@@ -33,7 +33,8 @@ public sealed class MergePageViewModel : PageViewModel
         Plan = new PlanReadout(time ?? TimeProvider.System);
         MoveUpCommand = new RelayCommand(() => MoveSelected(-1), () => CanMove(-1));
         MoveDownCommand = new RelayCommand(() => MoveSelected(1), () => CanMove(1));
-        SaveCommand = new RelayCommand(Save);
+        SaveCommand = new RelayCommand(Save, () => Plan.IsReady && Job is not { IsFinished: false });
+        Plan.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(PlanReadout.State)) SaveCommand.RaiseCanExecuteChanged(); };
         BackCommand = new AsyncCommand(_ => back(), context: "Back to library");
     }
 
@@ -58,6 +59,7 @@ public sealed class MergePageViewModel : PageViewModel
 
     public string TotalDurationText => ScrubTimeline.FormatTimestamp(Sources.Aggregate(TimeSpan.Zero, (total, source) => total + source.Video.Duration));
 
+    /// <summary>The new video's title; empty lets the service name it.</summary>
     public string OutputTitle { get => _outputTitle; set => SetProperty(ref _outputTitle, value); }
 
     /// <summary>Whether the merge is lossless or which clips it re-encodes, refreshed after reordering pauses.</summary>
@@ -72,7 +74,8 @@ public sealed class MergePageViewModel : PageViewModel
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
 
-    /// <summary>Queues a render job for the current order; another edit may already be running or queued.</summary>
+    /// <summary>Queues a render job for the planned order. Disabled while the plan is not ready, and while this page's
+    /// merge is queued or running, so pressing twice cannot queue the same merge twice.</summary>
     public RelayCommand SaveCommand { get; }
     public AsyncCommand BackCommand { get; }
 
@@ -109,7 +112,15 @@ public sealed class MergePageViewModel : PageViewModel
     {
         // Captured now: the job may start later, and runs on the thread pool.
         var (order, title) = (Sources.Select(source => source.Video).ToArray(), OutputTitle);
-        Job = ClipEditJob.Enqueue(_edits, $"Merge {order.Length} videos",
+        Job = ClipEditJob.Enqueue(_edits, $"Merge {order.Length} videos", order.Select(video => video.Id).ToArray(),
             (editing, progress, token) => editing.MergeAsync(order, title, progress, token));
+        _ = UpdateSaveWhenDoneAsync(Job);
+    }
+
+    private async Task UpdateSaveWhenDoneAsync(JobViewModel job)
+    {
+        SaveCommand.RaiseCanExecuteChanged();
+        await job.Completion;
+        SaveCommand.RaiseCanExecuteChanged();
     }
 }

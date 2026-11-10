@@ -12,13 +12,15 @@ public sealed record ClipEdits(IClipEditingService Service, JobQueue Jobs, Func<
 /// final summary and its outputs are published to the library.</summary>
 public static class ClipEditJob
 {
+    /// <param name="sources">The videos the edit reads; they are held (not saved over) while the job is active.</param>
     /// <param name="edit">Runs the edit on the thread pool; captures its inputs before it is queued.</param>
     /// <remarks>The outputs are published even when the job was cancelled after the service committed, because the new
     /// files already exist; a publishing failure becomes a warning.</remarks>
-    public static JobViewModel Enqueue(ClipEdits edits, string title,
+    public static JobViewModel Enqueue(ClipEdits edits, string title, IReadOnlyCollection<Guid> sources,
         Func<IClipEditingService, IProgress<ClipEditProgress>, CancellationToken, Task<IReadOnlyList<LibraryVideo>>> edit) =>
         edits.Jobs.Enqueue(title, JobLane.Render,
-            (progress, cancellationToken) => RunAsync((stages, token) => edit(edits.Service, stages, token), edits.Publish, progress, cancellationToken));
+            (progress, cancellationToken) => RunAsync((stages, token) => edit(edits.Service, stages, token), edits.Publish, progress, cancellationToken),
+            sources);
 
     private static async Task<JobOutcome> RunAsync(Func<IProgress<ClipEditProgress>, CancellationToken, Task<IReadOnlyList<LibraryVideo>>> edit,
         Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, IProgress<JobProgress> progress, CancellationToken cancellationToken)

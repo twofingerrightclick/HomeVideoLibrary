@@ -52,7 +52,7 @@
     ToolTip.Tip="Cut at the exact frames, re-encoding a fraction of a second at each cut. Off: cuts snap to keyframes."/>
    <TextBlock Classes="meta" Text="Frame-accurate cuts" VerticalAlignment="Center"/>
   </StackPanel>
-  <TextBlock Text="{Binding TrimPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding TrimPlan.IsPending}"/>
+  <TextBlock Text="{Binding TrimPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding TrimPlan.IsPlanning}"/>
   <StackPanel Orientation="Horizontal" Spacing="6">
    <c:PlasticButton Classes="primary" Content="{Binding TrimPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Scissors}" MinWidth="110"
     Command="{Binding TrimCommand}" ToolTip.Tip="Save the kept range as a new video"/>
@@ -70,7 +70,7 @@
   <StackPanel Orientation="Horizontal" Spacing="10">
    <c:LcdCounter Classes="small" Hours="Always" Value="{Binding SplitAt}" Caption="SPLIT"/>
   </StackPanel>
-  <TextBlock Text="{Binding SplitPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding SplitPlan.IsPending}"/>
+  <TextBlock Text="{Binding SplitPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding SplitPlan.IsPlanning}"/>
   <StackPanel Orientation="Horizontal" Spacing="6">
    <c:PlasticButton Content="{Binding SplitPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Slice}" MinWidth="110"
     Command="{Binding SplitCommand}" ToolTip.Tip="Save both parts as new videos"/>
@@ -85,9 +85,9 @@
   </StackPanel>
 
   <c:SectionHeader Title="NEW VIDEO" Margin="0,8,0,0"/>
-  <TextBox Text="{Binding OutputTitle}" Watermark="Title for the new clips" AutomationProperties.Name="New video title"/>
-  <TextBlock Classes="legend error" Text="{Binding UnsavedDetailsHint}"
-   IsVisible="{Binding UnsavedDetailsHint, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  <TextBox Text="{Binding OutputTitle}" Watermark="{Binding TitleWatermark}" AutomationProperties.Name="New video title"/>
+  <TextBlock Classes="legend error" Text="{Binding EditBlocker}"
+   IsVisible="{Binding EditBlocker, Converter={x:Static ObjectConverters.IsNotNull}}"/>
   <TextBlock Classes="meta" Text="Every save makes new videos in the background; the original stays as it is." TextWrapping="Wrap"
    IsVisible="{Binding Job, Converter={x:Static ObjectConverters.IsNull}}"/>
   <ContentControl Content="{Binding Job}">

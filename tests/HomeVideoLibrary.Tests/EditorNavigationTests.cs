@@ -83,10 +83,12 @@ public sealed class EditorNavigationTests : IDisposable
         var page = Assert.IsType<VideoPageViewModel>(viewModel.Page);
         Assert.Equal((int)InspectorTab.Edit, page.SelectedTab);
 
-        page.Edit.InText = "1";
-        page.Edit.OutText = "5";
-        page.Edit.TrimCommand.Execute(null);
-        var job = Assert.IsType<JobViewModel>(page.Edit.Job);
+        var edit = page.Edit!;
+        edit.InText = "1";
+        edit.OutText = "5";
+        await edit.TrimPlan.Completion;
+        edit.TrimCommand.Execute(null);
+        var job = Assert.IsType<JobViewModel>(edit.Job);
         Assert.True(await viewModel.NavigateAsync(() => null)); // The trim keeps running in the activity drawer.
         Assert.True(job.IsRunning);
 
@@ -111,6 +113,7 @@ public sealed class EditorNavigationTests : IDisposable
         await viewModel.MergeSelectedCommand.ExecuteAsync();
         var merge = Assert.IsType<MergePageViewModel>(viewModel.Page);
         Assert.Equal(2, merge.Sources.Count);
+        await merge.Plan.Completion;
         merge.SaveCommand.Execute(null);
         var job = merge.Job!;
         Assert.True(await viewModel.NavigateAsync(() => null)); // The merge keeps running in the activity drawer.

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Desktop.ViewModels.Editing;
@@ -6,42 +7,36 @@ namespace HomeVideoLibrary.Desktop.ViewModels.Editing;
 /// render job. Times are absolute Matroska timestamps, which equal the displayed playback time for imported videos.</summary>
 public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
 {
-    public const string UnsavedDetailsMessage = "Save or revert your changes first";
-
     private readonly ClipEdits _edits;
-    private readonly Func<TimeSpan> _playhead;
-    private readonly Func<bool> _hasUnsavedDetails;
+    private readonly IEditHost _host;
     private TimeSpan? _in, _out;
     // Text the user committed that is not a time; kept so it can be corrected, and cleared by any valid input.
     private string? _rejectedIn, _rejectedOut;
     private TimeSpan _splitAt;
     private bool _isPrecise = true;
-    private string _outputTitle;
-    private JobViewModel? _job;
+    private string _outputTitle = "";
+    private JobViewModel? _job, _trimJob, _splitJob;
 
-    /// <param name="playhead">The player's current position, read when I/O is pressed and when the page reports a move.</param>
     /// <param name="edits">Plans the edits and runs them as render jobs, which keep running if the page closes.</param>
-    /// <param name="hasUnsavedDetails">Whether the page has unsaved metadata edits. New clips copy the file's saved
-    /// metadata, so edits are blocked until they are saved or reverted. Call <see cref="DetailsDirtyChanged"/> when it changes.</param>
+    /// <param name="host">The page: the video, the playhead, whether this tab shows and what blocks an edit.</param>
     /// <param name="time">Clock for the plan delay; tests pass a fake.</param>
-    public TrimPanelViewModel(LibraryVideo source, ClipEdits edits, Func<TimeSpan> playhead, Func<bool> hasUnsavedDetails,
-        TimeProvider? time = null)
+    public TrimPanelViewModel(ClipEdits edits, IEditHost host, TimeProvider? time = null)
     {
-        Source = source; _edits = edits; _playhead = playhead; _hasUnsavedDetails = hasUnsavedDetails;
-        _outputTitle = source.Title.Length > 0 ? source.Title : source.DisplayName;
+        _edits = edits; _host = host;
         TrimPlan = new PlanReadout(time ?? TimeProvider.System);
         SplitPlan = new PlanReadout(time ?? TimeProvider.System);
-        SetInCommand = new RelayCommand(() => SetInPoint(_playhead(), null));
-        SetOutCommand = new RelayCommand(() => SetOutPoint(_playhead(), null));
+        SetInCommand = new RelayCommand(SetInAtPlayhead);
+        SetOutCommand = new RelayCommand(SetOutAtPlayhead);
         ClearCommand = new RelayCommand(Clear, () => HasRange || _rejectedIn is not null || _rejectedOut is not null);
         TrimCommand = new RelayCommand(Trim, () => CanTrim);
         SplitCommand = new RelayCommand(Split, () => CanSplit);
-        _splitAt = playhead();
+        TrimPlan.PropertyChanged += PlanChanged;
+        SplitPlan.PropertyChanged += PlanChanged;
+        host.PropertyChanged += HostChanged;
+        if (host.IsEditShown && host.IsPlayheadResting) _splitAt = host.Playhead;
         RefreshTrimPlan();
         RefreshSplitPlan();
     }
-
-    public LibraryVideo Source { get; }
 
     /// <summary>Where the kept range starts; null keeps from the beginning.</summary>
     public TimeSpan? In
@@ -78,10 +73,10 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
 
     /// <summary>The range the trim keeps, for the scrub bar; null until an in or out point is set.</summary>
     public TimeSpan? RangeStart => HasRange ? In ?? TimeSpan.Zero : null;
-    public TimeSpan? RangeEnd => HasRange ? Out ?? Source.Duration : null;
+    public TimeSpan? RangeEnd => HasRange ? Out ?? _host.Source.Duration : null;
 
-    public string? RangeError => RangeStart is { } start && RangeEnd is { } end && end <= start
-        ? "The out point must come after the in point." : null;
+    /// <summary>Why the range cannot be kept (<see cref="ClipRange"/>'s rule), or null.</summary>
+    public string? RangeError => RangeStart is { } start && RangeEnd is { } end ? ClipRange.Problem(start, end, _host.Source.Duration) : null;
 
     /// <summary>Frame-accurate cuts (re-encoding a fraction of a second at each cut) instead of keyframe-snapped copies.</summary>
     public bool IsPrecise
@@ -90,18 +85,17 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         set { if (SetProperty(ref _isPrecise, value)) RefreshTrimPlan(); }
     }
 
+    /// <summary>The new videos' title; empty lets the editing service name them after the source.</summary>
     public string OutputTitle { get => _outputTitle; set => SetProperty(ref _outputTitle, value); }
 
-    /// <summary>Where a split would start the second part: the playhead when the page last reported it.</summary>
+    /// <summary>The source's current title, shown while <see cref="OutputTitle"/> is empty.</summary>
+    public string TitleWatermark => _host.Source.Title.Length > 0 ? _host.Source.Title : _host.Source.DisplayName;
+
+    /// <summary>Where a split would start the second part: the playhead when it last rested with this tab shown.</summary>
     public TimeSpan SplitAt
     {
         get => _splitAt;
-        private set
-        {
-            if (!SetProperty(ref _splitAt, value)) return;
-            RefreshSplitPlan();
-            UpdateCommands();
-        }
+        private set { if (SetProperty(ref _splitAt, value)) RefreshSplitPlan(); }
     }
 
     /// <summary>What the trim will really keep, whether it copies or renders, and why; refreshed after input pauses.</summary>
@@ -112,34 +106,55 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
     /// <summary>The latest edit started here, shown with its progress, CANCEL and OPEN; null until one starts.</summary>
     public JobViewModel? Job { get => _job; private set => SetProperty(ref _job, value); }
 
-    /// <summary>Why saving is blocked by the page's metadata edits, or null.</summary>
-    public string? UnsavedDetailsHint => _hasUnsavedDetails() ? UnsavedDetailsMessage : null;
+    /// <summary>Why edits are blocked by the page (for example unsaved details), or null.</summary>
+    public string? EditBlocker => _host.EditBlocker;
 
     public RelayCommand SetInCommand { get; }
     public RelayCommand SetOutCommand { get; }
     public RelayCommand ClearCommand { get; }
-    /// <summary>Queues a render job for the kept range; another edit may already be running or queued.</summary>
+
+    /// <summary>Queues a render job for the planned range; edits from other pages may already be queued.</summary>
     public RelayCommand TrimCommand { get; }
     public RelayCommand SplitCommand { get; }
 
-    private bool CanTrim => !_hasUnsavedDetails() && HasRange && RangeError is null && _rejectedIn is null && _rejectedOut is null;
-    private bool CanSplit => !_hasUnsavedDetails() && IsInside(SplitAt);
+    // A ready plan describes exactly the current inputs. While this panel's own trim (or split) is active, pressing
+    // again would queue the same edit twice.
+    private bool CanTrim => _host.EditBlocker is null && TrimPlan.IsReady && _trimJob is not { IsFinished: false };
+    private bool CanSplit => _host.EditBlocker is null && SplitPlan.IsReady && _splitJob is not { IsFinished: false };
     private ClipCutMode Mode => IsPrecise ? ClipCutMode.Precise : ClipCutMode.Fast;
 
-    /// <summary>The page calls this when the playhead moves; the split plan follows once it rests.</summary>
-    public void PlayheadMoved() => SplitAt = _playhead();
+    public void SetInAtPlayhead() => SetInPoint(_host.Playhead, null);
 
-    /// <summary>The page calls this when its unsaved-details state changes.</summary>
-    public void DetailsDirtyChanged()
-    {
-        OnPropertyChanged(nameof(UnsavedDetailsHint));
-        UpdateCommands();
-    }
+    public void SetOutAtPlayhead() => SetOutPoint(_host.Playhead, null);
 
     public void Dispose()
     {
+        _host.PropertyChanged -= HostChanged;
         TrimPlan.Dispose();
         SplitPlan.Dispose();
+    }
+
+    private void HostChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        switch (args.PropertyName)
+        {
+            // Playhead changes arrive on every playback tick; only a resting playhead is a split point.
+            case nameof(IEditHost.Playhead) or nameof(IEditHost.IsPlayheadResting) or nameof(IEditHost.IsEditShown):
+                TakeSplitPoint();
+                break;
+            case nameof(IEditHost.EditBlocker):
+                OnPropertyChanged(nameof(EditBlocker));
+                UpdateCommands();
+                break;
+            case nameof(IEditHost.Source):
+                OnPropertyChanged(nameof(TitleWatermark));
+                break;
+        }
+    }
+
+    private void TakeSplitPoint()
+    {
+        if (_host.IsEditShown && _host.IsPlayheadResting) SplitAt = _host.Playhead;
     }
 
     private void Clear()
@@ -175,40 +190,54 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(HasRange)); OnPropertyChanged(nameof(RangeStart)); OnPropertyChanged(nameof(RangeEnd));
         OnPropertyChanged(nameof(RangeError));
         RefreshTrimPlan();
-        UpdateCommands();
     }
 
     private void RefreshTrimPlan()
     {
-        if (RangeStart is not { } start || RangeEnd is not { } end) { TrimPlan.Show("Set an in or out point to keep part of this video."); return; }
-        if (RangeError is not null) { TrimPlan.Show(""); return; }
-        var mode = Mode;
-        TrimPlan.Request(async token => PlanDescription.Trim(await _edits.Service.PlanTrimAsync(Source, start, end, mode, token)));
+        if (RangeStart is not { } start || RangeEnd is not { } end) { TrimPlan.Clear("Set an in or out point to keep part of this video."); return; }
+        if (RangeError is { } problem) { TrimPlan.Clear(problem); return; }
+        var (source, mode) = (_host.Source, Mode);
+        TrimPlan.Request(async token => PlanDescription.Trim(await _edits.Service.PlanTrimAsync(source, start, end, mode, token)));
     }
 
     private void RefreshSplitPlan()
     {
-        var position = SplitAt;
-        if (!IsInside(position)) { SplitPlan.Show("Move the playhead to where the second part should start."); return; }
-        SplitPlan.Request(async token => PlanDescription.Split(await _edits.Service.PlanSplitAsync(Source, position, token)));
+        var (source, position) = (_host.Source, SplitAt);
+        if (!IsInside(position)) { SplitPlan.Clear("Pause where the second part should start."); return; }
+        if (!_host.IsEditShown) return; // Planned when the tab shows (see TakeSplitPoint).
+        SplitPlan.Request(async token => PlanDescription.Split(await _edits.Service.PlanSplitAsync(source, position, token)));
     }
 
     private void Trim()
     {
-        // Captured now: the job may start later, and runs on the thread pool.
-        var (start, end, title, mode) = (RangeStart!.Value, RangeEnd!.Value, OutputTitle, Mode);
-        Job = ClipEditJob.Enqueue(_edits, $"Trim {Source.Label}",
-            (editing, progress, token) => editing.TrimAsync(Source, start, end, title, progress, token, mode));
+        // Captured now, from the library's current record: the job may start later, and runs on the thread pool.
+        var (source, start, end, title, mode) = (_host.Source, RangeStart!.Value, RangeEnd!.Value, OutputTitle, Mode);
+        Job = _trimJob = ClipEditJob.Enqueue(_edits, $"Trim {source.Label}", [source.Id],
+            (editing, progress, token) => editing.TrimAsync(source, start, end, title, progress, token, mode));
+        _ = UpdateCommandsUntilDoneAsync(_trimJob);
     }
 
     private void Split()
     {
-        var (position, title) = (SplitAt, OutputTitle);
-        Job = ClipEditJob.Enqueue(_edits, $"Split {Source.Label}",
-            (editing, progress, token) => editing.SplitAsync(Source, position, title, progress, token));
+        var (source, position, title) = (_host.Source, SplitAt, OutputTitle);
+        Job = _splitJob = ClipEditJob.Enqueue(_edits, $"Split {source.Label}", [source.Id],
+            (editing, progress, token) => editing.SplitAsync(source, position, title, progress, token));
+        _ = UpdateCommandsUntilDoneAsync(_splitJob);
     }
 
-    private bool IsInside(TimeSpan position) => position > TimeSpan.Zero && position < Source.Duration;
+    private async Task UpdateCommandsUntilDoneAsync(JobViewModel job)
+    {
+        UpdateCommands();
+        await job.Completion;
+        UpdateCommands();
+    }
+
+    private bool IsInside(TimeSpan position) => position > TimeSpan.Zero && position < _host.Source.Duration;
+
+    private void PlanChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(PlanReadout.State)) UpdateCommands();
+    }
 
     private void UpdateCommands()
     {

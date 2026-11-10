@@ -67,6 +67,10 @@ public sealed class JobQueue : ViewModelBase
     public int ActiveCount => Jobs.Count(job => !job.IsFinished);
     public bool HasActive => ActiveCount > 0;
 
+    /// <summary>Whether a queued or running job reads <paramref name="videoId"/>. Changes are raised as
+    /// <see cref="ActiveCount"/>.</summary>
+    public bool Holds(Guid videoId) => Jobs.Any(job => !job.IsFinished && job.Sources.Contains(videoId));
+
     /// <summary>Failed jobs still in the list; they stay until dismissed or cleared.</summary>
     public int FailedCount => Jobs.Count(job => job.HasFailed);
     public bool HasFailures => FailedCount > 0;
@@ -88,9 +92,10 @@ public sealed class JobQueue : ViewModelBase
     internal TimeProvider Time { get; }
 
     /// <summary>Adds a job to the end of <paramref name="lane"/>; it starts when the lane is free.</summary>
-    public JobViewModel Enqueue(string title, JobLane lane, JobWork work)
+    /// <param name="sources">The library videos the job reads, which must not be rewritten while it is active.</param>
+    public JobViewModel Enqueue(string title, JobLane lane, JobWork work, IReadOnlyCollection<Guid>? sources = null)
     {
-        var job = new JobViewModel(title, lane, work, this) { Order = ++_sequence };
+        var job = new JobViewModel(title, lane, work, this) { Order = ++_sequence, Sources = sources ?? [] };
         var state = _lanes[lane];
         state.Waiting.Add(job);
         Place(job);
@@ -261,6 +266,9 @@ public sealed class JobViewModel : ViewModelBase
 
     public string Title { get; }
     public JobLane Lane { get; }
+
+    /// <summary>The library videos the job reads; see <see cref="JobQueue.Holds"/>.</summary>
+    public IReadOnlyCollection<Guid> Sources { get; internal init; } = [];
     public JobState State => _state;
     public bool IsQueued => State == JobState.Queued;
     public bool IsRunning => State == JobState.Running;

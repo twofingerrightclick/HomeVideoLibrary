@@ -47,7 +47,7 @@
     </Border>
 
     <c:SectionHeader Title="PLAN"/>
-    <TextBlock Text="{Binding Plan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding Plan.IsPending}"/>
+    <TextBlock Text="{Binding Plan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding Plan.IsPlanning}"/>
 
     <TextBlock Classes="legend" Text="NEW VIDEO TITLE"/>
     <TextBox Text="{Binding OutputTitle}" Watermark="Merged home video"

@@ -57,7 +57,7 @@ public sealed class EditingViewTests
     [AvaloniaFact]
     public void Enter_commits_a_typed_in_point()
     {
-        var panel = new TrimPanelViewModel(Video("Source", TimeSpan.FromMinutes(10)), NoClipEditing.Edits(), () => TimeSpan.Zero, () => false);
+        var panel = VideoPageFixture.Page(duration: TimeSpan.FromMinutes(10)).Edit!;
         var window = new Window { Content = new EditTab { DataContext = panel }, Width = 340, Height = 900 };
         window.Show();
         var field = window.GetVisualDescendants().OfType<TextBox>().First(box => box.Name == "InField");

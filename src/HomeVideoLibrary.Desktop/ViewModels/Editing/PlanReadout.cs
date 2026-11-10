@@ -1,35 +1,58 @@
 namespace HomeVideoLibrary.Desktop.ViewModels.Editing;
 
+/// <summary>Where a plan readout stands. Only <see cref="Ready"/> lets an edit start.</summary>
+public abstract record PlanState
+{
+    private PlanState() { }
+
+    /// <summary>Nothing to plan yet; <paramref name="Hint"/> says what the user should do (empty for nothing).</summary>
+    public sealed record Idle(string Hint) : PlanState;
+
+    /// <summary>Waiting for input to settle, or probing the file.</summary>
+    public sealed record Planning : PlanState;
+
+    public sealed record Failed(string Message) : PlanState;
+
+    public sealed record Ready(PlanDescription Plan) : PlanState;
+}
+
 /// <summary>A plan shown before an edit runs: its summary, its explanation and the edit button's label. A request
 /// waits <see cref="Delay"/> and cancels any request still waiting or planning, so a burst of input (typing,
-/// reordering, repeated I/O presses) starts one probe. A failed plan shows its message.</summary>
+/// reordering, repeated I/O presses) starts one probe, and an older plan can never replace a newer one.</summary>
 public sealed class PlanReadout(TimeProvider time) : ViewModelBase, IDisposable
 {
     public static readonly TimeSpan Delay = TimeSpan.FromMilliseconds(250);
 
     private CancellationTokenSource? _pending;
-    private PlanDescription _current = PlanDescription.Message("");
+    private PlanState _state = new PlanState.Idle("");
 
-    public PlanDescription Current
+    public PlanState State
     {
-        get => _current;
+        get => _state;
         private set
         {
-            if (!SetProperty(ref _current, value)) return;
-            OnPropertyChanged(nameof(Summary));
-            OnPropertyChanged(nameof(Details));
-            OnPropertyChanged(nameof(ActionLabel));
+            if (!SetProperty(ref _state, value)) return;
+            foreach (var name in new[] { nameof(IsReady), nameof(IsPlanning), nameof(Summary), nameof(Details), nameof(ActionLabel) })
+                OnPropertyChanged(name);
         }
     }
 
-    public string Summary => Current.Summary;
-    public string Details => Current.Details;
+    public bool IsReady => State is PlanState.Ready;
+    public bool IsPlanning => State is PlanState.Planning;
 
-    /// <summary>The edit button's label: RENDER when the edit really re-encodes, otherwise SAVE.</summary>
-    public string ActionLabel => Current.Renders ? "RENDER" : "SAVE";
+    public string Summary => State switch
+    {
+        PlanState.Ready ready => ready.Plan.Summary,
+        PlanState.Failed failed => failed.Message,
+        PlanState.Idle idle => idle.Hint,
+        _ => "Planning…",
+    };
 
-    /// <summary>Whether <see cref="Summary"/> is about to be replaced (it describes earlier input).</summary>
-    public bool IsPending => _pending is not null;
+    /// <summary>The info popover: the plan's explanation, or the same text as <see cref="Summary"/> without one.</summary>
+    public string Details => State is PlanState.Ready ready ? ready.Plan.Details : Summary;
+
+    /// <summary>The edit button's label: RENDER when a ready plan re-encodes the picture, otherwise SAVE.</summary>
+    public string ActionLabel => State is PlanState.Ready { Plan.RendersVideo: true } ? "RENDER" : "SAVE";
 
     /// <summary>Completes when the latest request has shown its result or been superseded.</summary>
     public Task Completion { get; private set; } = Task.CompletedTask;
@@ -40,14 +63,19 @@ public sealed class PlanReadout(TimeProvider time) : ViewModelBase, IDisposable
     /// <summary>Plans without waiting, for the first plan of a page.</summary>
     public void RequestNow(Func<CancellationToken, Task<PlanDescription>> plan) => Completion = RefreshAsync(plan, TimeSpan.Zero);
 
-    /// <summary>Drops any pending plan and shows <paramref name="message"/> instead (empty when there is nothing to plan).</summary>
-    public void Show(string message)
+    /// <summary>Drops any pending plan: there is nothing to plan, and <paramref name="hint"/> says why.</summary>
+    public void Clear(string hint)
     {
         _pending?.Cancel();
-        Current = PlanDescription.Message(message);
+        _pending = null;
+        State = new PlanState.Idle(hint);
     }
 
-    public void Dispose() => _pending?.Cancel();
+    public void Dispose()
+    {
+        _pending?.Cancel();
+        _pending = null;
+    }
 
     private async Task RefreshAsync(Func<CancellationToken, Task<PlanDescription>> plan, TimeSpan delay)
     {
@@ -55,24 +83,20 @@ public sealed class PlanReadout(TimeProvider time) : ViewModelBase, IDisposable
         using var cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
         _pending = cancellation;
-        OnPropertyChanged(nameof(IsPending));
+        State = new PlanState.Planning();
         try
         {
             if (delay > TimeSpan.Zero) await Task.Delay(delay, time, token);
-            PlanDescription description;
-            try { description = await Task.Run(() => plan(token), token); }
-            catch (Exception exception) when (!token.IsCancellationRequested) { description = PlanDescription.Message(exception.Message); }
+            PlanState result;
+            try { result = new PlanState.Ready(await Task.Run(() => plan(token), token)); }
+            catch (Exception exception) when (!token.IsCancellationRequested) { result = new PlanState.Failed(exception.Message); }
             token.ThrowIfCancellationRequested();
-            Current = description;
+            State = result;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         finally
         {
-            if (_pending == cancellation)
-            {
-                _pending = null;
-                OnPropertyChanged(nameof(IsPending));
-            }
+            if (_pending == cancellation) _pending = null;
         }
     }
 }
