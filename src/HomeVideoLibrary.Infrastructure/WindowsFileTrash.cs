@@ -27,12 +27,8 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
         if (WindowsTrashRules.VolumeRoot(FinalPath(full)) is not { } root || GetDriveType(root) != DriveFixed) return TrashResult.Unavailable;
         if (!WindowsTrashRules.BinAccepts(new FileInfo(full).Length, ReadPolicy(root))) return TrashResult.Unavailable;
         var owner = ownerWindow?.Invoke() ?? 0;
-        (int Result, bool Aborted, bool? Recycled) outcome = default;
         // Shell operations and the warning dialog they may show need a single-threaded apartment with a message loop.
-        var thread = new Thread(() => outcome = Recycle(full, owner));
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
+        var outcome = DedicatedThread.Run(ApartmentState.STA, () => Recycle(full, owner));
         return WindowsTrashRules.Map(outcome.Result, outcome.Aborted, outcome.Recycled, Path.GetFileName(full));
     }
 

@@ -235,6 +235,15 @@ public sealed class FileTrashTests : IDisposable
         Assert.Throws<IOException>(() => WindowsTrashRules.Map(unchecked((int)0x80070005), false, null, "a.mkv"));
     }
 
+    [Fact]
+    public void WorkOnADedicatedThreadReturnsItsResultAndThrowsOnTheCaller()
+    {
+        Assert.Equal(42, DedicatedThread.Run(ApartmentState.Unknown, () => 42));
+        var exception = Assert.Throws<InvalidCastException>(() =>
+            DedicatedThread.Run<int>(ApartmentState.Unknown, () => throw new InvalidCastException("from the shell")));
+        Assert.Equal("from the shell", exception.Message);
+    }
+
     private static string CreateFile(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
