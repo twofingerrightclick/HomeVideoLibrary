@@ -154,12 +154,16 @@ public sealed class MainWindowViewModel : ViewModelBase
             if (previous is not null) previous.PropertyChanged -= PagePropertyChanged;
             if (value is not null) value.PropertyChanged += PagePropertyChanged;
             OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown)); OnPropertyChanged(nameof(IsChromeShown));
+            OnPropertyChanged(nameof(ShowsShellBackKey));
             UpdateCommands();
         }
     }
 
     /// <summary>Whether the shell's own status bar shows; hidden while a page is immersive (fullscreen video).</summary>
     public bool IsChromeShown => Page is not { IsImmersive: true };
+
+    /// <summary>Whether the shell shows its own ◀ LIBRARY key: for pages without one.</summary>
+    public bool ShowsShellBackKey => Page is { HasBackKey: false };
 
     private void PagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {

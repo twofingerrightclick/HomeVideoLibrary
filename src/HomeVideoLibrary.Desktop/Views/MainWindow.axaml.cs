@@ -66,6 +66,7 @@ public sealed partial class MainWindow : Window
             .Map(Key.Space, KeyModifiers.None, OnShelf(() => FocusedTape()?.ToggleSelectionCommand))
             .Map(Key.Space, KeyModifiers.Shift, OnShelf(() => FocusedTape()?.SelectRangeCommand))
             .Map(Key.Escape, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.ClearCommand))
+            .Map(Key.Escape, KeyModifiers.None, () => ViewModel.ShowsShellBackKey ? ViewModel.BackCommand : null)
             .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
             .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand));
         router

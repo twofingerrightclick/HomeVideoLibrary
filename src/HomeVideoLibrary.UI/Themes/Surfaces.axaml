@@ -51,6 +51,15 @@
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
   </Style>
 
+  <!-- Every preview or tooltip that follows the pointer opens above its target (the pointer is on the target), and
+       flips below only when the screen has no room above. Hosts set only HorizontalOffset to track the pointer. -->
+  <Style Selector="Popup.pointer-preview">
+    <Setter Property="Placement" Value="Top"/>
+    <Setter Property="VerticalOffset" Value="-6"/>
+    <Setter Property="PlacementConstraintAdjustment" Value="FlipY, SlideX"/>
+    <Setter Property="IsLightDismissEnabled" Value="False"/>
+  </Style>
+
   <!-- Readable secondary metadata (dates, durations, counts). -->
   <Style Selector="TextBlock.meta">
     <Setter Property="FontSize" Value="12"/>

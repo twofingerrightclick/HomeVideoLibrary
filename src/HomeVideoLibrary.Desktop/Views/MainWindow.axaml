@@ -4,6 +4,7 @@
  x:Class="HomeVideoLibrary.Desktop.Views.MainWindow" x:DataType="vm:MainWindowViewModel" Title="{Binding Title}"
  Width="1440" Height="900" MinWidth="900" MinHeight="600">
  <Window.Resources>
+  <x:Double x:Key="ShelfStackWidth">760</x:Double>
   <!-- An album in an "Add to album" menu: picking it adds the selected videos. -->
   <ControlTheme x:Key="AddToAlbumItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}" x:DataType="vm:AlbumRowViewModel">
    <Setter Property="Header" Value="{Binding Name}"/>
@@ -148,6 +149,9 @@
     </Border>
    </StackPanel>
 
+   <c:PlasticButton Classes="toolbar" Content="◀ LIBRARY" Command="{Binding BackCommand}" IsVisible="{Binding ShowsShellBackKey}"
+    HorizontalAlignment="Left" Margin="20,12,20,0" ToolTip.Tip="Back to the library (Esc)"/>
+
    <!-- Shelf: one virtualized column of spines with month dividers and a sticky month pill. -->
    <Grid Grid.Row="2" IsVisible="{Binding IsShelfShown}" Margin="20,12,0,0">
     <ListBox x:Name="TapeList" Classes="shelf" ItemsSource="{Binding Shelf.Tapes}" SelectionMode="Single"
@@ -166,9 +170,9 @@
      </ListBox.ContextMenu>
      <ListBox.ItemTemplate>
       <DataTemplate x:DataType="vm:TapeViewModel">
-       <!-- One spine per row, stretched to the shelf but never wider than 1100 px, left-aligned. -->
-       <Grid Margin="4,0,8,6">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="1100"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <!-- One spine per row in a centered stack: as wide as the shelf allows up to a comfortable size; the spine
+            itself keeps real VHS proportions, so its height follows. -->
+       <Grid Margin="0,0,0,6" MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Center">
         <StackPanel Spacing="2">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" IsVisible="{Binding HasMonthHeader}" Height="22" Margin="0,8,0,0">
          <TextBlock Classes="legend" Text="{Binding MonthHeader}" VerticalAlignment="Center"/>
@@ -182,10 +186,13 @@
       </DataTemplate>
      </ListBox.ItemTemplate>
     </ListBox>
-    <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,8,0,0" IsHitTestVisible="False"
-     IsVisible="{Binding !Shelf.IsEmpty}">
-     <TextBlock Text="{Binding Shelf.StickyMonth}"/>
-    </Border>
+    <!-- Pinned over the stack's month dividers, aligned with the centered stack. -->
+    <Grid MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="0,8,12,0"
+     IsHitTestVisible="False" IsVisible="{Binding !Shelf.IsEmpty}">
+     <Border Classes="pill" HorizontalAlignment="Left" Margin="-6,0,0,0">
+      <TextBlock Text="{Binding Shelf.StickyMonth}"/>
+     </Border>
+    </Grid>
     <StackPanel IsVisible="{Binding Shelf.IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440" Spacing="16" Margin="24">
      <TextBlock Classes="title" Text="{Binding EmptyTitle}" TextAlignment="Center" TextWrapping="Wrap"/>
      <TextBlock Classes="meta" Text="{Binding EmptyMessage}" TextWrapping="Wrap" TextAlignment="Center"/>
