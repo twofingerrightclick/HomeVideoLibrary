@@ -32,22 +32,29 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
         return WindowsTrashRules.Map(outcome.Result, outcome.ItemResult, outcome.Aborted, outcome.Recycled, Path.GetFileName(full));
     }
 
+    /// <remarks>Releases every COM object it was handed before returning, on this thread: the apartment ends with the
+    /// thread, and a finalizer releasing them later would call into a dead apartment.</remarks>
     private static (int Result, int ItemResult, bool Aborted, bool? Recycled) Recycle(string path, nint owner)
     {
         var operation = (IFileOperation)Activator.CreateInstance(Type.GetTypeFromCLSID(FileOperationClass, throwOnError: true)!)!;
+        IShellItem? item = null;
         try
         {
-            var result = CreateItem(path, 0, typeof(IShellItem).GUID, out var item);
+            var result = CreateItem(path, 0, typeof(IShellItem).GUID, out item);
             if (result < 0) return (result, 0, false, null);
             var sink = new DeleteSink();
             operation.SetOperationFlags(AllowUndo | NoConfirmation | Silent | NoErrorUi | WantNukeWarning | RecycleOnDelete);
             if (owner != 0) operation.SetOwnerWindow(owner);
-            operation.DeleteItem(item, sink);
+            operation.DeleteItem(item!, sink);
             result = operation.PerformOperations();
             operation.GetAnyOperationsAborted(out var aborted);
             return (result, sink.ItemResult, aborted, sink.Recycled);
         }
-        finally { Marshal.ReleaseComObject(operation); }
+        finally
+        {
+            if (item is not null) Marshal.ReleaseComObject(item);
+            Marshal.ReleaseComObject(operation);
+        }
     }
 
     /// <summary>The path of the file itself, with junctions and symlinks resolved, as <c>\\?\C:\...</c> or
@@ -96,7 +103,7 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
     private static extern uint GetFinalPathNameByHandle(SafeFileHandle file, char[] path, uint length, uint flags);
 
     [DllImport("shell32.dll", EntryPoint = "SHCreateItemFromParsingName", CharSet = CharSet.Unicode)]
-    private static extern int CreateItem(string path, nint bindContext, in Guid interfaceId, out IShellItem item);
+    private static extern int CreateItem(string path, nint bindContext, in Guid interfaceId, out IShellItem? item);
 
     /// <summary>Records what happened to the deleted item: PostDeleteItem names the recycled item, or none when the file
     /// was deleted outright; or it reports why the item failed, which PerformOperations need not.</summary>
@@ -108,10 +115,18 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
         /// <summary>The item's failure; 0 when it did not fail or was never reached.</summary>
         public int ItemResult { get; private set; }
 
+        public int PreDeleteItem(uint flags, IShellItem item)
+        {
+            Marshal.ReleaseComObject(item);
+            return 0;
+        }
+
         public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newlyCreated)
         {
             if (result >= 0) Recycled = newlyCreated is not null;
             else ItemResult = result;
+            Marshal.ReleaseComObject(item);
+            if (newlyCreated is not null) Marshal.ReleaseComObject(newlyCreated);
             return 0;
         }
 
@@ -123,7 +138,6 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
         public int PostMoveItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? created) => 0;
         public int PreCopyItem(uint flags, IShellItem item, IShellItem destination, string? newName) => 0;
         public int PostCopyItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? created) => 0;
-        public int PreDeleteItem(uint flags, IShellItem item) => 0;
         public int PreNewItem(uint flags, IShellItem destination, string? newName) => 0;
         public int PostNewItem(uint flags, IShellItem destination, string? newName, string? template, uint attributes, int result,
             IShellItem? created) => 0;
