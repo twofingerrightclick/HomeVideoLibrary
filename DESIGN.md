@@ -59,9 +59,15 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - Sticker stock, accent and brand mark are a stable pick per video.
   - The shell shows the running time, or MISSING / UNREADABLE (details in the tooltip).
   - A selection checkbox sits on the leading edge.
-  - Hover lifts the tape and shows a frame preview below it.
+  - Spines keep a real VHS spine's 187:25 proportions at every size, in a centered stack up to 760 px wide.
+  - Hover brings the tape slightly forward (2.5% scale, deeper shadow; no shift), lights an amber end LED and shows a frame preview above the pointer. Reduced motion (macOS setting) keeps the tape still.
 - **Settings:** a real modal window with the library folder, refresh/rebuild with a scrollable per-file error
   list, media tool health and the button-sound switch.
+
+## Pointer previews
+
+Every preview or tooltip that follows the pointer (shelf frame preview, scrub-bar tooltip) uses the library's
+`Popup.pointer-preview` style: it opens above its target and flips below only when the screen has no room.
 
 ## Native video surface
 

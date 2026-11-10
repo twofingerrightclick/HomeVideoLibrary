@@ -1,5 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:HomeVideoLibrary.UI.Controls">
   <!-- Molded surfaces as Border classes, and the printed type scale as TextBlock classes. -->
 
   <!-- Raised faceplate panel: inspector sections, cards, popovers. -->
@@ -49,6 +50,22 @@
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="LetterSpacing" Value="0.5"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+  </Style>
+
+  <!-- Every preview or tooltip that follows the pointer opens above its target (the pointer is on the target), and
+       flips below only when the screen has no room above. Hosts set only HorizontalOffset to track the pointer. -->
+  <Style Selector="Popup.pointer-preview">
+    <Setter Property="Placement" Value="Top"/>
+    <Setter Property="VerticalOffset" Value="-6"/>
+    <Setter Property="PlacementConstraintAdjustment" Value="FlipY, SlideX"/>
+    <Setter Property="IsLightDismissEnabled" Value="False"/>
+  </Style>
+
+  <!-- Reduced motion: a host adds this class to its window when the user asks for less motion; tapes then stay
+       still on hover (the LED still lights). -->
+  <Style Selector="Window.reduced-motion c|VhsSpine /template/ Border#PART_Shell">
+    <Setter Property="Transitions" Value="{x:Null}"/>
+    <Setter Property="RenderTransform" Value="{x:Null}"/>
   </Style>
 
   <!-- Readable secondary metadata (dates, durations, counts). -->

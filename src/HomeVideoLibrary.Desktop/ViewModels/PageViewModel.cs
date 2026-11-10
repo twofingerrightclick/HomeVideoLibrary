@@ -10,6 +10,10 @@ public abstract class PageViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Whether the page fills the window (for example fullscreen video); the shell hides its own chrome meanwhile.</summary>
     public bool IsImmersive { get => _isImmersive; protected set => SetProperty(ref _isImmersive, value); }
 
+    /// <summary>Whether the page's own toolbar has a key back to the library. When it hasn't, the shell shows one, so
+    /// no page is ever a dead end.</summary>
+    public virtual bool HasBackKey => false;
+
     /// <summary>Runs once after the page's view exists (so native surfaces can bind first).</summary>
     public virtual Task LoadAsync() => Task.CompletedTask;
 

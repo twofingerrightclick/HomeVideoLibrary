@@ -22,6 +22,16 @@
   <SolidColorBrush x:Key="Vcr.Brush.Spine.Purple" Color="#52407A"/>
   <SolidColorBrush x:Key="Vcr.Brush.Spine.Brown" Color="#7A5A2A"/>
 
+  <!-- The hover LED on the shell end: an amber indicator lamp, dark and recessed when off. -->
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.LedOff" Color="#2A1A0E"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Spine.LedOn" Color="#FFB347"/>
+  <BoxShadows x:Key="Vcr.Shadow.Spine.LedOff">0 1 0 0 #14FFFFFF, 0 1 1 0 #CC000000 inset</BoxShadows>
+  <BoxShadows x:Key="Vcr.Shadow.Spine.LedOn">0 0 6 2 #B3FF8F2E, 0 0 2 0 #FFFFD9A0</BoxShadows>
+
+  <!-- Hovered tape: pulled ~2.5% toward the viewer with a longer, softer shadow. -->
+  <TransformOperations x:Key="Vcr.Travel.Forward">scale(1.025)</TransformOperations>
+  <BoxShadows x:Key="Vcr.Shadow.Spine.Forward">0 10 22 0 #B3000000, 0 2 4 0 #66000000</BoxShadows>
+
   <!-- Printed sideways text on sticker bands; rotated -90deg so it reads bottom-to-top like a real spine. -->
   <ControlTheme x:Key="Vcr.Theme.SpinePrint" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
@@ -33,24 +43,29 @@
   </ControlTheme>
 
   <ControlTheme x:Key="{x:Type c:VhsSpine}" TargetType="c:VhsSpine">
-    <Setter Property="Height" Value="{DynamicResource Vcr.Size.Tape}"/>
     <Setter Property="ClipToBounds" Value="False"/>
     <Setter Property="Accent" Value="{DynamicResource Vcr.Brush.Tape.DefaultAccent}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Ink}"/>
     <Setter Property="Template">
       <ControlTemplate>
         <Panel>
+          <!-- The spine is drawn on a fixed design face with a real VHS spine's 187:25 proportions and scaled
+               uniformly, so label, sticker art and molding stay in proportion at any size. -->
+          <Viewbox Stretch="Uniform">
           <Border Name="PART_Shell"
+                  Width="{x:Static c:VhsSpine.DesignWidth}"
+                  Height="{x:Static c:VhsSpine.DesignHeight}"
                   Background="{DynamicResource Vcr.Brush.Tape.ShellFace}"
                   BorderBrush="#050505"
                   BorderThickness="1"
                   CornerRadius="6"
                   BoxShadow="{DynamicResource Vcr.Shadow.Tape}"
-                  RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+                  RenderTransformOrigin="50%,50%"
+                  RenderTransform="scale(1)">
             <Border.Transitions>
               <Transitions>
-                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.14"/>
-                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.14"/>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.12" Easing="CubicEaseOut"/>
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12" Easing="CubicEaseOut"/>
               </Transitions>
             </Border.Transitions>
             <Panel>
@@ -62,7 +77,7 @@
               <Border Width="54" Height="2" CornerRadius="1" Margin="0,0,0,2"
                       HorizontalAlignment="Center" VerticalAlignment="Bottom" Background="#0C0D0D"/>
 
-              <Grid ColumnDefinitions="70,*,14">
+              <Grid ColumnDefinitions="70,*,18">
                 <!-- Shell end: molded text and the record-protect tab (or host content). -->
                 <Panel>
                   <TextBlock Text="{TemplateBinding ShellText}"
@@ -179,9 +194,23 @@
                     </Border>
                   </Grid>
                 </Border>
+
+                <!-- Hover LED on the shell end: the tape lights up instead of moving under the pointer. -->
+                <Border Name="PART_Led" Grid.Column="2" Width="6" Height="6" CornerRadius="3"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{DynamicResource Vcr.Brush.Spine.LedOff}"
+                        BoxShadow="{DynamicResource Vcr.Shadow.Spine.LedOff}">
+                  <Border.Transitions>
+                    <Transitions>
+                      <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                      <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.12"/>
+                    </Transitions>
+                  </Border.Transitions>
+                </Border>
               </Grid>
             </Panel>
           </Border>
+          </Viewbox>
           <Border Name="PART_SelectionRing"
                   Margin="-3"
                   CornerRadius="8"
@@ -223,10 +252,15 @@
       <Setter Property="IsVisible" Value="False"/>
     </Style>
 
-    <!-- Hover pulls the tape slightly out of the stack. -->
+    <!-- Hover brings the tape slightly forward, toward the viewer (scale and a deeper shadow, never a shift), and lights
+         the end LED. A host that wants reduced motion adds the reduced-motion class to the window. -->
     <Style Selector="^:pointerover /template/ Border#PART_Shell">
-      <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Lift}"/>
-      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Tape.Hover}"/>
+      <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Forward}"/>
+      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Spine.Forward}"/>
+    </Style>
+    <Style Selector="^:pointerover /template/ Border#PART_Led">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Spine.LedOn}"/>
+      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Spine.LedOn}"/>
     </Style>
     <Style Selector="^:selected /template/ Border#PART_SelectionRing">
       <Setter Property="IsVisible" Value="True"/>

@@ -22,8 +22,10 @@ public enum SpineSticker
 /// <summary>
 /// One ~60px VHS tape spine as seen on a shelf. The sticker's printed artwork (brand marks, "VIDEO
 /// CASSETTE" bands) is rotated a quarter turn the way a real spine label is printed, while the user's
-/// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. Hover lifts the
-/// tape out of the stack. As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
+/// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. The spine keeps a
+/// real VHS spine's proportions (187 x 25 mm) at any size: it takes the available width and the height
+/// that ratio implies (or the reverse when only a height is given), and its face scales uniformly. Hover
+/// lights an LED on the shell end; the tape never moves. As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
 /// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
 /// left to the host list for selection; selection itself is the host's and is only displayed via
 /// <see cref="IsSelected"/>.
@@ -31,6 +33,14 @@ public enum SpineSticker
 [PseudoClasses(":selected", ":branded", ":graph", ":cream", ":has-leading")]
 public class VhsSpine : Button
 {
+    /// <summary>Length to height of a VHS cassette spine (187 x 25 mm).</summary>
+    public const double AspectRatio = 187.0 / 25.0;
+
+    /// <summary>The face is designed at this height and scaled uniformly.</summary>
+    public const double DesignHeight = 60;
+
+    public const double DesignWidth = DesignHeight * AspectRatio;
+
     public static readonly StyledProperty<string?> LabelProperty =
         AvaloniaProperty.Register<VhsSpine, string?>(nameof(Label));
 
@@ -102,6 +112,31 @@ public class VhsSpine : Button
         get => GetValue(IsSelectedProperty);
         set => SetValue(IsSelectedProperty, value);
     }
+
+    /// <summary>Fits the largest spine of the right proportions into the available space; with no constraint it
+    /// takes its design size.</summary>
+    public static Size FitSize(Size available)
+    {
+        var width = double.IsFinite(available.Width) ? available.Width
+            : double.IsFinite(available.Height) ? available.Height * AspectRatio : DesignWidth;
+        var height = width / AspectRatio;
+        if (double.IsFinite(available.Height) && height > available.Height)
+        {
+            height = available.Height;
+            width = height * AspectRatio;
+        }
+
+        return new Size(width, height);
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var size = FitSize(availableSize);
+        base.MeasureOverride(size);
+        return size;
+    }
+
+    protected override Size ArrangeOverride(Size finalSize) => base.ArrangeOverride(FitSize(finalSize));
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
