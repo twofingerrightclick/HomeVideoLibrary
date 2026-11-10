@@ -13,6 +13,50 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task AnOlderVideoGetsItsTitleDateAndOriginalNameWrittenOnceKeepingWhatItHas()
+    {
+        var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));
+        await catalog.InitializeAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var recorded = new DateTimeOffset(1997, 7, 3, 18, 30, 0, TimeSpan.Zero);
+        async Task<LibraryVideo> OldImportAsync(string name, string? fingerprint)
+        {
+            var id = Guid.NewGuid();
+            var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), name, TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, recorded)
+            {
+                SourceFingerprint = fingerprint,
+            };
+            await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+                "-pix_fmt", "yuv420p", catalog.GetVideoPath(video.RelativePath)]);
+            await catalog.AddAsync(video);
+            return video;
+        }
+        var imported = await OldImportAsync("grandma visit", "v1:0123");
+        var edited = await OldImportAsync("grandma visit · part 1", null);
+        await service.SaveAsync(edited, VideoMetadata.Empty with { Title = "Kept title", Tags = ["kept"] });
+
+        Assert.True(await service.FillMissingIdentityAsync(imported));
+        Assert.True(await service.FillMissingIdentityAsync(edited));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
+        Assert.False(await service.FillMissingIdentityAsync(edited));
+
+        var first = (await service.ReadTextAsync(catalog.GetVideoPath(imported.RelativePath))).Metadata;
+        Assert.Equal(("grandma visit", recorded), (first.Title, first.RecordedAt));
+        Assert.Contains("<String>grandma visit</String>", await TagsXmlAsync(catalog.GetVideoPath(imported.RelativePath)));
+        var second = (await service.ReadTextAsync(catalog.GetVideoPath(edited.RelativePath))).Metadata;
+        Assert.Equal(("Kept title", recorded), (second.Title, second.RecordedAt));
+        Assert.Equal(["kept"], second.Tags);
+        Assert.DoesNotContain(VideoImporter.OriginalFileNameTag, await TagsXmlAsync(catalog.GetVideoPath(edited.RelativePath)));
+    }
+
+    private async Task<string> TagsXmlAsync(string mkvPath)
+    {
+        var output = Path.Combine(_root, $"tags-{Guid.NewGuid():N}.xml");
+        await ToolAsync(_tools.MkvExtract, [mkvPath, "tags", output]);
+        return await File.ReadAllTextAsync(output);
+    }
+
+    [Fact]
     public async Task AnExclusiveLeaseHoldsOffReadsAndSavesUntilItIsReleased()
     {
         var (catalog, video) = await CreateVideoAsync();

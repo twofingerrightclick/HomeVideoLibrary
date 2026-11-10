@@ -9,8 +9,10 @@ using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-/// <summary>The per-library MKV services. Both are the same <see cref="MatroskaMetadataService"/> in the app.</summary>
-public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataService Metadata);
+/// <summary>The per-library MKV services. All are the same <see cref="MatroskaMetadataService"/> in the app.</summary>
+/// <param name="Identity">Writes missing titles and dates into older videos (the one-time <see cref="IdentityBackfill"/>);
+/// null skips the backfill.</param>
+public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataService Metadata, IIdentityWriter? Identity = null);
 
 /// <summary>External services of <see cref="MainWindowViewModel"/>; the defaults are the real ones.</summary>
 public sealed record MainWindowDependencies
@@ -22,7 +24,7 @@ public sealed record MainWindowDependencies
     public Func<LibraryCatalog, LibraryServices> CreateServices { get; init; } = catalog =>
     {
         var service = new MatroskaMetadataService(catalog, MediaTools.Discover());
-        return new LibraryServices(service, service);
+        return new LibraryServices(service, service, service);
     };
     public Func<LibraryCatalog, IVideoImporter> CreateImporter { get; init; } = catalog => new VideoImporter(catalog, MediaTools.Discover());
     public Func<LibraryCatalog, IClipEditingService> CreateClipEditing { get; init; } = catalog => new ClipEditingService(catalog, MediaTools.Discover());
@@ -529,6 +531,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
+        if (services.Identity is { } identity && ToolsReady) await BackfillJob.QueueIfDueAsync(Jobs, new IdentityBackfill(model, identity));
     }
 
     private static int CountRecoverySnapshots(LibraryPaths paths)

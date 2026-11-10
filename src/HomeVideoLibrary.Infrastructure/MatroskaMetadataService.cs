@@ -12,7 +12,7 @@ namespace HomeVideoLibrary.Infrastructure;
 /// <summary>Reads and writes the metadata the MKV owns. Every operation on a file is serialized through a per-path gate
 /// shared by all instances. Writes are in place with mkvpropedit, which rewrites only metadata elements.</summary>
 public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, MediaTools tools, MediaProcess? process = null)
-    : IVideoMetadataService, IMatroskaFileEditor
+    : IVideoMetadataService, IMatroskaFileEditor, IIdentityWriter
 {
     private const string ManifestName = "home-video-library.thumbnails.v1.json";
     private const int MaxThumbnails = 20;
@@ -67,6 +67,44 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration);
             var plan = await PlanWriteAsync(original, metadata, null, keepThumbnails: false, scratch, cancellationToken);
             await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
+        }
+        finally { DeleteDirectory(scratch); }
+    }
+
+    /// <summary>Writes the identity a video file should carry on its own into a library video that lacks it: TITLE (the
+    /// segment title, else the catalog name), DATE_RECORDED (the catalog's date) and, for an imported video, the original
+    /// file name (the catalog keeps it without extension). Everything the file already says is kept. Written in place
+    /// like <see cref="SaveAsync"/>: verified, and rolled back on failure.</summary>
+    /// <returns>False, without writing, when nothing was missing.</returns>
+    public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+    {
+        var path = catalog.GetVideoPath(video.RelativePath);
+        using var _ = await EnterGateAsync(path, cancellationToken);
+        var scratch = CreateScratch();
+        try
+        {
+            var original = await ReadStateAsync(path, scratch, cancellationToken);
+            var metadata = original.Written;
+            var missing = false;
+            if (metadata.Title.Trim().Length == 0)
+            {
+                metadata = metadata with { Title = original.Metadata.Title.Trim().Length > 0 ? original.Metadata.Title : video.DisplayName };
+                missing = true;
+            }
+            if (metadata.RecordedAtText.Trim().Length == 0)
+            {
+                metadata = metadata with { RecordedAt = video.RecordedAt, RecordedAtText = "" };
+                missing = true;
+            }
+            var extraTags = new Dictionary<string, string>();
+            // Clip edit outputs have no source fingerprint and never had an original file.
+            if (video.SourceFingerprint is not null && MatroskaMetadataXml.GlobalValues(original.Tags, VideoImporter.OriginalFileNameTag).Count == 0)
+                extraTags[VideoImporter.OriginalFileNameTag] = MetadataText.Normalize(video.DisplayName);
+            if (!missing && extraTags.Count == 0) return false;
+            metadata = MetadataText.AsStored(metadata);
+            var plan = await PlanWriteAsync(original, metadata, extraTags, keepThumbnails: true, scratch, cancellationToken);
+            await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
+            return true;
         }
         finally { DeleteDirectory(scratch); }
     }

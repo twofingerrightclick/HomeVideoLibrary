@@ -19,7 +19,7 @@ public sealed record CatalogContents(IReadOnlyList<LibraryVideo> Videos, IReadOn
 /// <param name="isNetworkVolume">Decides the journal mode; defaults to asking the OS about the library's volume.</param>
 public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNetworkVolume = null)
 {
-    public const int SchemaVersion = 5;
+    public const int SchemaVersion = 6;
 
     public LibraryPaths Paths { get; } = paths;
 
@@ -47,6 +47,7 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             if (version < 3) await MigrateAsync(connection, 3, AddSourceFingerprintAsync, cancellationToken);
             if (version < 4) await MigrateAsync(connection, 4, CreateVideoCacheAsync, cancellationToken);
             if (version < 5) await MigrateAsync(connection, 5, VersionFingerprintsAsync, cancellationToken);
+            if (version < 6) await MigrateAsync(connection, 6, CreateMaintenanceAsync, cancellationToken);
         }
         catch (Exception exception) when (exception is SqliteException or InvalidOperationException or IOException)
         {
@@ -127,6 +128,11 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             DROP INDEX IF EXISTS videos_source_fingerprint;
             CREATE UNIQUE INDEX IF NOT EXISTS videos_source_fingerprint_key ON videos(source_fingerprint) WHERE source_fingerprint IS NOT NULL;
             """, cancellationToken);
+
+    /// <summary>Records one-time library maintenance (such as backfilling metadata into older videos) once it is done.</summary>
+    private static Task CreateMaintenanceAsync(SqliteConnection connection, SqliteTransaction transaction, CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction,
+            "CREATE TABLE IF NOT EXISTS maintenance (task TEXT PRIMARY KEY, completed_at TEXT NOT NULL)", cancellationToken);
 
     /// <summary>Replaces the FTS search cache with <c>video_cache</c>, makes album names unique by
     /// <see cref="AlbumNames.Key"/>, and rewrites Windows-style stored paths.</summary>
@@ -321,6 +327,26 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>Whether the one-time maintenance <paramref name="task"/> has run to completion in this library.</summary>
+    public async Task<bool> HasCompletedAsync(string task, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM maintenance WHERE task = $task";
+        command.Parameters.AddWithValue("$task", task);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) > 0;
+    }
+
+    /// <summary>Records that the one-time maintenance <paramref name="task"/> has run to completion.</summary>
+    public async Task RecordCompletedAsync(string task, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO maintenance(task, completed_at) VALUES ($task, $at) ON CONFLICT(task) DO NOTHING";
+        command.Parameters.AddWithValue("$task", task); command.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>Whether a video row with this id exists, without reading the row, so an unreadable row still counts.</summary>
