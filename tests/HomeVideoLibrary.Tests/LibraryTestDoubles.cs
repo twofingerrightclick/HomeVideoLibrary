@@ -7,15 +7,18 @@ namespace HomeVideoLibrary.Tests;
 /// <summary>An in-memory stand-in for the MKV tools: text metadata per file path, and fake JPEG output.</summary>
 internal sealed class FakeMatroska : IMatroskaFileEditor
 {
-    private int _reads, _extracts, _captures;
+    private int _reads, _extracts, _captures, _keyframes;
     public ConcurrentDictionary<string, VideoTextMetadata> Content { get; } = new();
     public ConcurrentDictionary<string, string> Failures { get; } = new();
     public Func<string, CancellationToken, Task>? BeforeRead { get; set; }
     public Func<CancellationToken, Task>? BeforeCapture { get; set; }
+    /// <summary>Runs before each keyframe capture, with the video path.</summary>
+    public Func<string, CancellationToken, Task>? BeforeKeyframe { get; set; }
     public string OutputDirectory { get; } = Path.Combine(Path.GetTempPath(), "hvl-fake-" + Guid.NewGuid().ToString("N"));
     public int Reads => _reads;
     public int Extracts => _extracts;
     public int Captures => _captures;
+    public int Keyframes => _keyframes;
 
     public static VideoTextMetadata Text(VideoMetadata metadata, TimeSpan? duration = null, params VideoThumbnailRef[] thumbnails) =>
         new(metadata, thumbnails, duration ?? TimeSpan.FromSeconds(10), []);
@@ -52,6 +55,22 @@ internal sealed class FakeMatroska : IMatroskaFileEditor
         Interlocked.Increment(ref _captures);
         if (BeforeCapture is { } before) await before(cancellationToken);
         await File.WriteAllTextAsync(outputPath, $"frame {position}", cancellationToken);
+    }
+
+    public async Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth,
+        CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _keyframes);
+        if (BeforeKeyframe is { } before) await before(mkvPath, cancellationToken);
+        await File.WriteAllTextAsync(outputPath, $"keyframe {position}", cancellationToken);
+    }
+
+    /// <summary>Writes the images' text, one per line, in tile order.</summary>
+    public async Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default)
+    {
+        var lines = new List<string>();
+        foreach (var image in images) lines.Add(await File.ReadAllTextAsync(image, cancellationToken));
+        await File.WriteAllLinesAsync(outputPath, lines, cancellationToken);
     }
 }
 
