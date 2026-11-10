@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomeVideoLibrary.Core;
-using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -428,46 +427,6 @@ public sealed class ClipEditingTests : IDisposable
         Assert.Single(await catalog.ListAsync());
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
         AssertNoScratch(catalog);
-    }
-
-    [Fact]
-    public async Task EditorParsesTimecodesAndReportsWarnings()
-    {
-        var source = new LibraryVideo(Guid.NewGuid(), "Videos/a.mkv", "A", TimeSpan.FromMinutes(10), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-        var service = new ScriptedEditing();
-        using var editor = new ClipEditorViewModel([source], service) { StartTime = "1:30", EndTime = "0:02:00.500", IsPrecise = false };
-
-        await editor.TrimAsync();
-
-        Assert.Equal((TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(120.5), ClipCutMode.Fast), service.Trim);
-        Assert.Equal(100, editor.Progress);
-        Assert.False(editor.IsProgressIndeterminate);
-        Assert.Contains("Cuts snapped.", editor.Status, StringComparison.Ordinal);
-        Assert.StartsWith("Saved 1 new video(s)", editor.Status, StringComparison.Ordinal);
-    }
-
-    private sealed class ScriptedEditing : IClipEditingService
-    {
-        public (TimeSpan Start, TimeSpan End, ClipCutMode Mode) Trim { get; private set; }
-
-        public Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default, ClipCutMode mode = ClipCutMode.Precise)
-        {
-            Trim = (start, end, mode);
-            progress?.Report(new ClipEditProgress("Writing", 0.5, "Cuts snapped."));
-            return Task.FromResult<IReadOnlyList<LibraryVideo>>([source]);
-        }
-
-        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
-            CancellationToken cancellationToken = default) => Task.FromResult(new ClipCutPlan(start, end, true, ""));
-        public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ClipCutPlan(position, source.Duration, true, ""));
-        public Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private static void AssertNoScratch(LibraryCatalog catalog) =>

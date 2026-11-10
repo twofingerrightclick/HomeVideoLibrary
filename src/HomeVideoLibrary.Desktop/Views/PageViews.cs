@@ -16,7 +16,6 @@ public static class PageViews
     {
         null => null,
         VideoPageViewModel => new VideoPageView(),
-        ClipEditorPage clips => new ClipEditorView { DataContext = clips.Editor },
         MergePageViewModel merge => new MergePageView { DataContext = merge },
         _ => throw new ArgumentOutOfRangeException(nameof(page), page.GetType().Name, "No view for this page."),
     }, supportsRecycling: false);
