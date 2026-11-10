@@ -173,20 +173,24 @@ public sealed class LibrarySelectionTests : IDisposable
     }
 
     [Fact]
-    public async Task ImportPublishesEachVideoAndKeepsPerFileResults()
+    public async Task ImportQueuesOneJobPerFileAndPublishesEachVideo()
     {
         _importer = catalog => new FakeImporter(catalog, _files);
         var (vm, _) = await OpenAsync("existing");
         _interaction.Picked = new PickedFiles(["/somewhere/new clip.mov", "/somewhere/duplicate.mov", "/somewhere/broken.mov"], 0);
 
         await vm.Import.ImportCommand.ExecuteAsync();
+        Assert.Equal(["Queued (#2)", "Queued (#1)"], vm.Jobs.Jobs.Take(2).Select(job => job.StatusText));
+        await vm.Jobs.WhenIdleAsync();
 
         Assert.Equal(2, vm.Shelf.Tapes.Count);
         Assert.Contains(vm.Shelf.Tapes, tape => tape.Label == "imported new clip");
-        Assert.Equal(["new clip.mov: imported", "duplicate.mov: already in library", "broken.mov: bad header"], vm.Import.Results);
-        Assert.StartsWith("Imported 1; 1 could not be imported. 1 already in library.", vm.Status);
-        Assert.Equal(100, vm.Import.Progress);
-        Assert.False(vm.Import.IsImporting || vm.Import.IsProgressIndeterminate);
+        var jobs = vm.Jobs.Jobs.Reverse().ToArray();
+        Assert.Equal([JobState.Succeeded, JobState.Succeeded, JobState.Failed], jobs.Select(job => job.State));
+        Assert.Equal("Already in the library.", jobs[1].StatusText);
+        Assert.Equal("bad header", jobs[2].StatusText);
+        Assert.True(jobs[0].CanOpen);
+        Assert.False(vm.Import.IsImporting);
     }
 
     [Fact]
@@ -201,21 +205,81 @@ public sealed class LibrarySelectionTests : IDisposable
     }
 
     [Fact]
-    public async Task ClosingDuringAnImportWaitsForItsCancellationAndIsShared()
+    public async Task ClosingWithRunningJobsAsksAndKeepOpenLeavesThemRunning()
     {
         var started = new TaskCompletionSource();
         _importer = _ => new BlockingImporter(started);
         var (vm, _) = await OpenAsync("existing");
-        _interaction.Picked = new PickedFiles(["/somewhere/slow.mov"], 0);
-        var import = vm.Import.ImportCommand.ExecuteAsync();
+        vm.Import.Enqueue(["/somewhere/slow.mov"]);
         await started.Task;
 
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await vm.RequestCloseAsync());
+        Assert.True(vm.Import.IsImporting);
+
+        _interaction.CloseChoice = CloseChoice.CancelJobs;
         var close = vm.RequestCloseAsync();
         Assert.Same(close, vm.RequestCloseAsync());
         Assert.True(await close);
-        Assert.True(import.IsCompleted);
+        Assert.Equal(2, _interaction.CloseAsked);
+        Assert.Equal(JobState.Cancelled, Assert.Single(vm.Jobs.Jobs).State);
         Assert.False(vm.Import.IsImporting);
-        Assert.StartsWith("Import cancelled.", vm.Status);
+    }
+
+    [Fact]
+    public async Task EscapeInAnAlbumRenameKeepsTheOldName()
+    {
+        var (vm, _) = await OpenAsync("first");
+        await vm.Albums.CreateCommand.ExecuteAsync();
+        var row = vm.Albums.Current!;
+        var rename = row.Rename!;
+        rename.DraftName = "Typed then abandoned";
+
+        rename.CancelCommand.Execute(null);
+        await rename.CommitCommand.ExecuteAsync(); // The removed field's final lost focus.
+
+        Assert.Null(row.Rename);
+        Assert.Equal("New album", row.Name);
+        Assert.Equal("New album", vm.Model!.Snapshot.Albums.Single().Name);
+    }
+
+    [Fact]
+    public async Task DeletingTheShownAlbumWithAnotherReturnsToAllVideosInOnePass()
+    {
+        var (vm, _) = await OpenAsync("first");
+        foreach (var name in new[] { "A", "B", "C" }) await vm.Model!.CreateAlbumAsync(name, []);
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Name == "C");
+        var b = vm.Albums.Rows.Single(row => row.Name == "B").Id;
+        var c = vm.Albums.Current.Id;
+        // The list writes its lost selection back to Current while the row is removed, as the real ListBox does.
+        vm.Albums.Rows.CollectionChanged += (_, args) =>
+        {
+            if (args.OldItems?.OfType<AlbumRowViewModel>().Any(row => row.Id == c) == true) vm.Albums.Current = null;
+        };
+
+        await vm.Model!.DeleteAlbumAsync(b);
+        await vm.Model.DeleteAlbumAsync(c);
+
+        Assert.True(vm.Albums.IsAllVideos);
+        Assert.Equal(["A"], vm.Albums.Rows.Select(row => row.Name));
+        Assert.Single(vm.Shelf.Tapes);
+    }
+
+    [Fact]
+    public async Task AddModeAddsOnlyTheSelectedVideosItShows()
+    {
+        var (vm, videos) = await OpenAsync("first", "second", "third");
+        var album = await vm.Model!.CreateAlbumAsync("Beach", [videos[0].Id]);
+        Tape(vm, videos[0]).IsSelected = true;
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Id == album.Id);
+        vm.Albums.StartAddingCommand.Execute(null);
+
+        Assert.Equal("ADD 0", vm.Albums.AddHereLabel);
+        Assert.False(vm.Albums.AddSelectedHereCommand.CanExecute(null));
+        Tape(vm, videos[1]).IsSelected = true;
+        Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
+        await vm.Albums.AddSelectedHereCommand.ExecuteAsync();
+        Assert.Contains("Added 1 video to “Beach”.", vm.Status);
     }
 
     private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter
