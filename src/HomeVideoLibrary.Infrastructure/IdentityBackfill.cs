@@ -9,39 +9,56 @@ public interface IIdentityWriter
     Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default);
 }
 
-/// <param name="Failures">One line per video that could not be updated: its label and why.</param>
-public sealed record BackfillResult(int Checked, int Updated, IReadOnlyList<string> Failures);
+/// <param name="Updated">Videos whose file was written.</param>
+/// <param name="Deferred">Videos that were busy (open on a page) and should be checked again later.</param>
+/// <param name="Skipped">Videos that could not be checked: their file is missing or unreadable, or the write failed,
+/// with the reason.</param>
+public sealed record BackfillSlice(int Checked, int Updated, IReadOnlyList<Guid> Deferred, IReadOnlyList<string> Skipped);
 
-/// <summary>The one-time pass that writes TITLE, DATE_RECORDED and the original file name into videos imported before
-/// imports wrote them into the MKV, so a video file that leaves the library (for the Trash) still says what it is. Every
-/// video is checked once; only files missing something are written. The pass is recorded in a stamp file when it runs to
-/// the end, so it never runs again for this library; a cancelled pass starts over next time, skipping done files
-/// quickly.</summary>
+/// <summary>The one-time pass that writes TITLE and DATE_RECORDED into videos no import of this app wrote them into, so
+/// a video file that leaves the library (for the Trash) still says what it is. It runs in slices so other work can go
+/// between them, and is recorded as done (in a stamp file) only once every video was checked without a skip; until then
+/// each library open runs it again, finding nothing to write in the files already done.</summary>
 public sealed class IdentityBackfill(LibraryModel model, IIdentityWriter writer)
 {
-    /// <summary>Written when the pass has run to the end, like <c>publish-recovered</c>: a per-library fact that needs no
-    /// catalog schema. Deleting <c>.cache</c> only makes the pass run again, finding nothing to write.</summary>
+    public const int SliceSize = 25;
+
+    /// <summary>Like <c>publish-recovered</c>: a per-library fact that needs no catalog schema. Losing <c>.cache</c> only
+    /// makes the pass run again.</summary>
     public static string StampPath(LibraryPaths paths) => Path.Combine(paths.CacheDirectory, "identity-backfill.done");
 
-    /// <summary>Whether this library has videos and has not finished the pass yet.</summary>
-    public Task<bool> IsDueAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(!model.Snapshot.Videos.IsEmpty && !File.Exists(StampPath(model.Catalog.Paths)));
+    /// <summary>Whether the library has videos and has not completed the pass.</summary>
+    public bool IsDue => !model.Snapshot.Videos.IsEmpty && !File.Exists(StampPath(model.Catalog.Paths));
 
-    /// <summary>Checks every video whose file is there, publishing each one it wrote. Per-video failures are collected,
-    /// not thrown.</summary>
-    /// <param name="progress">Videos checked so far, of how many, and the one being checked.</param>
-    public async Task<BackfillResult> RunAsync(IProgress<(int Done, int Total, string Label)>? progress = null,
-        CancellationToken cancellationToken = default)
+    /// <summary>Every video to check, newest first.</summary>
+    public IReadOnlyList<Guid> Plan() => model.Snapshot.Chronological.Select(record => record.Id).ToArray();
+
+    /// <summary>Checks <paramref name="videoIds"/>, publishing each video it wrote. A video that has left the library is
+    /// passed over; one <paramref name="isBusy"/> claims is deferred, so the pass never writes under an open page's save.
+    /// Per-video failures are collected, not thrown.</summary>
+    /// <param name="isBusy">Called from this method's thread.</param>
+    /// <param name="progress">Videos of this slice checked so far and the one being checked.</param>
+    public async Task<BackfillSlice> RunAsync(IReadOnlyList<Guid> videoIds, Func<Guid, bool> isBusy,
+        IProgress<(int Done, string Label)>? progress = null, CancellationToken cancellationToken = default)
     {
-        var videos = model.Snapshot.Chronological;
-        var failures = new List<string>();
+        var deferred = new List<Guid>();
+        var skipped = new List<string>();
         var updated = 0;
-        for (var index = 0; index < videos.Count; index++)
+        for (var index = 0; index < videoIds.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var record = videos[index];
-            progress?.Report((index, videos.Count, record.Label));
-            if (model.Snapshot.Find(record.Id) is null || !File.Exists(model.GetVideoPath(record))) continue;
+            if (model.Snapshot.Find(videoIds[index]) is not { } record) continue;
+            progress?.Report((index, record.Label));
+            if (isBusy(record.Id))
+            {
+                deferred.Add(record.Id);
+                continue;
+            }
+            if (LibraryFiles.Probe(model.GetVideoPath(record)) is not FilePresence.Present)
+            {
+                skipped.Add($"{record.Label}: its file is missing or cannot be read.");
+                continue;
+            }
             try
             {
                 if (!await writer.FillMissingIdentityAsync(record.ToLibraryVideo(), cancellationToken)) continue;
@@ -52,11 +69,16 @@ public sealed class IdentityBackfill(LibraryModel model, IIdentityWriter writer)
             catch (Exception exception)
             {
                 Trace.TraceWarning($"Could not write the title and date into {record.RelativePath}: {exception}");
-                failures.Add($"{record.Label}: {exception.Message}");
+                skipped.Add($"{record.Label}: {exception.Message}");
             }
         }
+        return new BackfillSlice(videoIds.Count, updated, deferred, skipped);
+    }
+
+    /// <summary>Records the pass as done, so it never runs again for this library.</summary>
+    public async Task RecordCompletedAsync()
+    {
         Directory.CreateDirectory(model.Catalog.Paths.CacheDirectory);
         await File.WriteAllTextAsync(StampPath(model.Catalog.Paths), DateTimeOffset.UtcNow.ToString("O"), CancellationToken.None);
-        return new BackfillResult(videos.Count, updated, failures);
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
@@ -12,72 +13,120 @@ public sealed class BackfillTests : IDisposable
     private readonly FakeMatroska _files = new();
     private readonly FakeIdentity _identity = new();
 
-    private async Task<(LibraryModel Model, LibraryVideo[] Videos)> LibraryAsync(params string[] names)
+    private async Task<(LibraryModel Model, LibraryVideo[] Videos)> LibraryAsync(int count)
     {
         var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
         var videos = new List<LibraryVideo>();
-        foreach (var name in names) videos.Add(await AddVideoAsync(catalog, name));
+        for (var index = 0; index < count; index++)
+            videos.Add(await AddVideoAsync(catalog, $"video {index}", new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-index)));
         var model = new LibraryModel(catalog, _files);
         await model.LoadAsync();
         return (model, [.. videos]);
     }
 
     [Fact]
-    public async Task ThePassChecksEveryVideoWithAFilePublishesWhatItWroteAndIsRecordedOnce()
+    public async Task ASliceWritesWhatIsMissingDefersBusyVideosAndSkipsMissingFiles()
     {
-        var (model, videos) = await LibraryAsync("old", "new", "gone");
+        var (model, videos) = await LibraryAsync(4);
         _identity.Writes.Add(videos[0].Id);
-        File.Delete(model.Catalog.GetVideoPath(videos[2].RelativePath));
         _files.Set(model.Catalog.GetVideoPath(videos[0].RelativePath), VideoMetadata.Empty with { Title = "written" });
+        File.Delete(model.Catalog.GetVideoPath(videos[2].RelativePath));
+        await model.RemoveVideosAsync([videos[3].Id]);
         var backfill = new IdentityBackfill(model, _identity);
-        Assert.True(await backfill.IsDueAsync());
 
-        var result = await backfill.RunAsync();
+        var slice = await backfill.RunAsync(videos.Select(video => video.Id).ToArray(), id => id == videos[1].Id);
 
-        Assert.Equal((3, 1), (result.Checked, result.Updated));
-        Assert.Empty(result.Failures);
-        Assert.Equal(new HashSet<Guid> { videos[0].Id, videos[1].Id }, _identity.Checked.ToHashSet());
+        Assert.Equal(1, slice.Updated);
+        Assert.Equal([videos[1].Id], slice.Deferred);
+        Assert.StartsWith("video 2:", Assert.Single(slice.Skipped));
+        Assert.Equal([videos[0].Id], _identity.Checked);
         Assert.Equal("written", model.Snapshot.Find(videos[0].Id)!.Title);
-        Assert.False(await backfill.IsDueAsync());
-        Assert.False(await new IdentityBackfill(model, _identity).IsDueAsync());
     }
 
     [Fact]
-    public async Task ACancelledPassIsNotRecordedAndAFailureDoesNotStopIt()
+    public Task ThePassRunsInSlicesThatLetOtherJobsInAndIsRecordedOnce() => UiThread.Run(async () =>
     {
-        var (model, videos) = await LibraryAsync("first", "second");
-        _identity.Failing.Add(videos[0].Id);
-        using var cancelled = new CancellationTokenSource();
-        await cancelled.CancelAsync();
-        var backfill = new IdentityBackfill(model, _identity);
+        var (model, _) = await LibraryAsync(IdentityBackfill.SliceSize + 5);
+        var jobs = new JobQueue(_ => Task.CompletedTask);
+        var started = new ConcurrentQueue<string>();
+        var firstSlice = new TaskCompletionSource();
+        _identity.Before = async () =>
+        {
+            if (_identity.Checked.Count == 1) await firstSlice.Task;
+        };
+        jobs.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(JobQueue.ActiveCount)) return;
+            foreach (var job in jobs.Jobs.Where(job => job.IsRunning && !started.Contains(job.Title))) started.Enqueue(job.Title);
+        };
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backfill.RunAsync(cancellationToken: cancelled.Token));
-        Assert.True(await backfill.IsDueAsync());
+        var pass = BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => true);
+        var user = jobs.Enqueue("Trim", JobLane.Render, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+        firstSlice.SetResult();
+        await pass;
 
-        var result = await backfill.RunAsync();
-        Assert.Single(result.Failures);
-        Assert.Equal(2, _identity.Checked.Count);
-        Assert.False(await backfill.IsDueAsync());
+        Assert.Equal([$"{BackfillJob.Title} (1–25 of 30)", "Trim", $"{BackfillJob.Title} (26–30 of 30)"], started);
+        Assert.Equal(30, _identity.Checked.Count);
+        Assert.True(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+        Assert.False(new IdentityBackfill(model, _identity).IsDue);
+    });
+
+    [Fact]
+    public Task ASkippedVideoKeepsThePassDueAndAnOpenVideoIsRetriedOnceAfterTheRest() => UiThread.Run(async () =>
+    {
+        var (model, videos) = await LibraryAsync(3);
+        var jobs = new JobQueue(_ => Task.CompletedTask);
+        var open = videos[0].Id;
+        _identity.Before = () =>
+        {
+            if (_identity.Checked.Count == 2) open = Guid.Empty; // The page closes once the others are done.
+            return Task.CompletedTask;
+        };
+
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), id => id == open, () => true);
+
+        Assert.Equal([videos[1].Id, videos[2].Id, videos[0].Id], _identity.Checked);
+        Assert.Equal(2, jobs.Jobs.Count);
+        Assert.Equal($"{BackfillJob.Title} (videos that were open)", jobs.Jobs[0].Title);
+        Assert.True(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+
+        File.Delete(IdentityBackfill.StampPath(model.Catalog.Paths));
+        _identity.Failing.Add(videos[2].Id);
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => true);
+        Assert.False(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+    });
+
+    [Fact]
+    public async Task AnEmptyLibraryIsNotDue()
+    {
+        var (model, _) = await LibraryAsync(0);
+        Assert.False(new IdentityBackfill(model, _identity).IsDue);
     }
 
     [Fact]
-    public async Task OpeningALibraryQueuesTheBackfillOnlyUntilItHasRun()
+    public async Task OpeningALibraryRunsTheBackfillOnlyUntilItHasCompleted()
     {
         var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
         await AddVideoAsync(catalog, "old");
 
         var first = await OpenAsync(catalog);
         var job = Assert.Single(first.Jobs.Jobs);
-        Assert.Equal(BackfillJob.Title, job.Title);
+        Assert.StartsWith(BackfillJob.Title, job.Title);
         Assert.Equal(JobLane.Render, job.Lane);
         await job.Completion;
-        Assert.Equal(JobState.Succeeded, job.State);
+        await WaitUntilAsync(() => File.Exists(IdentityBackfill.StampPath(catalog.Paths)));
         Assert.True(await first.RequestCloseAsync());
 
         var second = await OpenAsync(catalog);
         Assert.Empty(second.Jobs.Jobs);
         Assert.Single(_identity.Checked);
         Assert.True(await second.RequestCloseAsync());
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 200 && !condition(); attempt++) await Task.Delay(10);
+        Assert.True(condition());
     }
 
     private async Task<MainWindowViewModel> OpenAsync(LibraryCatalog catalog)
@@ -107,13 +156,15 @@ public sealed class BackfillTests : IDisposable
         public List<Guid> Checked { get; } = [];
         public HashSet<Guid> Writes { get; } = [];
         public HashSet<Guid> Failing { get; } = [];
+        public Func<Task>? Before { get; set; }
 
-        public Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+        public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             lock (Checked) Checked.Add(video.Id);
+            if (Before is { } before) await before();
             if (Failing.Contains(video.Id)) throw new InvalidDataException("mkvpropedit failed");
-            return Task.FromResult(Writes.Contains(video.Id));
+            return Writes.Contains(video.Id);
         }
     }
 

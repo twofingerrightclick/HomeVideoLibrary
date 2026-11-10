@@ -558,7 +558,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
-        if (services.Identity is { } identity && ToolsReady) await BackfillJob.QueueIfDueAsync(Jobs, new IdentityBackfill(model, identity));
+        if (services.Identity is { } identity && ToolsReady)
+            _ = BackfillJob.RunAsync(Jobs, new IdentityBackfill(model, identity), id => Volatile.Read(ref _page)?.Shows(id) == true,
+                () => ReferenceEquals(_model, model) && IsSettled);
     }
 
     private static int CountRecoverySnapshots(LibraryPaths paths)

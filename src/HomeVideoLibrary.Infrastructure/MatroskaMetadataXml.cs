@@ -66,6 +66,24 @@ internal static class MatroskaMetadataXml
         foreach (var empty in tags.Root.Elements("Tag").Where(tag => !tag.Elements("Simple").Any()).ToArray()) empty.Remove();
     }
 
+    /// <summary>Whether a video-level Simple tag named <paramref name="name"/> exists, even with an empty value.</summary>
+    public static bool HasGlobal(XDocument tags, string name) =>
+        Simples(tags.Root?.Elements("Tag").Where(IsVideoLevel) ?? [], name).Any();
+
+    /// <summary>Appends <paramref name="values"/> as video-level Simple tags, to the first video-level Tag (created when
+    /// there is none), leaving every existing element as it is.</summary>
+    public static void AddGlobal(XDocument tags, IReadOnlyDictionary<string, string> values)
+    {
+        if (tags.Root is null) tags.Add(new XElement("Tags"));
+        var target = tags.Root!.Elements("Tag").FirstOrDefault(IsVideoLevel);
+        if (target is null)
+        {
+            target = new XElement("Tag", new XElement("Targets", new XElement("TargetTypeValue", "50"), new XElement("TargetType", "MOVIE")));
+            tags.Root.Add(target);
+        }
+        foreach (var (name, value) in values) target.Add(NewSimple(name, value));
+    }
+
     /// <summary>All values of a video-level Simple tag, in document order.</summary>
     public static IReadOnlyList<string> GlobalValues(XDocument tags, string name) =>
         Values(tags.Root?.Elements("Tag").Where(IsVideoLevel) ?? [], name);

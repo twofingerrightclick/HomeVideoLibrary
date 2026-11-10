@@ -74,9 +74,11 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         finally { DeleteDirectory(scratch); }
     }
 
-    /// <summary>Writes the identity a video file should carry on its own into a library video that lacks it: TITLE (the
-    /// segment title, else the catalog name), DATE_RECORDED (the catalog's date) and, for an imported video, the original
-    /// file name (the catalog keeps it without extension). Everything the file already says is kept. Written in place
+    /// <summary>Writes TITLE and DATE_RECORDED into a library video that no import of this app wrote them into (one
+    /// imported before imports did, or an edit of one), so the file says what it is on its own. Only an absent tag is
+    /// added, with the catalog's value: TITLE from the segment title, else the name the video was added under; DATE_RECORDED
+    /// from the catalog date. Nothing else in the file is rewritten or re-normalized. A file an import of this app wrote
+    /// (it carries a source fingerprint) is never changed: a tag missing there was cleared by the user. Written in place
     /// like <see cref="SaveAsync"/>: verified, and rolled back on failure.</summary>
     /// <returns>False, without writing, when nothing was missing.</returns>
     public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
@@ -87,26 +89,29 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         try
         {
             var original = await ReadStateAsync(path, scratch, cancellationToken);
-            var metadata = original.Written;
-            var missing = false;
-            if (metadata.Title.Trim().Length == 0)
+            if (video.SourceFingerprint is not null || MatroskaMetadataXml.HasGlobal(original.Tags, VideoImporter.SourceFingerprintTag))
+                return false;
+            var additions = new Dictionary<string, string>();
+            var expected = original.Written;
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "TITLE") &&
+                MetadataText.NormalizeTitle(original.Metadata.Title.Length > 0 ? original.Metadata.Title : video.DisplayName) is { Length: > 0 } title)
             {
-                metadata = metadata with { Title = original.Metadata.Title.Trim().Length > 0 ? original.Metadata.Title : video.DisplayName };
-                missing = true;
+                additions["TITLE"] = title;
+                expected = expected with { Title = title };
             }
-            if (metadata.RecordedAtText.Trim().Length == 0)
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "DATE_RECORDED"))
             {
-                metadata = metadata with { RecordedAt = video.RecordedAt, RecordedAtText = "" };
-                missing = true;
+                var date = video.RecordedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+                additions["DATE_RECORDED"] = date;
+                expected = expected with { RecordedAt = RecordedDate.TryParse(date, out var parsed) ? parsed : null, RecordedAtText = date };
             }
-            var extraTags = new Dictionary<string, string>();
-            // Clip edit outputs have no source fingerprint and never had an original file.
-            if (video.SourceFingerprint is not null && MatroskaMetadataXml.GlobalValues(original.Tags, VideoImporter.OriginalFileNameTag).Count == 0)
-                extraTags[VideoImporter.OriginalFileNameTag] = MetadataText.Normalize(video.DisplayName);
-            if (!missing && extraTags.Count == 0) return false;
-            metadata = MetadataText.AsStored(metadata);
-            var plan = await PlanWriteAsync(original, metadata, extraTags, keepThumbnails: true, scratch, cancellationToken);
-            await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
+            if (additions.Count == 0) return false;
+            var tags = new XDocument(original.Tags);
+            MatroskaMetadataXml.AddGlobal(tags, additions);
+            var tagsPath = Path.Combine(scratch, "tags.xml");
+            await File.WriteAllTextAsync(tagsPath, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + tags, cancellationToken);
+            var plan = new WritePlan(["--tags", "all:" + tagsPath], original.Manifest, TouchesAttachments: false, additions);
+            await WriteWithRollbackAsync(path, original, expected, plan, scratch, cancellationToken);
             return true;
         }
         finally { DeleteDirectory(scratch); }
