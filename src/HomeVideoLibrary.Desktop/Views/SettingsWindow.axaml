@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:c="using:HomeVideoLibrary.UI.Controls"
  x:Class="HomeVideoLibrary.Desktop.Views.SettingsWindow" x:DataType="vm:SettingsViewModel"
- Title="Settings" Width="560" SizeToContent="Height" CanResize="False" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+ Title="Settings" Width="560" SizeToContent="Height" CanResize="False" SystemDecorations="BorderOnly" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
  <c:VcrDialog Title="SETTINGS">
   <c:VcrDialog.Footer>
    <c:PlasticButton x:Name="CloseButton" Content="CLOSE" Classes="primary" IsDefault="True" IsCancel="True"/>

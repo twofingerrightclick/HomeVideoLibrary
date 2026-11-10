@@ -5,6 +5,11 @@ namespace HomeVideoLibrary.Desktop.ViewModels;
 /// <c>PageViews.Template</c>, which builds a new view for every page.</summary>
 public abstract class PageViewModel : ViewModelBase, IAsyncDisposable
 {
+    private bool _isImmersive;
+
+    /// <summary>Whether the page fills the window (for example fullscreen video); the shell hides its own chrome meanwhile.</summary>
+    public bool IsImmersive { get => _isImmersive; protected set => SetProperty(ref _isImmersive, value); }
+
     /// <summary>Runs once after the page's view exists (so native surfaces can bind first).</summary>
     public virtual Task LoadAsync() => Task.CompletedTask;
 

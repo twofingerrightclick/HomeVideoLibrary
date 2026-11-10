@@ -151,10 +151,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         get => _page;
         private set
         {
+            var previous = _page;
             if (!SetProperty(ref _page, value)) return;
-            OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown));
+            if (previous is not null) previous.PropertyChanged -= PagePropertyChanged;
+            if (value is not null) value.PropertyChanged += PagePropertyChanged;
+            OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown)); OnPropertyChanged(nameof(IsChromeShown));
             UpdateCommands();
         }
+    }
+
+    /// <summary>Whether the shell's own status bar shows; hidden while a page is immersive (fullscreen video).</summary>
+    public bool IsChromeShown => Page is not { IsImmersive: true };
+
+    private void PagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(PageViewModel.IsImmersive)) OnPropertyChanged(nameof(IsChromeShown));
     }
     public bool HasPage => Page is not null;
     public bool IsShelfShown => Page is null;
