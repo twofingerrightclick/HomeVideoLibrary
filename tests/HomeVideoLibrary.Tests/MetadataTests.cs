@@ -518,6 +518,59 @@ public sealed class MetadataTests : IDisposable
         Assert.Equal("640,480", probe.StandardOutput.Trim());
     }
 
+    [Fact]
+    public async Task MediaIdentitySurvivesMetadataSavesAndTheCacheButNotNewMedia()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        // mkvmerge writes statistics tags stamped with its version and the date.
+        var muxed = Path.Combine(_root, "muxed.mkv");
+        await ToolAsync(_tools.MkvMerge, ["-o", muxed, path]);
+        File.Move(muxed, path, overwrite: true);
+        Assert.Contains("tag__statistics_writing_date_utc", (await ToolAsync(_tools.MkvMerge, ["-J", path])).StandardOutput);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var model = new LibraryModel(catalog, service);
+        var imported = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(imported.MediaIdentity);
+
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        await service.SaveAsync(video, imported.ToMetadata()! with { Title = "Renamed", Tags = ["family"], Thumbnails = [thumbnail] });
+        var saved = await model.UpsertFromFileAsync(video);
+        Assert.NotEqual(imported.Stamp, saved.Stamp);
+        Assert.Equal(imported.MediaIdentity, saved.MediaIdentity);
+
+        var reopened = new LibraryModel(new LibraryCatalog(catalog.Paths), service);
+        await reopened.LoadAsync();
+        Assert.Equal(saved.MediaIdentity, reopened.Snapshot.Find(video.Id)!.MediaIdentity);
+
+        var trimmed = Path.Combine(_root, "trimmed.mkv");
+        // A lossless trim of the end, which unlike mkvmerge's split need not end on a keyframe.
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-t", "1", "-c", "copy", trimmed]);
+        File.Move(trimmed, path, overwrite: true);
+        var trim = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(trim.MediaIdentity);
+        Assert.NotEqual(saved.MediaIdentity, trim.MediaIdentity);
+
+        // Same size and length, different pictures.
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", path]);
+        var replaced = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(replaced.MediaIdentity);
+        Assert.NotEqual(saved.MediaIdentity, replaced.MediaIdentity);
+    }
+
+    [Fact]
+    public void MediaIdentityIgnoresWhenAndByWhatStatisticsWereWrittenButNotTheMediaTheyDescribe()
+    {
+        static string Track(string frames, string date, string app) =>
+            $$$"""{"id":0,"type":"video","codec":"AVC","properties":{"uid":42,"codec_id":"V_MPEG4/ISO/AVC","pixel_dimensions":"640x480","tag_number_of_frames":"{{{frames}}}","tag__statistics_writing_date_utc":"{{{date}}}","tag__statistics_writing_app":"{{{app}}}","language":"und"}}""";
+        var original = MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("25", "2024-01-01 00:00:00", "mkvmerge v80")]);
+
+        Assert.Equal(original, MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("25", "2026-11-10 09:00:00", "mkvmerge v103")]));
+        Assert.NotEqual(original, MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("24", "2024-01-01 00:00:00", "mkvmerge v80")]));
+        Assert.NotEqual(original, MatroskaMetadataService.MediaIdentityOf(960_000_000, [Track("25", "2024-01-01 00:00:00", "mkvmerge v80")]));
+    }
+
     private async Task<(LibraryCatalog Catalog, LibraryVideo Video)> CreateVideoAsync()
     {
         var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));

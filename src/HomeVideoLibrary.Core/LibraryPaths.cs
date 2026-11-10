@@ -18,6 +18,8 @@ public sealed class LibraryPaths
     public string ScratchDirectory => Path.Combine(CacheDirectory, "scratch");
     public string ThumbnailCacheDirectory => Path.Combine(CacheDirectory, "thumbnails");
     public string PreviewDirectory => Path.Combine(CacheDirectory, "preview");
+    /// <summary>Shelf hover strips. Unlike <see cref="PreviewDirectory"/>, kept across launches.</summary>
+    public string StripDirectory => Path.Combine(CacheDirectory, "strips");
 
     public static string VideoRelativePath(Guid id) => $"Videos/{id:N}.mkv";
 

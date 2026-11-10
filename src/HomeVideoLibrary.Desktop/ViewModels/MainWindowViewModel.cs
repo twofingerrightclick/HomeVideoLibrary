@@ -49,6 +49,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibraryModel? _model;
     private LibraryServices? _services;
     private PreviewCache? _previews;
+    /// <summary>Builds the open library's hover strips; null without a library or without the media tools.</summary>
+    private HoverStripScheduler? _strips;
     private LibrarySnapshot _shown = LibrarySnapshot.Empty;
     private readonly SemaphoreSlim _navigation = new(1, 1);
     private Task<bool>? _closing;
@@ -69,13 +71,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         Jobs = new JobQueue(OpenJobOutputAsync, dependencies.Time);
         Jobs.Finished += JobFinished;
         Jobs.Drained += LaneDrained;
-        Jobs.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.ActiveCount)) UpdateCommands(); };
+        Jobs.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(JobQueue.ActiveCount)) return;
+            UpdateCommands();
+            _strips?.BusyChanged();
+        };
         Shelf = new ShelfViewModel(CreatePreviewSession, (record, at) => OpenVideoAsync(record, at));
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
+        Settings.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(SettingsViewModel.IsIndexing)) _strips?.BusyChanged(); };
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
         Albums.PropertyChanged += (_, args) =>
@@ -203,11 +211,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private VideoRecord? FirstSelected() => Shelf.SelectedRecords.FirstOrDefault();
 
-    private TapePreviewSession? CreatePreviewSession(TapeViewModel tape)
-    {
-        if (_model is not { } model || _services is not { } services || _previews is not { } previews || !ToolsReady || tape.IsMissing) return null;
-        return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
-    }
+    private TapePreviewSession? CreatePreviewSession(TapeViewModel tape) =>
+        _strips is { } strips && !tape.IsMissing ? new TapePreviewSession(tape.Record, strips) : null;
 
     /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter) or on inspector
     /// <paramref name="tab"/> (EDIT for TRIM/SPLIT). When it cannot (the app is busy switching or closing, or the video or
@@ -384,6 +389,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally
         {
             if (_model is { } model) model.Changed -= OnModelChanged;
+            // Strip builds write into the library, so they stop before its lock is released.
+            if (_strips is { } strips)
+            {
+                _strips = null;
+                await strips.DisposeAsync();
+            }
             _lock?.Dispose(); _lock = null;
         }
     }
@@ -500,6 +511,12 @@ public sealed class MainWindowViewModel : ViewModelBase
             throw;
         }
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
+        if (unavailable.Count == 0)
+        {
+            var store = new HoverStripStore(paths, services.Files);
+            _ = store.LoadAsync(model.Snapshot.Videos.Keys.ToHashSet());
+            _strips = new HoverStripScheduler(store, model.GetVideoPath, () => Jobs.HasActive || Settings.IsIndexing);
+        }
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);
         Settings.ToolHealth = unavailable.Count == 0 ? "FFmpeg and MKVToolNix are installed." : ToolWarning;
@@ -523,6 +540,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasLibrary)); OnPropertyChanged(nameof(Model));
         model.Changed += OnModelChanged;
         RefreshView();
+        _strips?.Enqueue(model.Snapshot.Chronological);
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
@@ -568,9 +586,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     // The model publishes snapshots on its writer thread; this is the single hop onto the UI thread.
     private void OnModelChanged(LibraryDelta delta) => _dependencies.Post(() =>
     {
+        if (_model is not { } model) return;
         // Deltas queue up while the UI is busy; the first posted refresh shows the latest snapshot and the rest find
         // nothing new.
-        if (_model is { } model && !ReferenceEquals(model.Snapshot, _shown)) RefreshView();
+        if (!ReferenceEquals(model.Snapshot, _shown)) RefreshView();
+        // A delta from a library that has since been closed names no video of this one.
+        _strips?.Enqueue(delta.Added.Concat(delta.Updated).Select(model.Snapshot.Find).OfType<VideoRecord>());
     });
 
     /// <summary>Shows the model's current snapshot in every part of the window.</summary>

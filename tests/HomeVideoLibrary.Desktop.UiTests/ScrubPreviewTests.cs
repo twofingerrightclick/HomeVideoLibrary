@@ -113,5 +113,9 @@ public sealed class ScrubPreviewTests : IDisposable
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<string> ExtractThumbnailAsync(string mkvPath, Guid videoId, VideoThumbnailRef thumbnail,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

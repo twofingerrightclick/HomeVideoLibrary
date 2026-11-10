@@ -3,7 +3,7 @@ using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
-/// <summary>Hover-preview frames for videos without chosen thumbnails, captured on demand to
+/// <summary>The video page's scrub-bar preview frames, captured on demand to
 /// <c>.cache/preview/{videoId:N}/{bucket}.jpg</c>. The cache owns these files: it keeps at most
 /// <c>capacity</c> of them (least recently used are deleted) and runs at most <c>maxConcurrentCaptures</c>
 /// captures at once. A capture that failed is not retried until the video file changes.</summary>

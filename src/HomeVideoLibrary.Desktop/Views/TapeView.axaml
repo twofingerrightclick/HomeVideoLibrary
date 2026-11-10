@@ -19,6 +19,10 @@
     <Grid Width="208" Height="132" RowDefinitions="112,20">
      <Image x:Name="PreviousPreview" Stretch="UniformToFill"/>
      <Image x:Name="CurrentPreview" Stretch="UniformToFill"/>
+     <!-- Shown while the tape's strip is still being built. -->
+     <Border x:Name="PreparingPlate" Background="{DynamicResource Vcr.Brush.Chassis.Deep}" CornerRadius="2" IsVisible="False">
+      <TextBlock Classes="meta" Text="Preparing preview" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+     </Border>
      <TextBlock x:Name="PreviewTime" Grid.Row="1" Classes="meta" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Grid>
    </Border>

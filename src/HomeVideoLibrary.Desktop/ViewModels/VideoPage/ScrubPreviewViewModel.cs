@@ -88,9 +88,7 @@ public sealed class ScrubPreviewViewModel : ViewModelBase, IDisposable
         try
         {
             await Task.Delay(Debounce, _time, cancellationToken);
-            // The shelf's hover previews use slots 0..TapePreviewSession.Buckets-1 of the same cache; these follow them.
-            var path = await previews.GetAsync(_video.Id, _video.Stamp, _path, MiddleOf(slot), TapePreviewSession.Buckets + slot,
-                cancellationToken);
+            var path = await previews.GetAsync(_video.Id, _video.Stamp, _path, MiddleOf(slot), slot, cancellationToken);
             var frame = await Task.Run(() =>
             {
                 using var stream = File.OpenRead(path);

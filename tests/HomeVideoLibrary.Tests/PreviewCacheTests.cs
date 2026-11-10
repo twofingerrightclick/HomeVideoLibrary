@@ -1,61 +1,15 @@
 using HomeVideoLibrary.Core;
-using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
 namespace HomeVideoLibrary.Tests;
 
-public sealed class TapePreviewTests : IDisposable
+public sealed class PreviewCacheTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-preview-" + Guid.NewGuid().ToString("N"));
     private readonly FakeMatroska _files = new();
     private LibraryPaths Paths => new(_root);
-
-    [Theory]
-    [InlineData(20, 0, 0)]
-    [InlineData(20, 9, 19)]
-    [InlineData(20, 5, 11)]
-    [InlineData(3, 9, 2)]
-    [InlineData(1, 9, 0)]
-    public void ScrubbingAcrossTheTapeReachesTheFirstAndLastChosenThumbnail(int count, int bucket, int expected) =>
-        Assert.Equal(expected, TapePreviewSession.ThumbnailIndex(bucket, count));
-
-    [Fact]
-    public async Task ChosenThumbnailsComeFromTheRecordRefsWithoutReadingTheMkv()
-    {
-        var late = new VideoThumbnailRef(Guid.NewGuid(), TimeSpan.FromSeconds(60), "late.jpg", "AA");
-        var early = new VideoThumbnailRef(Guid.NewGuid(), TimeSpan.FromSeconds(10), "early.jpg", "BB");
-        var video = Record("video") with { Thumbnails = [early, late] };
-        using var session = new TapePreviewSession(video, "video.mkv", _files, new PreviewCache(Paths, _files));
-
-        Assert.Equal(early.Position, (await session.GetAsync(0, default)).Position);
-        var frame = await session.GetAsync(9, default);
-        Assert.Equal(late.Position, frame.Position);
-        Assert.True(File.Exists(frame.ImagePath));
-        Assert.Equal((0, 0, 2), (_files.Reads, _files.Captures, _files.Extracts));
-    }
-
-    [Fact]
-    public async Task UnannotatedVideosUseCachedCapturesAndACancelledDebounceStartsNoWork()
-    {
-        var previews = new PreviewCache(Paths, _files);
-        var video = Record("video");
-        using var session = new TapePreviewSession(video, "video.mkv", _files, previews);
-        using (var cancellation = new CancellationTokenSource())
-        {
-            var cancelled = session.GetAsync(3, cancellation.Token); cancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
-        }
-        Assert.Equal(0, _files.Captures);
-
-        var first = await session.GetAsync(3, default);
-        using var again = new TapePreviewSession(video, "video.mkv", _files, previews);
-        Assert.Equal(first, await again.GetAsync(3, default));
-        Assert.Equal(1, _files.Captures);
-        Assert.Equal(Path.Combine(Paths.PreviewDirectory, video.Id.ToString("N"), "3.jpg"), first.ImagePath);
-        Assert.InRange(first.Position.TotalSeconds, 0, video.Duration.TotalSeconds);
-    }
 
     [Fact]
     public async Task CaptureCacheIsBoundedAndEvictsTheLeastRecentlyUsedFrame()
