@@ -75,7 +75,8 @@ keys green.
     motion (macOS setting) keeps the tape still.
   - Clicking a tape plays it coming out toward the viewer (180 ms scale-up and fade) before its page opens; skipped with reduced motion.
 - **Status bar:** the status line and the Activity key. Its light is on while a job is queued or running and its text
-  summarizes the current job, how many wait, and failures. It opens the Activity drawer, a native popup so it also
+  summarizes the current job, how many wait, and failures, on one line trimmed to a 100 px key; the tooltip and
+  accessible name carry the whole summary. It opens the Activity drawer, a native popup so it also
   opens over a playing video: every import, render, Trash move and backfill as a row with progress, ETA when known,
   "Queued (#n)", cancel or remove, and OPEN for a finished job's output. Imports and renders are separate FIFO
   lanes, one job at a time each. A chime plays when a batch finishes if button sounds are on. Closing with jobs
