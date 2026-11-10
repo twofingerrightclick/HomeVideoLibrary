@@ -111,6 +111,14 @@
   <Setter Property="Padding" Value="4,0"/>
   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
  </Style>
+ <!-- Opening a tape from the shelf plays it coming out toward the viewer, unless the user asked for reduced motion. -->
+ <Style Selector="ListBox.shelf c|VhsSpine">
+  <Setter Property="OpenTransition" Value="True"/>
+ </Style>
+ <Style Selector="Window.reduced-motion ListBox.shelf c|VhsSpine">
+  <Setter Property="OpenTransition" Value="False"/>
+ </Style>
+
  <!-- The hovered tape comes forward over its neighbours. -->
  <Style Selector="ListBox.shelf ListBoxItem:pointerover">
   <Setter Property="ZIndex" Value="1"/>
