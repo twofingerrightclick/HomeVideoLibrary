@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -19,14 +20,19 @@ namespace HomeVideoLibrary.UI.Controls;
 /// the field executes <see cref="CommitTitleCommand"/> with the trimmed draft when it differs from
 /// <see cref="Title"/>; Escape discards the draft. Bind <see cref="IsEditing"/> and
 /// <see cref="DraftTitle"/> two-way to the row's view model so an edit survives playhead updates.
+/// While <see cref="IsExpanded"/>, the row shows <see cref="ExpandedContent"/> (the host's editor for the chapter)
+/// below its header and does not open the inline title field. Clicks inside the expanded content are the
+/// content's own, and a double-click is one click gesture, so a row a click expands stays expanded.
 /// </summary>
 [TemplatePart(EditorHostPartName, typeof(ContentControl))]
 [TemplatePart(ActionsPartName, typeof(Control))]
-[PseudoClasses(":current", ":editing")]
+[TemplatePart(ExpandedPartName, typeof(Control))]
+[PseudoClasses(":current", ":editing", ":expanded")]
 public class ChapterListItem : ContentControl
 {
     public const string EditorHostPartName = "PART_Editor";
     public const string ActionsPartName = "PART_ContentPresenter";
+    public const string ExpandedPartName = "PART_ExpandedPresenter";
 
     public static readonly StyledProperty<string> TitleProperty =
         AvaloniaProperty.Register<ChapterListItem, string>(nameof(Title), string.Empty);
@@ -56,6 +62,17 @@ public class ChapterListItem : ContentControl
     public static readonly StyledProperty<string?> TitleWatermarkProperty =
         AvaloniaProperty.Register<ChapterListItem, string?>(nameof(TitleWatermark), "Untitled chapter");
 
+    /// <summary>Shows <see cref="ExpandedContent"/> below the header. Display-only; the host decides which row is expanded.</summary>
+    public static readonly StyledProperty<bool> IsExpandedProperty =
+        AvaloniaProperty.Register<ChapterListItem, bool>(nameof(IsExpanded));
+
+    /// <summary>What the expanded row shows below its header; the host supplies it only while expanded.</summary>
+    public static readonly StyledProperty<object?> ExpandedContentProperty =
+        AvaloniaProperty.Register<ChapterListItem, object?>(nameof(ExpandedContent));
+
+    public static readonly StyledProperty<IDataTemplate?> ExpandedContentTemplateProperty =
+        AvaloniaProperty.Register<ChapterListItem, IDataTemplate?>(nameof(ExpandedContentTemplate));
+
     public static readonly StyledProperty<ICommand?> JumpCommandProperty =
         AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(JumpCommand));
 
@@ -65,6 +82,7 @@ public class ChapterListItem : ContentControl
 
     private ContentControl? _editorHost;
     private Control? _actions;
+    private Control? _expanded;
     private TextBox? _editor;
     private string _startText = ScrubTimeline.FormatTimestamp(TimeSpan.Zero);
     private string _startGhostText = "8:88";
@@ -128,6 +146,24 @@ public class ChapterListItem : ContentControl
         set => SetValue(TitleWatermarkProperty, value);
     }
 
+    public bool IsExpanded
+    {
+        get => GetValue(IsExpandedProperty);
+        set => SetValue(IsExpandedProperty, value);
+    }
+
+    public object? ExpandedContent
+    {
+        get => GetValue(ExpandedContentProperty);
+        set => SetValue(ExpandedContentProperty, value);
+    }
+
+    public IDataTemplate? ExpandedContentTemplate
+    {
+        get => GetValue(ExpandedContentTemplateProperty);
+        set => SetValue(ExpandedContentTemplateProperty, value);
+    }
+
     public ICommand? JumpCommand
     {
         get => GetValue(JumpCommandProperty);
@@ -146,6 +182,7 @@ public class ChapterListItem : ContentControl
         CloseEditor();
         _editorHost = e.NameScope.Find<ContentControl>(EditorHostPartName);
         _actions = e.NameScope.Find<Control>(ActionsPartName);
+        _expanded = e.NameScope.Find<Control>(ExpandedPartName);
         if (IsEditing)
         {
             OpenEditor();
@@ -163,6 +200,10 @@ public class ChapterListItem : ContentControl
         else if (change.Property == IsCurrentProperty)
         {
             PseudoClasses.Set(":current", change.GetNewValue<bool>());
+        }
+        else if (change.Property == IsExpandedProperty)
+        {
+            PseudoClasses.Set(":expanded", change.GetNewValue<bool>());
         }
         else if (change.Property == IsEditingProperty)
         {
@@ -184,7 +225,8 @@ public class ChapterListItem : ContentControl
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed;
+        _pressedHere = e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed
+            && e.ClickCount == 1 && !IsWithin(e.Source, _expanded);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -207,7 +249,7 @@ public class ChapterListItem : ContentControl
             return;
         }
 
-        if (e.Key == Key.F2)
+        if (e.Key == Key.F2 && !IsExpanded)
         {
             e.Handled = true;
             SetCurrentValue(IsEditingProperty, true);
@@ -221,8 +263,9 @@ public class ChapterListItem : ContentControl
 
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        // Double-clicks on the host's trailing actions (e.g. a delete key) are not rename gestures.
-        if (e.Source is Visual source && _actions is not null && (source == _actions || _actions.IsVisualAncestorOf(source)))
+        // Double-clicks on the host's trailing actions (e.g. a delete key) or its expanded editor are not rename
+        // gestures, and an expanded row is edited in its expanded content.
+        if (IsExpanded || IsWithin(e.Source, _actions) || IsWithin(e.Source, _expanded))
         {
             return;
         }
@@ -310,6 +353,9 @@ public class ChapterListItem : ContentControl
             _editorHost.Content = null;
         }
     }
+
+    private static bool IsWithin(object? source, Control? part) =>
+        source is Visual visual && part is not null && (visual == part || part.IsVisualAncestorOf(visual));
 
     private static void Execute(ICommand? command, object? parameter)
     {

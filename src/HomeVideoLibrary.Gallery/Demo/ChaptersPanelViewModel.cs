@@ -12,12 +12,15 @@ public sealed class ChapterRowViewModel : ObservableObject, IChapterMark
     private bool _isCurrent;
     private bool _isEditing;
     private string? _draftTitle;
+    private bool _isExpanded;
 
-    public ChapterRowViewModel(TimeSpan start, string title, Action<ChapterRowViewModel> jump, Action<ChapterRowViewModel, string> rename)
+    public ChapterRowViewModel(TimeSpan start, string title, Action<ChapterRowViewModel> jump, Action<ChapterRowViewModel> toggle,
+        Action<ChapterRowViewModel, string> rename)
     {
         Start = start;
         _title = title;
         Jump = new RelayCommand(() => jump(this));
+        ToggleExpanded = new RelayCommand(() => toggle(this));
         CommitTitle = new RelayCommand<string>(title => rename(this, title));
     }
 
@@ -47,7 +50,26 @@ public sealed class ChapterRowViewModel : ObservableObject, IChapterMark
         set => SetField(ref _draftTitle, value);
     }
 
+    /// <summary>Whether this row is open into its editor. The panel keeps one row expanded at a time.</summary>
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (SetField(ref _isExpanded, value))
+            {
+                OnPropertyChanged(nameof(Editor));
+            }
+        }
+    }
+
+    /// <summary>The expanded editor's content: this row while expanded, else nothing, so the editor's controls exist
+    /// only while it shows.</summary>
+    public ChapterRowViewModel? Editor => IsExpanded ? this : null;
+
     public ICommand Jump { get; }
+
+    public ICommand ToggleExpanded { get; }
 
     public ICommand CommitTitle { get; }
 }
@@ -79,6 +101,7 @@ public sealed class ChaptersPanelViewModel : ObservableObject
     private TimeSpan _position;
     private IReadOnlyList<IChapterMark> _marks = [];
     private bool _canAddChapter;
+    private ChapterRowViewModel? _expanded;
 
     public ChaptersPanelViewModel(TimeSpan duration, IEnumerable<(TimeSpan Start, string Title)> chapters)
     {
@@ -129,11 +152,27 @@ public sealed class ChaptersPanelViewModel : ObservableObject
     public ICommand Seek { get; }
 
     private ChapterRowViewModel NewRow(TimeSpan start, string title) =>
-        new(start, title, row => Position = row.Start, (row, title) =>
+        new(start, title, row => Position = row.Start, row => Expand(_expanded == row ? null : row), (row, title) =>
         {
             row.Title = title;
+            row.DraftTitle = null;
             PublishMarks();
         });
+
+    // One row open at a time: opening a row closes the previous one.
+    private void Expand(ChapterRowViewModel? row)
+    {
+        if (_expanded is not null)
+        {
+            _expanded.IsExpanded = false;
+        }
+
+        _expanded = row;
+        if (row is not null)
+        {
+            row.IsExpanded = true;
+        }
+    }
 
     private void AddChapterAtPlayhead()
     {
@@ -144,9 +183,9 @@ public sealed class ChaptersPanelViewModel : ObservableObject
 
         var index = ChapterPlacement.PlaceholderIndex([.. _chapters.Select(c => c.Start)], Position);
         var row = NewRow(Position, string.Empty);
-        row.IsEditing = true;
         _chapters.Insert(index, row);
         Rows.Insert(Rows.IndexOf(_placeholder), row);
+        Expand(row);
         PublishMarks();
         UpdateForPosition();
     }
