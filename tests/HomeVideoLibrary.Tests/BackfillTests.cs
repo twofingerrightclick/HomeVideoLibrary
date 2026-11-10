@@ -139,6 +139,23 @@ public sealed class BackfillTests : IDisposable
         Assert.False(new IdentityBackfill(model, _identity).IsDue);
     });
 
+    [Fact]
+    public async Task AUserSaveThatClearsATitleHandlesItsVideoAndOtherSavesLeaveItPending()
+    {
+        var (model, videos) = await LibraryAsync(2);
+        _files.Set(model.Catalog.GetVideoPath(videos[0].RelativePath), VideoMetadata.Empty with { Title = "Birthday" });
+        await model.UpsertFromFileAsync(videos[0]);
+        var backfill = new IdentityBackfill(model, _identity);
+        var cleared = model.Snapshot.Find(videos[0].Id)!;
+        var described = model.Snapshot.Find(videos[1].Id)!;
+
+        await backfill.SavedAsync(cleared, VideoMetadata.Empty);
+        await backfill.SavedAsync(described, VideoMetadata.Empty with { Description = "At the lake" });
+        await backfill.RunAsync([videos[0].Id, videos[1].Id], _ => false);
+
+        Assert.Equal([videos[1].Id], _identity.Checked);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("0f8fad5b-d9cb")]

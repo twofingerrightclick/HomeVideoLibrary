@@ -51,6 +51,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibraryLock? _lock;
     private LibraryModel? _model;
     private LibraryServices? _services;
+    private IdentityBackfill? _backfill;
     private PreviewCache? _previews;
     /// <summary>Builds the open library's hover strips; null without a library or without the media tools.</summary>
     private HoverStripScheduler? _strips;
@@ -234,7 +235,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (Trash.Holds(record.Id)) return Refuse($"“{record.Label}” is being moved to the Trash.");
         return NavigateAsync(() =>
         {
-            var indexed = new IndexedMetadataService(services.Metadata, model);
+            var indexed = new IndexedMetadataService(services.Metadata, model, _backfill);
             indexed.IndexingFailed += warning => Status = warning;
             return new VideoPageViewModel(new VideoPageDependencies
             {
@@ -524,6 +525,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             throw;
         }
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
+        _backfill = services.Identity is { } identity ? new IdentityBackfill(model, identity) : null;
         if (unavailable.Count == 0)
         {
             var store = new HoverStripStore(paths, services.Files);
@@ -557,8 +559,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
-        if (services.Identity is { } identity && ToolsReady)
-            _ = BackfillJob.RunAsync(Jobs, new IdentityBackfill(model, identity), id => Volatile.Read(ref _page)?.Shows(id) == true,
+        if (_backfill is { } backfill && ToolsReady)
+            _ = BackfillJob.RunAsync(Jobs, backfill, id => Volatile.Read(ref _page)?.Shows(id) == true,
                 () => ReferenceEquals(_model, model) && IsSettled);
     }
 
