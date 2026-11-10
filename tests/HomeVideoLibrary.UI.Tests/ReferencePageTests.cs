@@ -39,6 +39,30 @@ public sealed class ReferencePageTests
     }
 
     [AvaloniaFact]
+    public void Clicking_a_row_expands_it_in_place_one_row_at_a_time()
+    {
+        var page = ChaptersSection.CreateVideoA();
+        var (window, host) = Host(new ContentControl { ContentTemplate = VideoPageViewModel.ViewTemplate, Content = page });
+        window.Height = 900;
+        Dispatcher.UIThread.RunJobs();
+        ChapterListItem Item(string title) => host.GetVisualDescendants().OfType<ChapterListItem>().Single(i => i.Title == title);
+
+        window.MouseDown(At(Item("Hot cocoa"), 0.3), Avalonia.Input.MouseButton.Left);
+        window.MouseUp(At(Item("Hot cocoa"), 0.3), Avalonia.Input.MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(Item("Hot cocoa").IsExpanded);
+        Assert.Single(Item("Hot cocoa").GetVisualDescendants().OfType<TextBox>());
+
+        window.MouseDown(At(Item("Goodnight"), 0.3), Avalonia.Input.MouseButton.Left);
+        window.MouseUp(At(Item("Goodnight"), 0.3), Avalonia.Input.MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(Item("Hot cocoa").IsExpanded);
+        Assert.Empty(Item("Hot cocoa").GetVisualDescendants().OfType<TextBox>());
+        Assert.True(Item("Goodnight").IsExpanded);
+    }
+
+    [AvaloniaFact]
     public void The_placeholder_moves_between_chapters_instead_of_rows_being_rebuilt()
     {
         var panel = ChaptersSection.CreateVideoA().Chapters;

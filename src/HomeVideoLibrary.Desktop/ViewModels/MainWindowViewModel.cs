@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Audio;
 using HomeVideoLibrary.UI.Logic;
@@ -59,6 +60,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _toolWarning = "", _recoveryNotice = "", _toast = "";
     private bool _isDrawerOpen = true, _isDraggingTapes;
     private PageViewModel? _page;
+    private readonly VideoPageSession _videoPageSession = new();
 
     public MainWindowViewModel(MainWindowDependencies dependencies)
     {
@@ -217,8 +219,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
             indexed.IndexingFailed += warning => Status = warning;
-            return new VideoEditorPage(new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed,
-                _dependencies.CreatePlayback(), record.ToMetadata()));
+            return new VideoPageViewModel(new VideoPageDependencies
+            {
+                Record = record, Path = model.GetVideoPath(record), Metadata = indexed, Playback = _dependencies.CreatePlayback(),
+                Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
+                StartAt = at ?? TimeSpan.Zero,
+                Previews = ToolsReady ? _previews : null,
+                Back = () => NavigateAsync(() => null),
+                ShowAlbum = async album =>
+                {
+                    if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
+                },
+                AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
+            });
         });
     }
 
@@ -543,6 +556,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         _shown = snapshot;
         Albums.Apply(snapshot);
         Shelf.Apply(snapshot, Albums.Filter);
+        (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
         OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
 

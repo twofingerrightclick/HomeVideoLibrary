@@ -67,6 +67,67 @@ public sealed class ChapterListItemBehaviorTests
         Assert.NotEqual("typed in the first edit", second.Text);
     }
 
+    [AvaloniaFact]
+    public void Expanded_content_shows_only_while_expanded_and_its_clicks_are_its_own()
+    {
+        var jumps = new RecordingCommand();
+        var inside = new Border { Height = 60, Background = Avalonia.Media.Brushes.Transparent };
+        var (window, row) = Host(new ChapterListItem { Title = "Cake", JumpCommand = jumps, ExpandedContent = inside });
+        var expanded = row.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.ContentPresenter>()
+            .Single(presenter => presenter.Name == ChapterListItem.ExpandedPartName);
+        Assert.False(expanded.IsVisible);
+
+        row.IsExpanded = true;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(expanded.IsVisible);
+        Assert.True(inside.IsEffectivelyVisible);
+        Assert.Contains(":expanded", row.Classes);
+        var point = Headless.At(inside, 0.5);
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+
+        Assert.Empty(jumps.Calls);
+    }
+
+    [AvaloniaFact]
+    public void A_double_click_is_one_click_and_does_not_rename_a_row_it_expanded()
+    {
+        var row = new ChapterListItem { Title = "Cake" };
+        var expand = new ExpandCommand(row);
+        row.JumpCommand = expand;
+        var (window, _) = Host(row);
+        var point = Headless.At(row, 0.5);
+
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, expand.Calls);
+        Assert.True(row.IsExpanded);
+        Assert.False(row.IsEditing);
+    }
+
+    [AvaloniaFact]
+    public void F2_does_not_open_the_inline_field_on_an_expanded_row()
+    {
+        var (window, row) = Host(new ChapterListItem { Title = "Cake", IsExpanded = true });
+        row.Focus();
+
+        window.KeyPressQwerty(PhysicalKey.F2, RawInputModifiers.None);
+
+        Assert.False(row.IsEditing);
+    }
+
+    private sealed class ExpandCommand(ChapterListItem row) : System.Windows.Input.ICommand
+    {
+        public int Calls { get; private set; }
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+        public bool CanExecute(object? parameter) => true;
+        public void Execute(object? parameter) { Calls++; row.IsExpanded = !row.IsExpanded; }
+    }
+
     private static TextBox Editor(ChapterListItem row) => EditorOrNull(row) ?? throw new InvalidOperationException("No title field.");
 
     private static TextBox? EditorOrNull(ChapterListItem row) => row.GetVisualDescendants().OfType<TextBox>().SingleOrDefault();

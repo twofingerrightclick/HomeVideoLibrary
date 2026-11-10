@@ -57,16 +57,36 @@ public sealed class ShortcutRouter
         object? parameter = null, KeyModifiers extra = KeyModifiers.None) =>
         Map(key, CommandModifier | extra, command, sound, parameter, inTextEntry: true);
 
-    /// <summary>Routes unhandled key presses within <paramref name="root"/> through this router.</summary>
-    public void Attach(InputElement root)
+    /// <summary>Routes unhandled key presses within <paramref name="root"/> through this router until the returned
+    /// subscription is disposed.</summary>
+    public IDisposable Attach(InputElement root)
     {
-        root.AddHandler(InputElement.KeyDownEvent, (_, args) => Handle(args), RoutingStrategies.Bubble);
-        root.AddHandler(InputElement.KeyUpEvent, (_, args) => Released(args.Key), RoutingStrategies.Bubble, handledEventsToo: true);
+        EventHandler<KeyEventArgs> down = (_, args) => Handle(args);
+        EventHandler<KeyEventArgs> up = (_, args) => Released(args.Key);
+        EventHandler<VisualTreeAttachmentEventArgs> attached = (_, args) => { if (args.Root is WindowBase window) window.Deactivated += ForgetHeldKeys; };
+        EventHandler<VisualTreeAttachmentEventArgs> detached = (_, args) => { if (args.Root is WindowBase window) window.Deactivated -= ForgetHeldKeys; };
+        root.AddHandler(InputElement.KeyDownEvent, down, RoutingStrategies.Bubble);
+        root.AddHandler(InputElement.KeyUpEvent, up, RoutingStrategies.Bubble, handledEventsToo: true);
         // Keys released in another window never send KeyUp here. Focus moving between controls inside the window is
         // not a release, so only the window losing activation forgets held keys.
-        if (root is WindowBase window) window.Deactivated += ForgetHeldKeys;
-        root.AttachedToVisualTree += (_, args) => { if (args.Root is WindowBase attached) attached.Deactivated += ForgetHeldKeys; };
-        root.DetachedFromVisualTree += (_, args) => { if (args.Root is WindowBase detached) detached.Deactivated -= ForgetHeldKeys; };
+        var activationSource = root as WindowBase ?? TopLevel.GetTopLevel(root as Visual) as WindowBase;
+        if (activationSource is not null) activationSource.Deactivated += ForgetHeldKeys;
+        root.AttachedToVisualTree += attached;
+        root.DetachedFromVisualTree += detached;
+        return new Subscription(() =>
+        {
+            root.RemoveHandler(InputElement.KeyDownEvent, down);
+            root.RemoveHandler(InputElement.KeyUpEvent, up);
+            root.AttachedToVisualTree -= attached;
+            root.DetachedFromVisualTree -= detached;
+            if (activationSource is not null) activationSource.Deactivated -= ForgetHeldKeys;
+        });
+    }
+
+    private sealed class Subscription(Action dispose) : IDisposable
+    {
+        private Action? _dispose = dispose;
+        public void Dispose() => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
 
     /// <summary>Executes the first matching shortcut whose command can run; returns whether one ran. Key repeat of such

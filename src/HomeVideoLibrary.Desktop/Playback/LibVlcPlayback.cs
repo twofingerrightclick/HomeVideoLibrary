@@ -17,7 +17,7 @@ public sealed class LibVlcPlayback : IVideoPlayback
     public event EventHandler<PlaybackUpdate>? Updated;
     public long Version => Interlocked.Read(ref _version);
 
-    public Task<MediaPlayer> CreatePlayerAsync() => RunAsync(() =>
+    public Task<VideoSurface> CreatePlayerAsync() => RunAsync(() =>
     {
         ClosePlayer();
         LibVLC engine;
@@ -44,7 +44,7 @@ public sealed class LibVlcPlayback : IVideoPlayback
             Updated?.Invoke(this, new PlaybackUpdate(version, IsPlaying: false, Error: "Playback failed. Check the media file and native runtime."));
         };
         _player = player;
-        return Task.FromResult(player);
+        return Task.FromResult(new VideoSurface(player));
     });
 
     public Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken) => RunAsync(async () =>
