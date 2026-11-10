@@ -46,10 +46,15 @@ public sealed class MergePageViewModel : PageViewModel
         set
         {
             if (!SetProperty(ref _selectedSource, value)) return;
+            OnPropertyChanged(nameof(SelectedIndex));
             MoveUpCommand.RaiseCanExecuteChanged();
             MoveDownCommand.RaiseCanExecuteChanged();
         }
     }
+
+    /// <summary>Where <see cref="SelectedSource"/> is in the order, or -1; a list shows the selection by it, so a
+    /// reorder moves the highlight with the clip.</summary>
+    public int SelectedIndex => SelectedSource is { } source ? Sources.IndexOf(source) : -1;
 
     public string TotalDurationText => ScrubTimeline.FormatTimestamp(Sources.Aggregate(TimeSpan.Zero, (total, source) => total + source.Video.Duration));
 
@@ -91,9 +96,7 @@ public sealed class MergePageViewModel : PageViewModel
         var source = SelectedSource!;
         var current = Sources.IndexOf(source);
         Sources.Move(current, current + direction);
-        // Avalonia's list selection treats a Move as a remove and an add, so the bound list has just deselected the
-        // item and written null back here. The moved clip is still the one the user is arranging.
-        SelectedSource = source;
+        OnPropertyChanged(nameof(SelectedIndex));
         MoveUpCommand.RaiseCanExecuteChanged();
         MoveDownCommand.RaiseCanExecuteChanged();
         Plan.Request(PlanAsync(Sources.Select(source => source.Video).ToArray()));

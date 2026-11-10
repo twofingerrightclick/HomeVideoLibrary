@@ -18,28 +18,40 @@ namespace HomeVideoLibrary.Desktop.UiTests;
 public sealed class EditingViewTests
 {
     [AvaloniaFact]
-    public void Reordering_a_merge_keeps_the_list_selection()
+    public void Alt_arrows_keep_moving_the_selected_clip_and_the_list_keeps_showing_it()
     {
         var page = Merge();
         var (window, list) = Show(page);
-        var second = page.Sources[1];
-        list.SelectedItem = second;
-        Dispatcher.UIThread.RunJobs();
-
-        page.MoveUpCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Same(second, page.Sources[0]);
-        Assert.Same(second, page.SelectedSource);
-        Assert.Same(second, list.SelectedItem);
-        Assert.Same(second, page.SelectedSource);
-
+        var first = page.Sources[0];
+        list.SelectedIndex = 0;
         list.ContainerFromIndex(0)!.Focus();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(first, page.SelectedSource);
+
         window.KeyPressQwerty(PhysicalKey.ArrowDown, RawInputModifiers.Alt);
+        window.KeyReleaseQwerty(PhysicalKey.ArrowDown, RawInputModifiers.Alt);
+        Dispatcher.UIThread.RunJobs();
+        window.KeyPressQwerty(PhysicalKey.ArrowDown, RawInputModifiers.Alt);
+        window.KeyReleaseQwerty(PhysicalKey.ArrowDown, RawInputModifiers.Alt);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Same(second, page.Sources[1]);
-        Assert.Same(second, list.SelectedItem);
+        Assert.Same(first, page.Sources[2]);
+        Assert.Same(first, page.SelectedSource);
+        Assert.Same(first, list.SelectedItem);
+        Assert.Same(list.ContainerFromIndex(2), window.FocusManager!.GetFocusedElement());
+    }
+
+    [AvaloniaFact]
+    public void Esc_on_a_fresh_merge_page_goes_back()
+    {
+        var backs = 0;
+        var page = Merge(() => { backs++; return Task.CompletedTask; });
+        var (window, _) = Show(page);
+
+        window.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, backs);
     }
 
     [AvaloniaFact]
@@ -91,9 +103,9 @@ public sealed class EditingViewTests
         return (window, window.GetVisualDescendants().OfType<ListBox>().Single());
     }
 
-    private static MergePageViewModel Merge() =>
+    private static MergePageViewModel Merge(Func<Task>? back = null) =>
         new([Video("Christmas '91", TimeSpan.FromMinutes(42)), Video("Lake Tahoe", TimeSpan.FromMinutes(12)), Video("Little league", TimeSpan.FromMinutes(7))],
-            NoClipEditing.Edits(), () => Task.CompletedTask);
+            NoClipEditing.Edits(), back ?? (() => Task.CompletedTask));
 
     private static LibraryVideo Video(string name, TimeSpan duration) =>
         new(Guid.NewGuid(), $"Videos/{name}.mkv", name, duration, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);

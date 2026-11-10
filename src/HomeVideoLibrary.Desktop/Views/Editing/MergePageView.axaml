@@ -4,7 +4,7 @@
              xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
              xmlns:jobs="using:HomeVideoLibrary.Desktop.ViewModels"
              xmlns:local="using:HomeVideoLibrary.Desktop.Views.Editing"
-             x:Class="HomeVideoLibrary.Desktop.Views.Editing.MergePageView" x:DataType="vm:MergePageViewModel">
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.MergePageView" x:DataType="vm:MergePageViewModel" Focusable="True">
  <UserControl.Styles>
   <Style Selector="TextBlock.pending">
    <Setter Property="Opacity" Value="0.55"/>
@@ -31,7 +31,7 @@
      </StackPanel>
     </c:SectionHeader>
     <Border Classes="well">
-     <ListBox x:Name="SourceList" Classes="vcr" ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
+     <ListBox x:Name="SourceList" Classes="vcr" ItemsSource="{Binding Sources}" SelectedIndex="{Binding SelectedIndex, Mode=OneWay}" SelectionChanged="SourceSelectionChanged"
       AutomationProperties.Name="Clips in play order">
       <ListBox.ItemTemplate>
        <DataTemplate x:DataType="vm:MergeSource">

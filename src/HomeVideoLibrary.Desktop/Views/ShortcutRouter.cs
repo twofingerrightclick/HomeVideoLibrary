@@ -59,13 +59,15 @@ public sealed class ShortcutRouter
 
     /// <summary>Routes unhandled key presses within <paramref name="root"/> through this router until the returned
     /// subscription is disposed.</summary>
-    public IDisposable Attach(InputElement root)
+    /// <param name="routing">Bubble (the default) lets the focused control handle a key first. Tunnel runs the
+    /// shortcuts first, for pages whose controls consume keys the page maps (a list takes Alt+arrows as arrows).</param>
+    public IDisposable Attach(InputElement root, RoutingStrategies routing = RoutingStrategies.Bubble)
     {
         EventHandler<KeyEventArgs> down = (_, args) => Handle(args);
         EventHandler<KeyEventArgs> up = (_, args) => Released(args.Key);
         EventHandler<VisualTreeAttachmentEventArgs> attached = (_, args) => { if (args.Root is WindowBase window) window.Deactivated += ForgetHeldKeys; };
         EventHandler<VisualTreeAttachmentEventArgs> detached = (_, args) => { if (args.Root is WindowBase window) window.Deactivated -= ForgetHeldKeys; };
-        root.AddHandler(InputElement.KeyDownEvent, down, RoutingStrategies.Bubble);
+        root.AddHandler(InputElement.KeyDownEvent, down, routing);
         root.AddHandler(InputElement.KeyUpEvent, up, RoutingStrategies.Bubble, handledEventsToo: true);
         // Keys released in another window never send KeyUp here. Focus moving between controls inside the window is
         // not a release, so only the window losing activation forgets held keys.
