@@ -70,7 +70,7 @@ public static class LibraryPublisher
         }
         var unfinished = new List<Guid>();
         foreach (var (video, path) in pending)
-            if (!await TryFinishAsync(path, catalog.GetFinalVideoPath(video.RelativePath)))
+            if (!await TryFinishAsync(path, catalog.GetFinalVideoPath(video.RelativePath), retry: true))
                 unfinished.Add(video.Id);
         return new PublishResult(unfinished);
     }
@@ -81,15 +81,46 @@ public static class LibraryPublisher
     public static async Task<int> FinishCommittedAsync(LibraryCatalog catalog, CancellationToken cancellationToken = default) =>
         (await ReconcileAsync(catalog, quarantine: false, cancellationToken)).Finished;
 
-    /// <summary>Recovery for library open: finishes committed publications, quarantines pending files without a row
-    /// (a lost commit looks the same as an abandoned one, so nothing is deleted), and reports final-named files written
-    /// since the last recovery that have no row. Running it again changes nothing. Requires the library lock, so no
-    /// publication of this run can be in flight.</summary>
+    /// <summary>Recovery for library open, which must run before scratch is swept: finishes committed publications
+    /// (including a committed video whose move out of scratch did not survive a power loss, found by the id in its
+    /// staged name), quarantines pending files without a row (a lost commit looks the same as an abandoned one, so
+    /// nothing is deleted), and reports final-named files written since the last recovery that have no row. Running it
+    /// again changes nothing. Requires the library lock, so no publication of this run can be in flight.</summary>
     public static async Task<PublishRecovery> RecoverAsync(LibraryCatalog catalog, LibraryLock owner, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(owner);
         var recovery = await ReconcileAsync(catalog, quarantine: true, cancellationToken);
-        return recovery with { Unregistered = await FindUnregisteredAsync(catalog, cancellationToken) };
+        var adopted = await FinishFromScratchAsync(catalog, cancellationToken);
+        return recovery with { Finished = recovery.Finished + adopted, Unregistered = await FindUnregisteredAsync(catalog, cancellationToken) };
+    }
+
+    /// <summary>The name a staged file must have before <see cref="PublishAsync"/>, so recovery can tie it to its row.</summary>
+    public static string StagedName(Guid id) => $"{id:N}.mkv";
+
+    /// <summary>Moves staged files whose rows are committed but which are neither final nor pending into place.</summary>
+    private static async Task<int> FinishFromScratchAsync(LibraryCatalog catalog, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(catalog.Paths.ScratchDirectory)) return 0;
+        var finished = 0;
+        foreach (var staged in Directory.EnumerateFiles(catalog.Paths.ScratchDirectory, "*.mkv", SearchOption.AllDirectories))
+        {
+            var name = Path.GetFileNameWithoutExtension(staged);
+            if (!Guid.TryParseExact(name.StartsWith("import-", StringComparison.Ordinal) ? name[7..] : name, "N", out var id)) continue;
+            try
+            {
+                if (await catalog.GetRelativePathAsync(id, cancellationToken) is not { } relativePath) continue;
+                var final = catalog.GetFinalVideoPath(relativePath);
+                if (File.Exists(final) || File.Exists(catalog.Paths.PendingVideoPath(id))) continue;
+                DurableFile.Move(staged, final);
+                Trace.TraceWarning($"Recovered committed video {relativePath} from {staged}.");
+                finished++;
+            }
+            catch (Exception exception) when (exception is SqliteException or IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                Trace.TraceWarning($"Could not recover {staged}: {exception.Message}");
+            }
+        }
+        return finished;
     }
 
     private static async Task<PublishRecovery> ReconcileAsync(LibraryCatalog catalog, bool quarantine, CancellationToken cancellationToken)
@@ -101,17 +132,21 @@ public static class LibraryPublisher
             cancellationToken.ThrowIfCancellationRequested();
             var name = Path.GetFileName(path);
             if (!Guid.TryParseExact(name[1..name.IndexOf('.', 1)], "N", out var id) || path != catalog.Paths.PendingVideoPath(id)) continue;
-            string? relativePath;
-            try { relativePath = await catalog.GetRelativePathAsync(id, cancellationToken); }
-            catch (Exception exception) when (exception is SqliteException or IOException)
+            string? destination;
+            try
             {
-                Trace.TraceWarning($"Could not check whether {name} was committed; leaving it pending. {exception.Message}");
+                destination = await catalog.GetRelativePathAsync(id, cancellationToken) is { } relativePath
+                    ? catalog.GetFinalVideoPath(relativePath) : null;
+            }
+            catch (Exception exception) when (exception is SqliteException or IOException or ArgumentException)
+            {
+                Trace.TraceWarning($"Could not tell where {name} belongs; leaving it pending. {exception.Message}");
                 stuck++;
                 continue;
             }
-            if (relativePath is not null)
+            if (destination is not null)
             {
-                if (await TryFinishAsync(path, catalog.GetFinalVideoPath(relativePath))) finished++;
+                if (await TryFinishAsync(path, destination, retry: false)) finished++;
                 else stuck++;
             }
             else if (quarantine)
@@ -172,19 +207,22 @@ public static class LibraryPublisher
         return false;
     }
 
-    /// <summary>Renames a committed video to its catalog path. An occupied destination is not transient and is not
-    /// retried; sharing and access errors (an indexer or virus scanner holding the new file) are.</summary>
-    private static async Task<bool> TryFinishAsync(string pending, string destination)
+    /// <summary>Renames a committed video to its catalog path. Another finisher may win the race, which counts as
+    /// finished; only a destination occupied while the pending file still exists is stuck, and it is not retried.
+    /// With <paramref name="retry"/>, sharing and access errors (an indexer or virus scanner holding the new file) are
+    /// retried for a few seconds, as only the publication that just made the file should wait.</summary>
+    private static async Task<bool> TryFinishAsync(string pending, string destination, bool retry)
     {
-        if (!File.Exists(pending)) return File.Exists(destination);
-        if (File.Exists(destination))
-        {
-            Trace.TraceError($"Cannot finish {pending}: {destination} already exists.");
-            return false;
-        }
-        foreach (var delay in RenameRetries.Prepend(TimeSpan.Zero))
+        foreach (var delay in retry ? RenameRetries.Prepend(TimeSpan.Zero) : [TimeSpan.Zero])
         {
             await Task.Delay(delay, CancellationToken.None);
+            if (!File.Exists(pending)) return File.Exists(destination);
+            if (File.Exists(destination))
+            {
+                if (!File.Exists(pending)) return true;
+                Trace.TraceError($"Cannot finish {pending}: {destination} already exists.");
+                return false;
+            }
             try
             {
                 DurableFile.Move(pending, destination);

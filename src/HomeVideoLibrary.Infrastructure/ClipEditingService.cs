@@ -194,13 +194,15 @@ public sealed class ClipEditingService : IClipEditingService
                 var content = MapMetadata(output, metadata);
                 await _editor.WriteStagedAsync(output.StagedPath, content, cancellationToken: cancellationToken);
                 var id = Guid.NewGuid();
-                var timeline = await _probe.ReadTimelineAsync(output.StagedPath, cancellationToken);
+                var staged = Path.Combine(scratch, LibraryPublisher.StagedName(id));
+                File.Move(output.StagedPath, staged);
+                var timeline = await _probe.ReadTimelineAsync(staged, cancellationToken);
                 prepared.Add((new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), output.Title, timeline.VideoEnd - timeline.StartTime,
                     DateTimeOffset.UtcNow, content.RecordedAt ?? output.Segments[0].Source.RecordedAt)
                 {
                     Title = content.Title,
                     Description = content.Description,
-                }, output.StagedPath));
+                }, staged));
             }
 
             report.Begin("Publishing the new videos", PublishWeight, determinate: false);

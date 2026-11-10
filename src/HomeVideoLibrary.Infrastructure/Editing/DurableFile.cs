@@ -4,16 +4,19 @@ using System.Text;
 
 namespace HomeVideoLibrary.Infrastructure.Editing;
 
-/// <summary>Renames that are on disk when they return. A rename lives in directory data: on POSIX systems flushing the
-/// file does not write it, so the directory is flushed (with F_FULLFSYNC on macOS, which also empties the drive's
-/// cache); on Windows the move is made with MOVEFILE_WRITE_THROUGH. Where the platform call is unavailable the move
-/// still happens and the gap is traced.</summary>
+/// <summary>Renames that are on disk when they return, following PostgreSQL's <c>durable_rename</c>: rename, flush the
+/// file under its new name, flush the directories involved. On POSIX systems a rename lives in directory data, which
+/// flushing the file does not write (F_FULLFSYNC on macOS also empties the drive's cache). Windows cannot flush a
+/// directory handle; the move uses MOVEFILE_WRITE_THROUGH and the file is flushed with FlushFileBuffers. As in
+/// PostgreSQL, a file system that refuses to flush directories at all (EINVAL, EBADF, EACCES) is accepted; any other
+/// flush failure throws, so a caller can stop before depending on the rename.</summary>
 internal static class DurableFile
 {
     private const int ReadOnly = 0;
     private const int CloseOnExecMac = 0x1000000, CloseOnExecLinux = 0x80000;
     private const int FullFileSync = 51;
     private const int MoveFileWriteThrough = 0x8;
+    private static readonly int[] DirectoryFlushUnsupported = [9, 13, 22]; // EBADF, EACCES, EINVAL
     private static bool _unavailable;
 
     /// <summary>Moves <paramref name="source"/> to <paramref name="destination"/> (never replacing it) and makes the
@@ -26,6 +29,7 @@ internal static class DurableFile
             {
                 if (!Windows.MoveFileEx(source, destination, MoveFileWriteThrough))
                     throw new IOException($"Could not move {source} to {destination}.", Marshal.GetHRForLastWin32Error());
+                FlushFile(destination);
                 return;
             }
             catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
@@ -34,14 +38,21 @@ internal static class DurableFile
             }
         }
         File.Move(source, destination, overwrite: false);
+        FlushFile(destination);
         FlushDirectory(Path.GetDirectoryName(Path.GetFullPath(destination))!);
         var sourceDirectory = Path.GetDirectoryName(Path.GetFullPath(source))!;
         if (!string.Equals(sourceDirectory, Path.GetDirectoryName(Path.GetFullPath(destination)), StringComparison.Ordinal))
             FlushDirectory(sourceDirectory);
     }
 
-    /// <summary>Flushes <paramref name="directory"/>'s entries on POSIX systems. Failures are traced: the data is already
-    /// written, only its durability across a power loss is at stake.</summary>
+    private static void FlushFile(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        stream.Flush(flushToDisk: true);
+    }
+
+    /// <summary>Flushes <paramref name="directory"/>'s entries on POSIX systems.</summary>
+    /// <exception cref="IOException">The file system failed the flush.</exception>
     public static void FlushDirectory(string directory)
     {
         if (OperatingSystem.IsWindows() || _unavailable) return;
@@ -52,14 +63,14 @@ internal static class DurableFile
             var descriptor = macOS ? Mac.Open(path, ReadOnly | CloseOnExecMac) : Linux.Open(path, ReadOnly | CloseOnExecLinux);
             if (descriptor < 0)
             {
-                Trace.TraceWarning($"Could not open {directory} to flush it (errno {Marshal.GetLastPInvokeError()}).");
+                Refused(directory, Marshal.GetLastPInvokeError());
                 return;
             }
             try
             {
                 var result = macOS ? Mac.Control(descriptor, FullFileSync, 0) : Linux.Sync(descriptor);
                 if (result != 0 && macOS) result = Mac.Sync(descriptor); // F_FULLFSYNC is refused by some file systems.
-                if (result != 0) Trace.TraceWarning($"Could not flush {directory} (errno {Marshal.GetLastPInvokeError()}).");
+                if (result != 0) Refused(directory, Marshal.GetLastPInvokeError());
             }
             finally
             {
@@ -70,6 +81,13 @@ internal static class DurableFile
         {
             Unavailable(exception);
         }
+    }
+
+    private static void Refused(string directory, int errno)
+    {
+        if (!DirectoryFlushUnsupported.Contains(errno))
+            throw new IOException($"Could not flush {directory} to disk (errno {errno}).");
+        Trace.TraceWarning($"{directory} cannot be flushed on this file system (errno {errno}).");
     }
 
     private static void Unavailable(Exception exception)

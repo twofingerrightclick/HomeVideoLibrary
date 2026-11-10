@@ -200,6 +200,39 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
+    public async Task RecoveryCarriesOnPastARowWithAnInvalidPathAndAdoptsCommittedVideosLeftInScratch()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo Row(string name) => new LibraryVideo(Guid.NewGuid(), "", name, TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            is var video ? video with { RelativePath = LibraryPaths.VideoRelativePath(video.Id) } : null!;
+        var bad = Row("bad");
+        var good = Row("good");
+        var stranded = Row("stranded");
+        await catalog.AddBatchAsync([bad, good, stranded]);
+        await using (var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"UPDATE videos SET relative_path = '../../etc/x' WHERE id = '{bad.Id}'";
+            await command.ExecuteNonQueryAsync();
+        }
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(bad.Id), "bad");
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(good.Id), "good");
+        // A power loss undid the move out of scratch but kept the commit.
+        var edit = Path.Combine(catalog.Paths.ScratchDirectory, "edit-0123");
+        Directory.CreateDirectory(edit);
+        await File.WriteAllTextAsync(Path.Combine(edit, LibraryPublisher.StagedName(stranded.Id)), "stranded");
+        using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
+
+        var recovery = await LibraryPublisher.RecoverAsync(catalog, owner);
+
+        Assert.Equal((2, 1), (recovery.Finished, recovery.Stuck));
+        Assert.Equal("good", await File.ReadAllTextAsync(catalog.GetFinalVideoPath(good.RelativePath)));
+        Assert.Equal("stranded", await File.ReadAllTextAsync(catalog.GetFinalVideoPath(stranded.RelativePath)));
+        Assert.True(File.Exists(catalog.Paths.PendingVideoPath(bad.Id)));
+    }
+
+    [Fact]
     public async Task FinishingDuringOtherPublicationsLeavesUncommittedPendingFilesAlone()
     {
         var catalog = await CreateCatalogAsync();

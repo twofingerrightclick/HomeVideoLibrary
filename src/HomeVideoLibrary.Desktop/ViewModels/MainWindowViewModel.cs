@@ -421,10 +421,15 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try { publications = await LibraryPublisher.RecoverAsync(catalog, owner); }
+            // Recovery may move committed videos out of scratch, so scratch is swept only after it succeeded.
+            var recovered = false;
+            try { publications = await LibraryPublisher.RecoverAsync(catalog, owner); recovered = true; }
             catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
-            try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
-            catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
+            if (recovered)
+            {
+                try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
+                catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
+            }
             services = _dependencies.CreateServices(catalog);
             model = new LibraryModel(catalog, services.Files);
             load = await Task.Run(() => model.LoadAsync());
@@ -453,7 +458,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (publications.Stuck > 0)
             RecoveryNotice += $" {publications.Stuck} video(s) in {paths.VideosDirectory} still have temporary names; see the log.";
         if (publications.Unregistered.Count > 0)
-            RecoveryNotice += $" Videos not in the library: {string.Join(", ", publications.Unregistered)}; import them to add them.";
+            RecoveryNotice += $" {publications.Unregistered.Count} video file(s) in {paths.VideosDirectory} are not in the library " +
+                $"({string.Join(", ", publications.Unregistered.Take(3))}{(publications.Unregistered.Count > 3 ? ", …" : "")}); import them to add them.";
         RecoveryNotice = RecoveryNotice.Trim();
         LibraryRoot = paths.RootDirectory;
         _tapeIndex.Clear(); _rowIndex.Clear(); _selection.Clear(); _anchorId = null; _shown = LibrarySnapshot.Empty;
@@ -585,10 +591,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (_model is not { } model) return;
         if (!ToolsReady) { IndexStatus = "Library refresh needs the missing media tools."; return; }
-        try { await LibraryPublisher.FinishCommittedAsync(model.Catalog); }
-        catch (Exception exception) { Trace.TraceWarning($"Could not finish pending publications: {exception}"); }
         using var cancellation = new CancellationTokenSource(); _indexCancellation = cancellation;
         IsIndexing = true;
+        // Renaming a pending video changes its path, so it waits until no editor holds one.
+        if (!HasEditor)
+        {
+            try { await Task.Run(() => LibraryPublisher.FinishCommittedAsync(model.Catalog)); }
+            catch (Exception exception) { Trace.TraceWarning($"Could not finish pending publications: {exception}"); }
+        }
         var progress = new Progress<IndexProgress>(update =>
         {
             if (model == _model) IndexStatus = $"Reading {update.Completed}/{update.Total} · {update.VideoName}";
