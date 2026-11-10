@@ -37,20 +37,21 @@ public sealed class TrashViewModel : ViewModelBase
     {
         _model = model; _createRemover = createRemover; _shelf = shelf; _jobs = jobs; _interaction = interaction; _leave = leave;
         _canStart = canStart; _status = status; _viewChanged = viewChanged;
-        MoveSelectedToTrashCommand = new AsyncCommand(_ => MoveToTrashAsync([.. _shelf.SelectedIds]),
-            () => _canStart() && Trashable(_shelf.SelectedIds).Count > 0, context: "Move to Trash");
-        RemoveMissingCommand = new AsyncCommand(_ => RemoveMissingAsync([.. _shelf.SelectedIds]),
+        // Destructive commands act only on what the user can see: a selection the search or album hides stays put.
+        MoveSelectedToTrashCommand = new AsyncCommand(_ => MoveToTrashAsync(_shelf.VisibleSelectedIds()),
+            () => _canStart() && Trashable(_shelf.VisibleSelectedIds()).Count > 0, context: "Move to Trash");
+        RemoveMissingCommand = new AsyncCommand(_ => RemoveMissingAsync(_shelf.VisibleSelectedIds()),
             () => _canStart() && HasMissingSelected, context: "Remove from library");
         _shelf.SelectionChanged += UpdateCommands;
     }
 
-    /// <summary>Moves the selected videos to the Trash; missing and held ones are left out.</summary>
+    /// <summary>Moves the selected videos this view shows to the Trash; missing and held ones are left out.</summary>
     public AsyncCommand MoveSelectedToTrashCommand { get; }
 
-    /// <summary>Removes the selected videos whose files are missing from the library (rows only).</summary>
+    /// <summary>Removes the selected videos this view shows whose files are missing from the library (rows only).</summary>
     public AsyncCommand RemoveMissingCommand { get; }
 
-    public bool HasMissingSelected => Selected(_shelf.SelectedIds).Any(record => record.IsMissing);
+    public bool HasMissingSelected => Selected(_shelf.VisibleSelectedIds()).Any(record => record.IsMissing);
 
     /// <summary>Whether <paramref name="videoId"/> waits for or is in a trash job.</summary>
     public bool Holds(Guid videoId) => _held.Contains(videoId);

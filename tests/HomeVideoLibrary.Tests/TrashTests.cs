@@ -100,6 +100,39 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
+    public async Task OnlyTheSelectedVideosThisViewShowsAreTrashed()
+    {
+        var (vm, videos) = await OpenAsync("beach", "garden", "attic");
+        Select(vm, videos[0], videos[2]);
+        vm.Shelf.SearchText = "garden";
+        Assert.False(vm.Shelf.MoveToTrashCommand!.CanExecute(null));
+        Select(vm, videos[1]);
+        Assert.Equal(3, vm.Shelf.SelectedCount);
+        _interaction.ConfirmAnswers.Enqueue(true);
+
+        await vm.Trash.MoveSelectedToTrashCommand.ExecuteAsync();
+        await vm.Jobs.WhenIdleAsync();
+
+        Assert.StartsWith("Move 1 video to Trash?", Assert.Single(_interaction.Confirmations).Message);
+        Assert.Equal([PathOf(vm, videos[1])], _trash.Moved);
+        vm.Shelf.SearchText = "";
+        Assert.Equal([videos[0].Id, videos[2].Id], vm.Shelf.Tapes.Select(tape => tape.Id));
+    }
+
+    [Fact]
+    public async Task AHiddenMissingVideoOffersNoRemoval()
+    {
+        var (vm, videos) = await OpenAsync("gone", "here");
+        File.Delete(PathOf(vm, videos[0]));
+        await vm.Model!.StatPassAsync();
+        Select(vm, videos[0]);
+        vm.Shelf.SearchText = "here";
+
+        Assert.False(vm.Trash.HasMissingSelected);
+        Assert.False(vm.Trash.RemoveMissingCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task OneLockedFileFailsAloneAndKeepsItsVideo()
     {
         var (vm, videos) = await OpenAsync("first", "second");
