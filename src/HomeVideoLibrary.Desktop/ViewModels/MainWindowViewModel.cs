@@ -265,7 +265,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string? CannotOpen(LibraryModel model, VideoRecord video) =>
         WaitReason is { } reason ? $"“{video.Label}” cannot open yet. {reason}"
         : !ReferenceEquals(_model, model) || model.Snapshot.Find(video.Id) is not { } record ? $"“{video.Label}” is no longer in the library."
-        : record.IsMissing ? $"The file for “{record.Label}” is missing, so it cannot play."
+        : record.IsMissing ? $"The file for “{record.Label}” is missing, so it cannot open."
         : Trash.Holds(record.Id) ? $"“{record.Label}” is being moved to the Trash."
         : null;
 
@@ -278,13 +278,27 @@ public sealed class MainWindowViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    /// <summary>Opens the merge page for the selected videos, in shelf order.</summary>
+    /// <summary>Opens the merge page for the selected videos, in shelf order. Refused, like <see cref="OpenVideoAsync"/>,
+    /// while one of them cannot open.</summary>
     public Task OpenMergeAsync()
     {
         if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
-        var sources = Shelf.SelectedRecords.Select(record => record.ToLibraryVideo()).ToArray();
-        return NavigateAsync(() => new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null)));
+        var selected = Shelf.SelectedRecords.ToArray();
+        if (CannotOpen(model, selected) is { } reason) return Refuse(reason);
+        return NavigateAsync(() =>
+        {
+            if (CannotOpen(model, selected) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var sources = selected.Select(record => model.Snapshot.Find(record.Id)!.ToLibraryVideo()).ToArray();
+            return new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null));
+        });
     }
+
+    private string? CannotOpen(LibraryModel model, IEnumerable<VideoRecord> videos) =>
+        videos.Select(video => CannotOpen(model, video)).FirstOrDefault(reason => reason is not null);
 
     private ClipEdits ClipEditsFor(LibraryModel model) =>
         new(_dependencies.CreateClipEditing(model.Catalog), Jobs, outputs => PublishOutputsAsync(model, outputs));
