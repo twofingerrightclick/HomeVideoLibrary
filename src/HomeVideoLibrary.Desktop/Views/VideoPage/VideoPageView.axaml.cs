@@ -25,8 +25,7 @@ public sealed partial class VideoPageView : UserControl
         _shortcuts = MapShortcuts(new ShortcutRouter(
             Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control));
         _shortcuts.Attach(this);
-        // Over the video, input goes to the overlay window (it may become the key window), so its keys route here too.
-        Overlay.AttachedToVisualTree += (_, _) => { if (TopLevel.GetTopLevel(Overlay) is { } overlayWindow) _shortcuts.Attach(overlayWindow); };
+        Overlay.AttachedToVisualTree += (_, _) => { if (TopLevel.GetTopLevel(Overlay) is Window overlayWindow) ConnectOverlay(overlayWindow); };
         Overlay.PointerMoved += (_, _) => ViewModel?.Fullscreen.Wake();
         Overlay.DoubleTapped += (_, _) => ViewModel?.Fullscreen.ToggleCommand.Execute(null);
         FullscreenControls.PointerEntered += (_, _) => ViewModel?.Fullscreen.Hold(true);
@@ -72,6 +71,26 @@ public sealed partial class VideoPageView : UserControl
             window.WindowState = WindowState.FullScreen;
         }
         else if (!page.Fullscreen.IsFullscreen && window.WindowState == WindowState.FullScreen) window.WindowState = _restoreState;
+    }
+
+    /// <summary>Wires the window LibVLCSharp shows the overlay in. Over the video, input goes to that window (it may become
+    /// the key window), so its keys route through the page's shortcuts too; and each time it is shown it is tied to the
+    /// page's window so it follows it into fullscreen.</summary>
+    private void ConnectOverlay(Window overlayWindow)
+    {
+        _shortcuts.Attach(overlayWindow);
+        overlayWindow.GetObservable(IsVisibleProperty).Subscribe(new OverlayShownObserver(this, overlayWindow));
+    }
+
+    private sealed class OverlayShownObserver(VideoPageView view, Window overlayWindow) : IObserver<bool>
+    {
+        public void OnNext(bool shown)
+        {
+            if (shown && TopLevel.GetTopLevel(view) is Window owner) MacChildWindow.Attach(owner, overlayWindow);
+        }
+
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
     }
 
     /// <summary>Reports fullscreen the window enters or leaves by itself (the system's own control).</summary>
