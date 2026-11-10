@@ -205,14 +205,28 @@ public sealed class CatalogMigrationTests : IDisposable
     }
 
     [Theory]
-    [InlineData("/Volumes/NAS/Library", true)]
-    [InlineData("/Volumes/NASBackup/Library", false)]
-    [InlineData("/Users/me/Movies", false)]
-    public void VolumeDetectionUsesTheMostSpecificMount(string path, bool network)
+    [InlineData("smbfs", 0x1000u, true)]
+    [InlineData("nfs", 0x1000u, true)]
+    [InlineData("apfs", 0x1000u, false)]
+    [InlineData("macfuse", 0u, true)]
+    public void MacNetworkFilesystemsAreRecognized(string type, uint flags, bool network) =>
+        Assert.Equal(network, StorageVolume.IsMacNetwork(type, flags));
+
+    [Theory]
+    [InlineData(0x6969L, true)]
+    [InlineData(0xFF534D42L, true)]
+    [InlineData(0xEF53L, false)]
+    [InlineData(0x9123683EL, false)]
+    public void LinuxNetworkFilesystemsAreRecognized(long magic, bool network) =>
+        Assert.Equal(network, StorageVolume.IsLinuxNetwork(magic));
+
+    [Fact]
+    public async Task ProbingTheLibraryVolumeIsSafeConcurrentlyAndFallsBackToLocal()
     {
-        if (OperatingSystem.IsWindows()) return;
-        (string, DriveType)[] drives = [("/", DriveType.Fixed), ("/Volumes/NAS", DriveType.Network), ("/Volumes/NASBackup", DriveType.Removable)];
-        Assert.Equal(network, StorageVolume.IsNetwork(path, drives));
+        Directory.CreateDirectory(_root);
+        var answers = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() => StorageVolume.IsNetwork(_root))));
+        Assert.All(answers, Assert.False);
+        Assert.False(StorageVolume.IsNetwork(Path.Combine(_root, "does not exist")));
     }
 
     private static async Task ExecuteAsync(LibraryPaths paths, string sql)
