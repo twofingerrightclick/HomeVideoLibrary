@@ -113,3 +113,14 @@ Fixed both P2 findings from Standards/Terra review. Hover sessions now explicitl
 Addressed the two material visual findings without redesign: each chapter editor has persistent start/title/description/tags labels, and the inspector reserves an 18px right gutter outside form controls for its scrollbar. Native 1000×700 confirmation with a populated synthetic chapter: `/private/tmp/hvl-ui-qa/player-narrow-review-fixes.png`. All four labels, action buttons, and scrollbar separation are visible in this capture.
 
 Validation: five focused tests pass (`TapePreviewTests` and `LibrarySelectionTests`), covering owned-file reuse/deletion, late cancellation/disposal cleanup, shared chosen-file preservation, automatic index completion preserving checked IDs/focus, and filtering out absent selections. Desktop/QA build passes with zero warnings/errors; `git diff --check` passes. No backend suite or extra detector run.
+
+## UX overhaul
+
+Supersedes the Stage 6 and Stage 7 interface descriptions above; the services under them are unchanged unless noted. [DESIGN.md](../DESIGN.md) and the [README](../README.md) describe the result.
+
+- A VCR-styled component library (`HomeVideoLibrary.UI`, with the `HomeVideoLibrary.Gallery` showcase) replaced stock controls.
+- The shelf is one spine per row in a centered stack of at most 760 px, at a real spine's 187:25 proportions, replacing 60 px spines in one or two columns. Hover brings the tape slightly forward, with no movement.
+- Opening a video is a page with an inspector of INFO, CHAPTERS, TAGS, FRAMES and EDIT tabs. Edits are explicit (SAVE, an UNSAVED light, one awaited leave flow). Chapters expand in place. The scrub bar's tooltip and the fullscreen controls are native windows over the LibVLC surface.
+- The clip editor is gone. Trim and split live in the EDIT tab and merge on its own page, driven by a computed plan: stream copy and precise cuts that re-encode only the frames at the cuts read SAVE; a real re-encode reads RENDER. Edits, imports, Trash moves and the identity backfill run as jobs in the Activity drawer, which replaced the global busy lock.
+- Shelf hover previews come from pre-built 20-frame strips under `.cache/strips`, not the chosen thumbnails.
+- Search runs in memory over the library model; the FTS5 index is gone. Deleting moves MKVs to the system Trash (see the README).

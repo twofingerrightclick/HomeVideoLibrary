@@ -41,17 +41,17 @@ Each implementation stage is assigned sequentially to one agent. Astra owns the 
 ## Library interface
 
 - Dark modern shell with a left drawer for library navigation, search, and albums; a playback/content region; and a right metadata sidebar.
-- Render videos as stacked VHS spines, approximately sixty pixels high, with handwritten-style labels containing the user's description, truncated when space runs out.
-- Layout may fit two spines across on wider screens, with chronological reading order by year. A floating light month/year label tracks the current scroll position.
-- Hovering a tape subtly protrudes it toward the user using Avalonia transforms/elevation.
-- Moving left to right over the label previews corresponding video moments or chosen thumbnails. A floating image preview transitions between frames without heavy continuous playback requirements.
+- Render videos as stacked VHS spines, one per row in a centered stack, at a real spine's 187:25 proportions (about 94 pixels high in the widest stack), with handwritten-style labels containing the user's description, truncated when space runs out.
+- Read chronologically by year. A floating light month/year label tracks the current scroll position.
+- Hovering a tape brings it slightly toward the viewer (a small scale-up and deeper shadow, with no movement) using Avalonia transforms.
+- Moving left to right over the spine previews the video's moments from pre-built frame strips (20 frames per video, kept as a rebuildable cache; the chosen thumbnails are not used). A floating image preview transitions between frames without heavy continuous playback requirements.
 - Use the supplied iPhoto and VHS photographs as visual direction; create original UI artwork rather than incorporating stock watermarks.
 
 ## Secondary video editing
 
-- Multiselect clips to enter an editing mode.
-- Support trimming a clip, merging selected clips in a clear order, splitting into two clips, and saving results.
-- Preserve originals and write new MKV outputs. Explain constraints and validate inputs before expensive work.
+- Trim and split an open video from its EDIT tab; multiselect clips to merge them on a Merge page in a clear order.
+- Preserve originals and write new MKV outputs, copying streams wherever possible. The commit button reads SAVE for a copy and RENDER when a picture must be re-encoded, and an info popover explains why. Validate inputs and show the plan before expensive work.
+- Run edits as background jobs in an activity drawer, queued one at a time, so the app stays usable.
 
 ## Verification
 
