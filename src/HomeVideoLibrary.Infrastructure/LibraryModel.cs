@@ -148,6 +148,8 @@ public sealed class LibraryModel
     /// edit) or replacing it (after a metadata save). Read failures do not throw: the returned record is then
     /// <see cref="VideoRecordState.Unreadable"/> or <see cref="VideoRecord.IsMissing"/>. If the file keeps changing
     /// while it is read, the record is published as <see cref="VideoRecordState.Pending"/> so the next stat pass reads it.</summary>
+    /// <exception cref="InvalidOperationException">The video has no catalog row (it was removed, for example while a
+    /// save was being published); it is not added back.</exception>
     public async Task<VideoRecord> UpsertFromFileAsync(LibraryVideo video, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(video);
@@ -155,9 +157,32 @@ public sealed class LibraryModel
         for (var attempt = 1; ; attempt++)
         {
             var outcome = await ReadAsync(path, cancellationToken);
-            if ((await CommitAsync([new PendingCommit(video.Id, video, outcome)], publishStaleAsPending: attempt >= 3)).Applied > 0)
-                return Snapshot.Find(video.Id)!;
+            var commit = await CommitAsync([new PendingCommit(video.Id, video, outcome)], publishStaleAsPending: attempt >= 3);
+            if (commit.Applied > 0) return Snapshot.Find(video.Id)!;
+            if (commit.Unregistered > 0) throw new InvalidOperationException($"“{video.DisplayName}” is no longer in the library.");
         }
+    }
+
+    /// <summary>Removes videos from the library: deletes their catalog rows, which takes their album memberships and
+    /// cached metadata with them, and publishes them as removed. Touches no file, so a caller deleting the files does that
+    /// first: a crash in between leaves rows whose files are missing, which the user can remove, rather than rows for
+    /// files that were never deleted. Ids not in the library are ignored.</summary>
+    public Task RemoveVideosAsync(IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default)
+    {
+        var ids = videoIds.Distinct().ToArray();
+        return MutateAsync(async snapshot =>
+        {
+            await Catalog.DeleteVideosAsync(ids, cancellationToken);
+            var removed = ids.Where(snapshot.Videos.ContainsKey).ToArray();
+            if (removed.Length == 0) return (snapshot, (LibraryDelta?)null, true);
+            var members = snapshot.AlbumMembers;
+            foreach (var (albumId, videos) in snapshot.AlbumMembers)
+                if (videos.Overlaps(removed)) members = members.SetItem(albumId, videos.Except(removed));
+            var tags = snapshot.Tags.Apply(removed.Select(id => ((VideoRecord?)snapshot.Videos[id], (VideoRecord?)null)));
+            var next = snapshot.With(snapshot.Videos.RemoveRange(removed), albumMembers: members, tags: tags);
+            return (next, new LibraryDelta(next, [], [], removed, !ReferenceEquals(members, snapshot.AlbumMembers),
+                !ReferenceEquals(tags, snapshot.Tags)), true);
+        }, cancellationToken);
     }
 
     public Task<VideoAlbum> CreateAlbumAsync(string name, IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default)
@@ -300,18 +325,27 @@ public sealed class LibraryModel
     /// <param name="Video">The catalog row for a video that may not be in the snapshot yet; null to update the snapshot's record.</param>
     private sealed record PendingCommit(Guid Id, LibraryVideo? Video, ReadOutcome Outcome);
 
-    private sealed record CommitResult(int Applied, IReadOnlyList<ReconcileError> Errors);
+    /// <param name="Unregistered">New videos that were dropped because they have no catalog row.</param>
+    private sealed record CommitResult(int Applied, int Unregistered, IReadOnlyList<ReconcileError> Errors);
 
     /// <summary>Publishes read outcomes in one batch. A read records the stamp it saw, whether it succeeded or not, so an
     /// unreadable file is retried only once it changes. A successful read whose file changed since it started is stale:
     /// it is dropped (a newer writer publishes its own read), or with <paramref name="publishStaleAsPending"/> the video
-    /// becomes Pending so the next stat pass reads it.</summary>
+    /// becomes Pending so the next stat pass reads it. A video joins the snapshot only while its catalog row exists, so a
+    /// read that finishes after the video was removed cannot bring it back.</summary>
     private async Task<CommitResult> CommitAsync(IReadOnlyList<PendingCommit> outcomes, bool publishStaleAsPending)
     {
         var errors = new List<ReconcileError>();
+        var unregistered = 0;
         // The reads are done; committing them is quick and must not be lost to a late cancellation.
         var applied = await MutateAsync(async snapshot =>
         {
+            var registered = new HashSet<Guid>();
+            foreach (var (id, _, _) in outcomes.Where(commit => commit.Video is not null && !snapshot.Videos.ContainsKey(commit.Id)))
+            {
+                if (await Catalog.ContainsVideoAsync(id, CancellationToken.None)) registered.Add(id);
+                else unregistered++;
+            }
             var builder = snapshot.Videos.ToBuilder();
             var writes = new List<CatalogCacheWrite>();
             var added = new List<Guid>();
@@ -322,7 +356,7 @@ public sealed class LibraryModel
                 // Catalog fields come from the snapshot when present: a caller's LibraryVideo carries the effective
                 // (embedded) recorded date, not the catalog's.
                 var current = snapshot.Find(id);
-                if ((current ?? (video is null ? null : VideoRecord.FromCatalog(video))) is not { } baseRecord) continue;
+                if ((current ?? (video is not null && registered.Contains(id) ? VideoRecord.FromCatalog(video) : null)) is not { } baseRecord) continue;
                 VideoRecord next;
                 if (outcome.Stamp is null)
                     next = baseRecord with { IsMissing = true };
@@ -358,7 +392,7 @@ public sealed class LibraryModel
             var result = snapshot.With(builder.ToImmutable(), tags: tags);
             return (result, new LibraryDelta(result, added, updated, [], false, !ReferenceEquals(tags, snapshot.Tags)), added.Count + updated.Count);
         }, CancellationToken.None);
-        return new CommitResult(applied, errors);
+        return new CommitResult(applied, unregistered, errors);
     }
 
     private static VideoRecord FromCatalog(LibraryVideo video, IReadOnlyDictionary<Guid, CatalogCacheEntry> cache)

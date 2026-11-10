@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:demo="using:HomeVideoLibrary.Gallery.Demo"
+             x:Class="HomeVideoLibrary.Gallery.Sections.TagsSection">
+  <UserControl.Styles>
+    <!-- Each input is bound to its own video's TagEditorViewModel: tags and draft live there. -->
+    <Style Selector="c|TagChipInput" x:DataType="demo:TagEditorViewModel">
+      <Setter Property="Tags" Value="{Binding Tags}"/>
+      <Setter Property="Text" Value="{Binding Draft, Mode=TwoWay}"/>
+      <Setter Property="AddTagCommand" Value="{Binding AddTag}"/>
+      <Setter Property="RemoveTagCommand" Value="{Binding RemoveTag}"/>
+      <Setter Property="SuggestionProvider" Value="{Binding Suggest}"/>
+    </Style>
+  </UserControl.Styles>
+  <StackPanel Spacing="0">
+    <TextBlock Classes="gallery-title" Text="TAG CHIPS" Margin="0,0,0,14"/>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="TagChipInput — empty with watermark, populated, disabled"/>
+        <StackPanel Orientation="Horizontal" Spacing="22">
+          <StackPanel Classes="specimen" Width="300">
+            <c:TagChipInput x:Name="EmptyInput" Watermark="Add tags…"/>
+            <TextBlock Classes="state" Text="EMPTY"/>
+          </StackPanel>
+          <StackPanel Classes="specimen" Width="380">
+            <c:TagChipInput x:Name="PopulatedInput" Watermark="Add tags…"/>
+            <TextBlock Classes="state" Text="POPULATED (WRAPS)"/>
+          </StackPanel>
+          <StackPanel Classes="specimen" Width="300">
+            <c:TagChipInput x:Name="DisabledInput" Watermark="Add tags…" IsEnabled="False"/>
+            <TextBlock Classes="state" Text="DISABLED"/>
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note"
+                   Text="Focused, typed &quot;gr&quot;, Down pressed twice: prefix matches first, then word starts, then substrings; chosen tags are excluded. Enter or Tab takes the highlight; comma commits the typed text; Backspace on empty removes the last chip."/>
+        <StackPanel Width="440" HorizontalAlignment="Left">
+          <c:TagChipInput x:Name="LiveInput" Watermark="Add tags…"/>
+          <!-- Room for the overlay dropdown inside the captured window. -->
+          <Border Height="250"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

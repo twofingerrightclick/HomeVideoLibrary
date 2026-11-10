@@ -1,0 +1,112 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             xmlns:core="using:HomeVideoLibrary.Core"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             xmlns:editing="using:HomeVideoLibrary.Desktop.Views.Editing"
+             xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.VideoPageView"
+             x:DataType="vp:VideoPageViewModel"
+             Focusable="True">
+  <!--
+    Nothing Avalonia draws may overlap the native video surface in this window: it would be hidden under it. What has
+    to appear over the video (the fullscreen controls, the double-click target) lives in VideoOverlayWindow, a transparent
+    window the page keeps over the visible part of the video. Prompts are real windows.
+  -->
+  <UserControl.Styles>
+    <!-- Tab headers are clicked, not focused: focus stays on the page so arrows keep seeking. Cmd+1..5 switch tabs. -->
+    <Style Selector="TabControl.inspector TabItem">
+      <Setter Property="Focusable" Value="False"/>
+    </Style>
+    <Style Selector="Thumb#InspectorSplitter:focus-visible">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Focus}"/>
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,*">
+    <Border Classes="chassis" Padding="12,8" IsVisible="{Binding !Fullscreen.IsFullscreen}">
+      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+        <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Previous}" Content="LIBRARY"
+                         Command="{Binding BackCommand}" ToolTip.Tip="Back to the library (Esc)"/>
+        <TextBlock Grid.Column="1" Classes="title" Text="{Binding DisplayTitle}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,6,0" IsVisible="{Binding Details.IsDirty}">
+            <Ellipse Width="8" Height="8" Fill="{DynamicResource Vcr.Brush.Amber}"/>
+            <TextBlock Classes="legend" Text="UNSAVED" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"/>
+          </StackPanel>
+          <c:PlasticButton Classes="toolbar" Content="REVERT" Command="{Binding Details.RevertCommand}" ToolTip.Tip="Discard unsaved changes"/>
+          <TextBlock Classes="legend" Text="{Binding SaveBlocker}" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"
+                     TextWrapping="Wrap" MaxWidth="260" IsVisible="{Binding SaveBlocker, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+          <c:PlasticButton Classes="toolbar primary" Content="SAVE" Command="{Binding Details.SaveCommand}" ToolTip.Tip="Save changes into the video file (⌘S)"/>
+          <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.ChevronDown}" ToolTip.Tip="More">
+            <c:PlasticButton.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Add to album" ItemsSource="{Binding OtherAlbums}" IsEnabled="{Binding !!OtherAlbums.Count}">
+                  <MenuItem.ItemContainerTheme>
+                    <ControlTheme TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}" x:DataType="core:VideoAlbum">
+                      <Setter Property="Header" Value="{Binding Name}"/>
+                      <Setter Property="Command" Value="{Binding $parent[local:VideoPageView].((vp:VideoPageViewModel)DataContext).AddToAlbumCommand}"/>
+                      <Setter Property="CommandParameter" Value="{Binding}"/>
+                    </ControlTheme>
+                  </MenuItem.ItemContainerTheme>
+                </MenuItem>
+                <MenuItem Header="Show file location" Command="{Binding RevealFileCommand}"/>
+                <MenuItem Header="Move to Trash" Command="{Binding MoveToTrashCommand}"
+                          IsVisible="{Binding MoveToTrashCommand, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              </MenuFlyout>
+            </c:PlasticButton.Flyout>
+          </c:PlasticButton>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid x:Name="Body" Grid.Row="1" ColumnDefinitions="*,Auto,Auto">
+      <Grid RowDefinitions="*,Auto,Auto">
+        <Border Background="{DynamicResource Vcr.Brush.Chassis.Deep}" MinHeight="160">
+          <vlc:VideoView x:Name="Video" MediaPlayer="{Binding Player.Surface.MediaPlayer, Mode=OneWay}"/>
+        </Border>
+        <Border Grid.Row="1" Classes="chassis" Padding="12,10,12,8" IsVisible="{Binding !Fullscreen.IsFullscreen}">
+          <local:TransportDeck/>
+        </Border>
+        <Border Grid.Row="2" Classes="chassis" Padding="14,0,14,8" IsVisible="{Binding !Fullscreen.IsFullscreen}">
+          <StackPanel Spacing="2">
+            <TextBlock Classes="meta" TextWrapping="Wrap" Foreground="{DynamicResource Vcr.Brush.Amber}" IsVisible="{Binding Details.HasExternalChange}"
+                       Text="This video changed outside this page. SAVE keeps your version; REVERT loads the new one."/>
+            <TextBlock Classes="meta" Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Status}"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Thumb x:Name="InspectorSplitter" Grid.Column="1" Width="6" Cursor="SizeWestEast" IsVisible="{Binding IsInspectorShown}" Focusable="True"
+             AutomationProperties.Name="Details width"
+             Background="{DynamicResource Vcr.Brush.Chassis.Edge}"/>
+
+      <Border Grid.Column="2" Classes="chassis" Width="{Binding InspectorWidth}" IsVisible="{Binding IsInspectorShown}" Padding="10,10,10,8">
+        <TabControl Classes="inspector" TabStripPlacement="Bottom" SelectedIndex="{Binding SelectedTab, Mode=TwoWay}">
+          <TabItem Header="INFO" ui:Vcr.Icon="{StaticResource Vcr.Icon.Info}">
+            <ScrollViewer><local:InfoTab Margin="4,4,8,12"/></ScrollViewer>
+          </TabItem>
+          <TabItem Header="CHAPTERS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Chapters}">
+            <ScrollViewer><local:ChaptersTab Margin="4,4,8,12"/></ScrollViewer>
+          </TabItem>
+          <TabItem Header="TAGS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Tag}">
+            <ScrollViewer><local:TagsTab Margin="4,4,8,12"/></ScrollViewer>
+          </TabItem>
+          <TabItem Header="FRAMES" ui:Vcr.Icon="{StaticResource Vcr.Icon.Frame}">
+            <ScrollViewer><local:FramesTab Margin="4,4,8,12"/></ScrollViewer>
+          </TabItem>
+          <TabItem Header="EDIT" ui:Vcr.Icon="{StaticResource Vcr.Icon.Scissors}">
+            <Panel>
+              <ScrollViewer IsVisible="{Binding Edit, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <editing:EditTab DataContext="{Binding Edit}" Margin="4,4,8,12"/>
+              </ScrollViewer>
+              <TextBlock Classes="meta" Margin="8,16" TextWrapping="Wrap" Text="Editing tools are missing, so trim and split are unavailable."
+                         IsVisible="{Binding Edit, Converter={x:Static ObjectConverters.IsNull}}"/>
+            </Panel>
+          </TabItem>
+        </TabControl>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

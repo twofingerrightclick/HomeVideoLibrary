@@ -12,8 +12,15 @@ public static class AppErrors
     private static string? _lastSignature;
     private static DateTime _lastReportedUtc;
 
-    public static string LogDirectory { get; } = Path.Combine(
+    private static string _logDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HomeVideoLibrary", "logs");
+
+    public static string LogDirectory => Volatile.Read(ref _logDirectory);
+
+    /// <summary>Sends the error log somewhere else, for example a temporary directory in tests, so they never write
+    /// into the user's real log.</summary>
+    public static void UseLogDirectory(string directory) =>
+        Volatile.Write(ref _logDirectory, Path.GetFullPath(directory ?? throw new ArgumentNullException(nameof(directory))));
 
     /// <summary>A short user-facing message. Raised on the reporting thread.</summary>
     public static event Action<string>? Reported;

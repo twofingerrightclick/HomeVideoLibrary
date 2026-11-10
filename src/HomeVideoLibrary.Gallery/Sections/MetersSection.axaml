@@ -1,0 +1,53 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             x:Class="HomeVideoLibrary.Gallery.Sections.MetersSection">
+  <StackPanel Spacing="0">
+    <TextBlock Classes="gallery-title" Text="VOLUME &amp; LCD" Margin="0,0,0,14"/>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="Volume fader (Slider Classes=&quot;volume&quot;) — 0, 35, 70, max"/>
+        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="36" RowSpacing="10">
+          <Slider Classes="volume" Minimum="0" Maximum="100" Value="0"/>
+          <Slider Grid.Column="1" Classes="volume" Minimum="0" Maximum="100" Value="35"/>
+          <Slider Grid.Row="1" Classes="volume" Minimum="0" Maximum="100" Value="70"/>
+          <Slider Grid.Row="1" Grid.Column="1" Classes="volume" Minimum="0" Maximum="100" Value="100"/>
+        </Grid>
+        <TextBlock Classes="gallery-note" Text="States (rest, hover, pressed, focus-visible, disabled), header size, and vertical"/>
+        <StackPanel Orientation="Horizontal" Spacing="22">
+          <StackPanel Classes="specimen"><Slider Classes="volume" Width="150" Maximum="100" Value="45"/><TextBlock Classes="state" Text="REST"/></StackPanel>
+          <StackPanel Classes="specimen"><Slider Classes="volume" Width="150" Maximum="100" Value="45" g:ForcedState.States=":pointerover"/><TextBlock Classes="state" Text="HOVER"/></StackPanel>
+          <StackPanel Classes="specimen"><Slider Classes="volume" Width="150" Maximum="100" Value="45" g:ForcedState.States=":pointerover :pressed"/><TextBlock Classes="state" Text="PRESSED"/></StackPanel>
+          <StackPanel Classes="specimen"><Slider Classes="volume" Width="150" Maximum="100" Value="45" g:ForcedState.States=":focus-visible"/><TextBlock Classes="state" Text="FOCUS"/></StackPanel>
+          <StackPanel Classes="specimen"><Slider Classes="volume" Width="150" Maximum="100" Value="45" IsEnabled="False"/><TextBlock Classes="state" Text="DISABLED"/></StackPanel>
+          <StackPanel Classes="specimen"><Slider Classes="volume" Orientation="Vertical" Height="120" Maximum="100" Value="60"/><TextBlock Classes="state" Text="VERTICAL"/></StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="14">
+        <TextBlock Classes="gallery-note" Text="LcdCounter — elapsed, remaining, hours, captions; unlit ghost segments keep every digit in place"/>
+        <StackPanel Orientation="Horizontal" Spacing="18">
+          <StackPanel Classes="specimen"><c:LcdCounter Value="0:01:37"/><TextBlock Classes="state" Text="MM:SS"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Value="-0:03:42" Caption="REMAIN"/><TextBlock Classes="state" Text="REMAINING"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Value="1:02:03" Caption="TIME"/><TextBlock Classes="state" Text="AUTO HOURS"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Value="0:00:09" Hours="Always" ReserveSign="True"/><TextBlock Classes="state" Text="ALWAYS HOURS + SIGN"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Text="--:--"/><TextBlock Classes="state" Text="TEXT"/></StackPanel>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="18">
+          <StackPanel Classes="specimen"><c:LcdCounter Classes="small" Value="0:12:05"/><TextBlock Classes="state" Text="SMALL"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Classes="small vfd-green" Value="0:12:05" Caption="TIME"/><TextBlock Classes="state" Text="SMALL GREEN"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Classes="vfd-green" Value="0:44:10" Caption="TRACK"/><TextBlock Classes="state" Text="VFD GREEN"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Value="0:07:21" IsEnabled="False" Caption="TIME"/><TextBlock Classes="state" Text="DISABLED"/></StackPanel>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="18">
+          <StackPanel Classes="specimen"><c:LcdCounter Classes="large" Value="1:37:04" Hours="Always" Caption="TIME"/><TextBlock Classes="state" Text="LARGE"/></StackPanel>
+          <StackPanel Classes="specimen"><c:LcdCounter Classes="large vfd-green" Value="-0:02:58" Caption="REMAIN"/><TextBlock Classes="state" Text="LARGE GREEN"/></StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

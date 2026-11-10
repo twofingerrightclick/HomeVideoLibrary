@@ -1,0 +1,118 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             x:Class="HomeVideoLibrary.Gallery.Sections.InputsSection">
+  <StackPanel>
+    <TextBlock Classes="gallery-title" Text="INPUTS &amp; SURFACES" Margin="0,0,0,14"/>
+
+    <Border Classes="gallery-plate">
+      <Grid ColumnDefinitions="*,24,*" RowDefinitions="Auto,Auto,Auto,Auto">
+        <c:SectionHeader Grid.ColumnSpan="3" Title="TEXT FIELDS" Margin="0,0,0,10">
+          <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Plus}" ToolTip.Tip="Add"/>
+        </c:SectionHeader>
+        <StackPanel Grid.Row="1" Spacing="6">
+          <TextBlock Classes="legend" Text="TITLE"/>
+          <TextBox Watermark="Untitled tape"/>
+          <TextBlock Classes="legend" Text="FILLED" Margin="0,8,0,0"/>
+          <TextBox Text="Grandma's 80th birthday"/>
+          <TextBlock Classes="legend" Text="FOCUSED (CARET)" Margin="0,8,0,0"/>
+          <TextBox x:Name="FocusedBox" Text="Lake Tahoe, summer 1994"/>
+          <TextBlock Classes="legend" Text="DISABLED" Margin="0,8,0,0"/>
+          <TextBox Text="Read-only path" IsEnabled="False"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="2" Spacing="6">
+          <TextBlock Classes="legend" Text="DESCRIPTION (MULTI-LINE AREA)"/>
+          <TextBox Classes="area" Text="First steps in the back yard. Dad filming from the porch, the dog keeps walking into frame.&#x0a;&#x0a;Second half is the drive to the coast."/>
+          <TextBlock Classes="legend" Text="TAPE LABEL (PAPER, HANDWRITTEN)" Margin="0,8,0,0"/>
+          <TextBox Classes="paper handwritten" Text="Christmas '91 + New Years"/>
+          <TextBlock Classes="legend" Text="PAPER LABEL, PLACEHOLDER" Margin="0,8,0,0"/>
+          <TextBox Classes="paper" Watermark="Write on the label…"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <Grid ColumnDefinitions="*,24,*,24,*">
+        <StackPanel Spacing="10">
+          <c:SectionHeader Title="CHECK BOXES"/>
+          <CheckBox Content="Include subfolders"/>
+          <CheckBox Content="Keep originals" IsChecked="True"/>
+          <CheckBox Content="Partially selected" IsThreeState="True" IsChecked="{x:Null}"/>
+          <CheckBox Content="Disabled" IsEnabled="False" IsChecked="True"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Spacing="10">
+          <c:SectionHeader Title="SWITCHES"/>
+          <ToggleSwitch OnContent="Sound on" OffContent="Sound off"/>
+          <ToggleSwitch OnContent="Auto-play next" OffContent="Auto-play next" IsChecked="True"/>
+          <ToggleSwitch OnContent="Disabled" OffContent="Disabled" IsEnabled="False"/>
+        </StackPanel>
+        <StackPanel Grid.Column="4" Spacing="10">
+          <c:SectionHeader Title="TYPE"/>
+          <TextBlock Classes="title" Text="Summer 1994"/>
+          <TextBlock Classes="legend" Text="RECORDED · 42 MIN · 7 CHAPTERS"/>
+          <TextBlock Classes="meta" Text="Imported Mar 3, 2026 from /Volumes/Tapes"/>
+          <TextBlock Text="Body text in the native face reads at 13px." FontSize="13"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <Grid ColumnDefinitions="*,24,*,24,*">
+        <StackPanel Spacing="10">
+          <c:SectionHeader Title="LIST"/>
+          <Border Classes="well" Height="196">
+            <ListBox Classes="vcr" SelectedIndex="1">
+              <ListBoxItem Content="All tapes"/>
+              <ListBoxItem Content="Family"/>
+              <ListBoxItem Content="Holidays"/>
+              <ListBoxItem Content="Trips" g:ForcedState.States=":pointerover"/>
+              <ListBoxItem Content="School plays"/>
+              <ListBoxItem Content="Sports"/>
+              <ListBoxItem Content="Birthdays"/>
+              <ListBoxItem Content="Unsorted"/>
+            </ListBox>
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Spacing="10">
+          <c:SectionHeader Title="MENU / FLYOUT"/>
+          <MenuFlyoutPresenter HorizontalAlignment="Left" Width="220">
+            <MenuItem Header="Play" InputGesture="Space"/>
+            <MenuItem Header="Edit clips…" InputGesture="Cmd+E"/>
+            <MenuItem Header="Add to album" g:ForcedState.States=":pointerover :selected">
+              <MenuItem Header="Family"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Show in Finder"/>
+            <MenuItem Header="Delete" IsEnabled="False"/>
+          </MenuFlyoutPresenter>
+        </StackPanel>
+        <StackPanel Grid.Column="4" Spacing="10">
+          <c:SectionHeader Title="SURFACES"/>
+          <Border Classes="bezel"><TextBlock Classes="legend" Text="BEZEL — RAISED PANEL"/></Border>
+          <Border Classes="well" Padding="12"><TextBlock Classes="legend" Text="WELL — RECESSED SLOT"/></Border>
+          <Border Classes="glass"><TextBlock Text="GLASS — DISPLAY WINDOW" Foreground="{StaticResource Vcr.Brush.Amber}" FontFamily="{StaticResource Vcr.Font.Legend}" FontWeight="SemiBold"/></Border>
+          <Separator/>
+          <TextBlock Classes="meta" Text="Separator above is a molded groove."/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="10">
+        <c:SectionHeader Title="DIALOG CHROME"/>
+        <c:VcrDialog Title="DISCARD CHANGES?" Width="460" HorizontalAlignment="Left">
+          <c:VcrDialog.Footer>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+              <c:PlasticButton Content="Keep editing"/>
+              <c:PlasticButton Classes="destructive" Content="Discard"/>
+              <c:PlasticButton Classes="primary" Content="Save"/>
+            </StackPanel>
+          </c:VcrDialog.Footer>
+          <TextBlock TextWrapping="Wrap" Text="The description and two chapters have unsaved edits. Save them into the MKV before leaving this tape?"/>
+        </c:VcrDialog>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

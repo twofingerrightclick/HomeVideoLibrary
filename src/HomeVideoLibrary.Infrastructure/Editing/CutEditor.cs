@@ -33,7 +33,7 @@ internal sealed class CutEditor(MediaTools tools, MediaProcess process, MediaPro
 
     public async Task<TimeSpan> PlanSplitAsync(EditSource source, TimeSpan position, CancellationToken cancellationToken) =>
         CutPlanner.PlanSplit(await PacketsAroundAsync(source, position, cancellationToken), position, source.VideoEnd)
-            ?? throw new ArgumentOutOfRangeException(nameof(position), "There is no keyframe near that position to split at.");
+            ?? throw new ClipRangeException("There is no keyframe near that position to split at.");
 
     public async Task RenderTrimAsync(EditSource source, CutPlan plan, string output, string scratch, Action<double> progress,
         CancellationToken cancellationToken)

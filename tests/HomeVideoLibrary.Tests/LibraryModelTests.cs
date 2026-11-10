@@ -9,7 +9,7 @@ namespace HomeVideoLibrary.Tests;
 public sealed class LibraryModelTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-model-" + Guid.NewGuid().ToString("N"));
-    private readonly FakeMatroska _files = new();
+    private readonly FakeMatroska _files = new() { MediaIdentity = "f00d" };
 
     [Fact]
     public async Task LoadPublishesTheCachedLibraryBeforeAnyReadAndNewRowsArePending()
@@ -34,6 +34,28 @@ public sealed class LibraryModelTests : IDisposable
         Assert.Equal(1, model.Snapshot.Tags.Find("summer")!.VideoCount);
         Assert.Equal(cached.Id, Assert.Single(LibrarySearch.Run(model.Snapshot, "lake")).Video.Id);
         Assert.Equal(uncached.Id, Assert.Single(LibrarySearch.Run(model.Snapshot, "grandma")).Video.Id);
+    }
+
+    [Fact]
+    public async Task CacheEntriesFromBeforeMediaIdentitiesShowTheirContentUntilTheFileIsReadAgain()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "lake.mkv");
+        _files.Set(catalog.GetVideoPath(video.RelativePath), VideoMetadata.Empty with { Title = "Lake day" });
+        await new LibraryModel(catalog, _files).ReconcileAsync();
+        // What an older version wrote: the same entry without the identity.
+        var entry = (await catalog.LoadContentsAsync()).Cache[video.Id];
+        var json = System.Text.Json.Nodes.JsonNode.Parse(entry.RecordJson)!.AsObject();
+        Assert.True(json.Remove("MediaIdentity"));
+        await catalog.WriteCacheAsync([new CatalogCacheWrite(video.Id, entry with { RecordJson = json.ToJsonString() })]);
+
+        var model = new LibraryModel(catalog, _files);
+        var load = await model.LoadAsync();
+
+        var cached = model.Snapshot.Find(video.Id)!;
+        Assert.Equal((1, "Lake day", VideoRecordState.Pending, (string?)null), (load.Pending, cached.Title, cached.State, cached.MediaIdentity));
+        Assert.Equal(1, (await model.ReconcileAsync()).Read);
+        Assert.Equal((VideoRecordState.Ok, "f00d"), (model.Snapshot.Find(video.Id)!.State, model.Snapshot.Find(video.Id)!.MediaIdentity));
     }
 
     [Fact]
@@ -136,6 +158,87 @@ public sealed class LibraryModelTests : IDisposable
             Assert.NotNull(model.Snapshot.Find(imported.Id));
             Assert.Contains(imported.Id, model.Snapshot.MembersOf(album.Id));
         }
+    }
+
+    [Fact]
+    public async Task RemovingVideosDeletesTheirRowsMembershipsAndCacheAndPublishesOneDelta()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var removed = await AddVideoAsync(catalog, "removed");
+        var kept = await AddVideoAsync(catalog, "kept");
+        _files.Set(catalog.GetVideoPath(removed.RelativePath), VideoMetadata.Empty with { Tags = ["beach", "shared"] });
+        _files.Set(catalog.GetVideoPath(kept.RelativePath), VideoMetadata.Empty with { Tags = ["shared"] });
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.ReconcileAsync();
+        var album = await model.CreateAlbumAsync("Summer", [removed.Id, kept.Id]);
+        var deltas = new List<LibraryDelta>();
+        model.Changed += deltas.Add;
+
+        await model.RemoveVideosAsync([removed.Id, Guid.NewGuid()]);
+
+        var delta = Assert.Single(deltas);
+        Assert.Equal([removed.Id], delta.Removed);
+        Assert.True(delta.AlbumsChanged);
+        Assert.True(delta.TagsChanged);
+        Assert.Null(model.Snapshot.Find(removed.Id));
+        Assert.Equal([kept.Id], model.Snapshot.MembersOf(album.Id));
+        Assert.Null(model.Snapshot.Tags.Find("beach"));
+        Assert.Equal(1, model.Snapshot.Tags.Find("shared")!.VideoCount);
+        Assert.True(File.Exists(catalog.GetVideoPath(removed.RelativePath)));
+        var contents = await catalog.LoadContentsAsync();
+        Assert.Equal([kept.Id], contents.Videos.Select(video => video.Id));
+        Assert.Equal([(album.Id, kept.Id)], contents.Memberships);
+        Assert.Equal([kept.Id], contents.Cache.Keys);
+        Assert.Equal(1, await CountRowsAsync(catalog, "video_cache"));
+
+        var reloaded = new LibraryModel(catalog, _files);
+        await reloaded.LoadAsync();
+        Assert.Null(reloaded.Snapshot.Find(removed.Id));
+    }
+
+    [Fact]
+    public async Task ASaveFinishingAfterItsVideoWasRemovedDoesNotBringItBack()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "trashed");
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.RemoveVideosAsync([video.Id]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => model.UpsertFromFileAsync(video));
+        await model.ReconcileAsync();
+
+        Assert.Null(model.Snapshot.Find(video.Id));
+    }
+
+    [Fact]
+    public async Task AVideoWhoseFileWasTrashedButWhoseRowSurvivedACrashIsMissingAndCanBeRemoved()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "half removed");
+        var trashed = Path.Combine(_root, "Trash", "half removed.mkv");
+        Directory.CreateDirectory(Path.GetDirectoryName(trashed)!);
+        File.Move(catalog.GetVideoPath(video.RelativePath), trashed);
+
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.ReconcileAsync();
+        Assert.True(model.Snapshot.Find(video.Id)!.IsMissing);
+
+        await model.RemoveVideosAsync([video.Id]);
+        Assert.Empty(model.Snapshot.Videos);
+        Assert.Empty(await catalog.ListAsync());
+        Assert.True(File.Exists(trashed));
+    }
+
+    private static async Task<long> CountRowsAsync(LibraryCatalog catalog, string table)
+    {
+        await using var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {table}";
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 
     [Fact]

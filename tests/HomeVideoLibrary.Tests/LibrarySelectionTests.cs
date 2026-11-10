@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -11,6 +12,7 @@ public sealed class LibrarySelectionTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-selection-" + Guid.NewGuid().ToString("N"));
     private readonly FakeMatroska _files = new();
     private readonly List<string> _unavailableTools = [];
+    private readonly FakeInteraction _interaction = new();
     private Func<LibraryCatalog, IVideoImporter>? _importer;
 
     private async Task<(MainWindowViewModel ViewModel, LibraryVideo[] Videos)> OpenAsync(params string[] names)
@@ -25,6 +27,7 @@ public sealed class LibrarySelectionTests : IDisposable
         }
         var viewModel = new MainWindowViewModel(new MainWindowDependencies
         {
+            Interaction = _interaction,
             Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
             CreateServices = _ => new LibraryServices(_files, new UnusedMetadata()),
             CreateImporter = library => _importer?.Invoke(library) ?? throw new NotSupportedException(),
@@ -33,55 +36,69 @@ public sealed class LibrarySelectionTests : IDisposable
             Post = action => action(),
         });
         await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
-        await viewModel.RefreshIndexAsync();
+        await viewModel.Settings.RefreshIndexAsync();
         return (viewModel, [.. videos]);
     }
 
-    private static TapeViewModel Tape(MainWindowViewModel viewModel, LibraryVideo video) => viewModel.Tapes.Single(tape => tape.Id == video.Id);
+    private static TapeViewModel Tape(MainWindowViewModel viewModel, LibraryVideo video) => viewModel.Shelf.Tapes.Single(tape => tape.Id == video.Id);
 
     [Fact]
     public async Task ShiftRangeSelectAllAndSelectionSurvivesSearches()
     {
         var (vm, videos) = await OpenAsync("first", "second", "third", "fourth");
-        Assert.Equal(videos.Select(video => video.Id), vm.Tapes.Select(tape => tape.Id));
+        var shelf = vm.Shelf;
+        Assert.Equal(videos.Select(video => video.Id), shelf.Tapes.Select(tape => tape.Id));
 
-        vm.ToggleTapeSelection(Tape(vm, videos[0]));
-        vm.SelectRange(Tape(vm, videos[2]));
-        Assert.Equal(videos.Take(3).Select(video => video.Id), vm.SelectedVideos.Select(video => video.Id));
-        Assert.All(vm.Tapes.Take(3), tape => Assert.True(tape.IsSelected));
-        Assert.Equal("3 selected", vm.SelectionLabel);
+        Tape(vm, videos[0]).ToggleSelectionCommand.Execute(null);
+        Tape(vm, videos[2]).SelectRangeCommand.Execute(null);
+        Assert.Equal(videos.Take(3).Select(video => video.Id), shelf.SelectedRecords.Select(video => video.Id));
+        Assert.All(shelf.Tapes.Take(3), tape => Assert.True(tape.IsSelected));
+        Assert.Equal("3 selected", shelf.SelectionLabel);
 
-        vm.SearchText = "fourth";
-        Assert.Equal(videos[3].Id, Assert.Single(vm.Tapes).Id);
-        Assert.Equal(3, vm.SelectedVideos.Count);
-        Assert.Equal("3 selected · 3 hidden by this view", vm.SelectionLabel);
-        Assert.True(vm.CanEditClips);
+        shelf.SearchText = "fourth";
+        Assert.Equal(videos[3].Id, Assert.Single(shelf.Tapes).Id);
+        Assert.Equal(3, shelf.SelectedRecords.Count);
+        Assert.Equal("3 selected · 3 hidden by this view", shelf.SelectionLabel);
+        Assert.True(vm.MergeSelectedCommand.CanExecute(null));
         Tape(vm, videos[3]).IsSelected = true; // The tape's checkbox.
-        vm.SearchText = "";
-        Assert.Equal(4, vm.SelectedVideos.Count);
-        Assert.All(vm.Tapes, tape => Assert.True(tape.IsSelected));
+        Assert.Equal("4 selected · 3 hidden by this view", shelf.SelectionLabel);
+        shelf.SearchText = "";
+        Assert.Equal(4, shelf.SelectedRecords.Count);
+        Assert.Equal("4 selected", shelf.SelectionLabel);
+        Assert.All(shelf.Tapes, tape => Assert.True(tape.IsSelected));
 
-        vm.ClearSelection();
-        Assert.Empty(vm.SelectedVideos); Assert.False(vm.CanAddSelected);
-        vm.SearchText = "second";
-        vm.SelectAllVisible();
-        vm.SearchText = "";
-        Assert.Equal(videos[1].Id, Assert.Single(vm.SelectedVideos).Id);
+        shelf.ClearSelection();
+        Assert.Empty(shelf.SelectedRecords); Assert.False(vm.PlaySelectedCommand.CanExecute(null));
+        shelf.SearchText = "second";
+        shelf.SelectAllCommand.Execute(null);
+        shelf.SearchText = "";
+        Assert.Equal(videos[1].Id, Assert.Single(shelf.SelectedRecords).Id);
+    }
+
+    [Fact]
+    public async Task EscapeClearsTheSelectionBeforeTheSearch()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        vm.Shelf.SearchText = "first";
+        Tape(vm, videos[0]).IsSelected = true;
+
+        vm.Shelf.ClearCommand.Execute(null);
+        Assert.False(vm.Shelf.HasSelection);
+        Assert.Equal("first", vm.Shelf.SearchText);
+        vm.Shelf.ClearCommand.Execute(null);
+        Assert.Equal("", vm.Shelf.SearchText);
     }
 
     [Fact]
     public async Task LibraryChangesPatchTapesInPlaceInsteadOfRebuildingThem()
     {
         var (vm, videos) = await OpenAsync("first", "second");
-        var before = vm.Tapes.ToArray();
-        var rows = vm.TapeRows.ToArray();
+        var before = vm.Shelf.Tapes.ToArray();
         var album = await vm.Model!.CreateAlbumAsync("Family", []);
-        vm.SetTapeColumns(1);
 
-        await vm.AddToAlbumAsync(album.Id, [videos[1].Id]);
-        Assert.Equal(before, vm.Tapes);
-        Assert.Equal(rows, vm.TapeRows);
-        Assert.Contains("Added 1 video(s) to “Family”", vm.Status);
+        await vm.Albums.AddToAlbumAsync(album.Id, [videos[1].Id]);
+        Assert.Equal(before, vm.Shelf.Tapes);
+        Assert.Contains("Added 1 video to “Family”", vm.Status);
 
         var path = vm.Model.GetVideoPath(vm.Model.Snapshot.Find(videos[0].Id)!);
         _files.Set(path, VideoMetadata.Empty with { Description = "renamed by a save" });
@@ -92,46 +109,89 @@ public sealed class LibrarySelectionTests : IDisposable
     }
 
     [Fact]
-    public async Task AlbumListUpdatesInPlaceAndKeepsTheOpenAlbumAndAddMode()
+    public async Task AnInsertAtTheTopOfALongShelfIsOneInsertAndMonthHeadersFollow()
     {
-        var (vm, videos) = await OpenAsync("first", "second");
-        vm.AlbumName = "Beach";
-        await vm.CreateAlbumAsync();
-        var beach = Assert.Single(vm.Albums);
-        Assert.Equal(beach, vm.CurrentAlbum);
-        vm.ToggleAlbumAddMode();
-        Assert.True(vm.IsChoosingAlbumVideos);
-        Assert.Equal(2, vm.Tapes.Count);
+        var names = Enumerable.Range(0, 200).Select(index => $"tape {index}").ToArray();
+        var (vm, _) = await OpenAsync(names);
+        var changes = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        vm.Shelf.Tapes.CollectionChanged += (_, args) => changes.Add(args.Action);
 
-        vm.AlbumName = "Beach days";
-        await vm.RenameAlbumAsync();
-        Assert.Equal("Beach days", Assert.Single(vm.Albums).Name);
-        Assert.Equal(beach.Id, vm.CurrentAlbum?.Id);
-        Assert.True(vm.IsChoosingAlbumVideos);
+        var catalog = vm.Model!.Catalog;
+        var newest = await AddVideoAsync(catalog, "newest", new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        await vm.Model.UpsertFromFileAsync(newest);
 
-        vm.ToggleTapeSelection(Tape(vm, videos[0]));
-        await vm.AddSelectedToCurrentAsync();
-        Assert.Equal(videos[1].Id, Assert.Single(vm.Tapes).Id);
-        vm.AlbumName = "beach DAYS";
-        await vm.CreateAlbumAsync();
-        Assert.Contains("already exists", vm.Status);
-        Assert.Single(vm.Albums);
+        Assert.Equal([System.Collections.Specialized.NotifyCollectionChangedAction.Add], changes);
+        Assert.Equal(newest.Id, vm.Shelf.Tapes[0].Id);
+        Assert.Equal(vm.Shelf.Tapes[0].MonthLabel, vm.Shelf.Tapes[0].MonthHeader);
+        Assert.NotNull(vm.Shelf.Tapes[1].MonthHeader); // 2001 then 2000: a new month.
+
+        vm.Shelf.SearchText = "tape 1";
+        Assert.All(vm.Shelf.Tapes.Zip(vm.Shelf.Tapes.Skip(1)), pair =>
+            Assert.Equal(pair.First.MonthLabel == pair.Second.MonthLabel ? null : pair.Second.MonthLabel, pair.Second.MonthHeader));
+        Assert.NotNull(vm.Shelf.Tapes[0].MonthHeader);
+
+        vm.Shelf.SetTopVisible(vm.Shelf.Tapes[3]);
+        Assert.Equal(vm.Shelf.Tapes[3].MonthLabel, vm.Shelf.StickyMonth);
     }
 
     [Fact]
-    public async Task ImportPublishesEachVideoAndKeepsPerFileResults()
+    public async Task NewAlbumsGetAFreeNameAndOpenForRenameWhichKeepsTheShownAlbum()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        await vm.Albums.CreateCommand.ExecuteAsync();
+        await vm.Albums.CreateCommand.ExecuteAsync();
+        Assert.Equal(["New album", "New album 2"], vm.Albums.Rows.Select(row => row.Name));
+        var second = vm.Albums.Current!;
+        Assert.Equal("New album 2", second.Name);
+        Assert.NotNull(second.Rename);
+
+        second.Rename!.DraftName = "  ";
+        await second.Rename.CommitCommand.ExecuteAsync();
+        Assert.Equal("Give the album a name.", vm.Status);
+        Assert.NotNull(second.Rename);
+
+        second.Rename.DraftName = "Beach";
+        await second.Rename.CommitCommand.ExecuteAsync();
+        Assert.Null(second.Rename);
+        Assert.Same(second, vm.Albums.Current);
+        Assert.Equal("Beach", second.Name);
+        Assert.Equal("Beach", vm.Albums.ViewTitle);
+
+        vm.Albums.StartAddingCommand.Execute(null);
+        Assert.True(vm.Albums.IsAddingVideos);
+        Assert.Equal(2, vm.Shelf.Tapes.Count);
+        Tape(vm, videos[0]).IsSelected = true;
+        await vm.Albums.AddSelectedHereCommand.ExecuteAsync();
+        Assert.Contains("Added 1 video to “Beach”", vm.Status);
+        Assert.Equal(videos[1].Id, Assert.Single(vm.Shelf.Tapes).Id);
+        Assert.Equal(1, second.Count);
+        Assert.True(vm.Albums.IsAddingVideos);
+
+        second.BeginRename();
+        second.Rename!.DraftName = "new ALBUM";
+        await second.Rename.CommitCommand.ExecuteAsync();
+        Assert.Contains("already exists", vm.Status);
+    }
+
+    [Fact]
+    public async Task ImportQueuesOneJobPerFileAndPublishesEachVideo()
     {
         _importer = catalog => new FakeImporter(catalog, _files);
         var (vm, _) = await OpenAsync("existing");
+        _interaction.Picked = new PickedFiles(["/somewhere/new clip.mov", "/somewhere/duplicate.mov", "/somewhere/broken.mov"], 0);
 
-        await vm.ImportAsync(["/somewhere/new clip.mov", "/somewhere/duplicate.mov", "/somewhere/broken.mov"]);
+        await vm.Import.ImportCommand.ExecuteAsync();
+        Assert.Equal(["Queued (#1)", "Queued (#2)"], vm.Jobs.Jobs.Skip(1).Select(job => job.StatusText));
+        await vm.Jobs.WhenIdleAsync();
 
-        Assert.Equal(2, vm.Tapes.Count);
-        Assert.Contains(vm.Tapes, tape => tape.Label == "imported new clip");
-        Assert.Equal(["new clip.mov: imported", "duplicate.mov: already in library", "broken.mov: bad header"], vm.ImportResults);
-        Assert.StartsWith("Imported 1; 1 could not be imported. 1 already in library.", vm.Status);
-        Assert.Equal(100, vm.Progress);
-        Assert.False(vm.IsBusy || vm.IsProgressIndeterminate);
+        Assert.Equal(2, vm.Shelf.Tapes.Count);
+        Assert.Contains(vm.Shelf.Tapes, tape => tape.Label == "imported new clip");
+        var jobs = vm.Jobs.Jobs.Reverse().ToArray();
+        Assert.Equal([JobState.Succeeded, JobState.Succeeded, JobState.Failed], jobs.Select(job => job.State));
+        Assert.Equal("Already in the library.", jobs[1].StatusText);
+        Assert.Equal("bad header", jobs[2].StatusText);
+        Assert.True(jobs[0].CanOpen);
+        Assert.False(vm.Import.IsImporting);
     }
 
     [Fact]
@@ -139,10 +199,206 @@ public sealed class LibrarySelectionTests : IDisposable
     {
         _unavailableTools.Add("mkvmerge");
         var (vm, _) = await OpenAsync("first");
-        Assert.False(vm.CanImport);
+        Assert.False(vm.Import.ImportCommand.CanExecute(null));
         Assert.Contains("mkvmerge", vm.ToolWarning);
-        Assert.Equal(VideoRecordState.Pending, vm.Tapes.Single().Record.State);
-        Assert.Null(vm.Tapes.Single().CreatePreviewSession());
+        Assert.Equal(VideoRecordState.Pending, vm.Shelf.Tapes.Single().Record.State);
+        Assert.Null(vm.Shelf.Tapes.Single().CreatePreviewSession());
+    }
+
+    [Fact]
+    public async Task ClosingWithRunningJobsAsksAndKeepOpenLeavesThemRunning()
+    {
+        var started = new TaskCompletionSource();
+        _importer = _ => new BlockingImporter(started);
+        var (vm, _) = await OpenAsync("existing");
+        vm.Import.Enqueue(["/somewhere/slow.mov"]);
+        await started.Task;
+
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await vm.RequestCloseAsync());
+        Assert.True(vm.Import.IsImporting);
+
+        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        var close = vm.RequestCloseAsync();
+        var again = vm.RequestCloseAsync();
+        Assert.True(await close);
+        Assert.True(await again);
+        Assert.Equal(2, _interaction.CloseAsked);
+        Assert.Equal(JobState.Cancelled, Assert.Single(vm.Jobs.Jobs).State);
+        Assert.False(vm.Import.IsImporting);
+    }
+
+    [Fact]
+    public async Task ImportEnabledAgainAfterSwitchAndAfterKeepOpen()
+    {
+        var started = new TaskCompletionSource();
+        _importer = _ => new BlockingImporter(started);
+        var (vm, _) = await OpenAsync("existing");
+        bool? announced = null;
+        vm.Import.ImportCommand.CanExecuteChanged += (_, _) => announced = vm.Import.ImportCommand.CanExecute(null);
+
+        await vm.OpenLibraryAsync(vm.Settings.LibraryRoot);
+        Assert.True(announced);
+
+        vm.Import.Enqueue(["/somewhere/slow.mov"]);
+        await started.Task;
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await vm.RequestCloseAsync());
+        Assert.True(announced);
+        await vm.Jobs.CancelAllAndWaitAsync();
+    }
+
+    [Fact]
+    public async Task ChoosingAnotherLibraryWaitsForJobs()
+    {
+        var (vm, _) = await OpenAsync("first");
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var job = vm.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
+
+        Assert.False(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        gate.SetResult(JobOutcome.Done("ok"));
+        await job.Completion;
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task OpeningAJobOutputThatIsGoneSaysSo()
+    {
+        var (vm, _) = await OpenAsync("first");
+        var job = vm.Jobs.Enqueue("Trim", JobLane.Render, (_, _) => Task.FromResult(new JobOutcome("Saved.", [Guid.NewGuid()])));
+        await job.Completion;
+
+        await job.OpenCommand.ExecuteAsync();
+        Assert.Equal("The video from “Trim” is no longer in the library.", vm.Status);
+        Assert.Null(vm.Page);
+    }
+
+    [Fact]
+    public Task ImportsNotifyOnceWhenTheLaneDrainsAndFailuresAtOnce() => UiThread.Run(async () =>
+    {
+        _importer = catalog => new FakeImporter(catalog, _files);
+        var (vm, _) = await OpenAsync("existing");
+        var toasts = new List<string>();
+        vm.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(MainWindowViewModel.Toast) && vm.HasToast) toasts.Add(vm.Toast); };
+
+        vm.Import.Enqueue(["/somewhere/a.mov", "/somewhere/broken.mov", "/somewhere/b.mov"]);
+        await vm.Jobs.WhenIdleAsync();
+        await UiThread.Settle();
+
+        Assert.Equal(["Import broken.mov: bad header", "Imported 2 · 1 failed"], toasts);
+        Assert.True(vm.Jobs.HasFailures);
+        Assert.Equal("1 FAILED", vm.Jobs.FailedLabel);
+        vm.Jobs.ClearFinishedCommand.Execute(null);
+        Assert.False(vm.Jobs.HasFailures);
+    });
+
+    [Fact]
+    public Task NewerToastNotClearedByOlderTimer() => UiThread.Run(async () =>
+    {
+        var time = new FakeTimeProvider();
+        var vm = new MainWindowViewModel(new MainWindowDependencies
+        {
+            Interaction = _interaction,
+            Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
+            Time = time,
+            Post = action => action(),
+        });
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []); // Toasts "Select videos first…".
+
+        // The older toast's delay ends off the UI thread; its continuation is queued behind the newer toast.
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []);
+        await UiThread.Settle();
+        Assert.True(vm.HasToast);
+
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await UiThread.Settle();
+        Assert.False(vm.HasToast);
+    });
+
+    [Fact]
+    public async Task EscapeInAnAlbumRenameKeepsTheOldName()
+    {
+        var (vm, _) = await OpenAsync("first");
+        await vm.Albums.CreateCommand.ExecuteAsync();
+        var row = vm.Albums.Current!;
+        var rename = row.Rename!;
+        rename.DraftName = "Typed then abandoned";
+
+        rename.CancelCommand.Execute(null);
+        await rename.CommitCommand.ExecuteAsync(); // The removed field's final lost focus.
+
+        Assert.Null(row.Rename);
+        Assert.Equal("New album", row.Name);
+        Assert.Equal("New album", vm.Model!.Snapshot.Albums.Single().Name);
+    }
+
+    [Fact]
+    public async Task DeletingTheShownAlbumWithAnotherReturnsToAllVideosInOnePass()
+    {
+        var (vm, _) = await OpenAsync("first");
+        foreach (var name in new[] { "A", "B", "C" }) await vm.Model!.CreateAlbumAsync(name, []);
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Name == "C");
+        var b = vm.Albums.Rows.Single(row => row.Name == "B").Id;
+        var c = vm.Albums.Current.Id;
+        // The list writes its lost selection back to Current while the row is removed, as the real ListBox does.
+        vm.Albums.Rows.CollectionChanged += (_, args) =>
+        {
+            if (args.OldItems?.OfType<AlbumRowViewModel>().Any(row => row.Id == c) == true) vm.Albums.Current = null;
+        };
+
+        await vm.Model!.DeleteAlbumAsync(b);
+        await vm.Model.DeleteAlbumAsync(c);
+
+        Assert.True(vm.Albums.IsAllVideos);
+        Assert.Equal(["A"], vm.Albums.Rows.Select(row => row.Name));
+        Assert.Single(vm.Shelf.Tapes);
+    }
+
+    [Fact]
+    public async Task AddModeAddsOnlyTheSelectedVideosItShows()
+    {
+        var (vm, videos) = await OpenAsync("first", "second", "third");
+        var album = await vm.Model!.CreateAlbumAsync("Beach", [videos[0].Id]);
+        Tape(vm, videos[0]).IsSelected = true;
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Id == album.Id);
+        vm.Albums.StartAddingCommand.Execute(null);
+
+        Assert.Equal("ADD 0", vm.Albums.AddHereLabel);
+        Assert.False(vm.Albums.AddSelectedHereCommand.CanExecute(null));
+        Tape(vm, videos[1]).IsSelected = true;
+        Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
+        await vm.Albums.AddSelectedHereCommand.ExecuteAsync();
+        Assert.Contains("Added 1 video to “Beach”.", vm.Status);
+    }
+
+    [Fact]
+    public async Task DeleteInAddModeIsDisabled()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        var album = await vm.Model!.CreateAlbumAsync("Beach", [videos[0].Id]);
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Id == album.Id);
+        Tape(vm, videos[0]).IsSelected = true;
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+        bool? announced = null;
+        vm.DeleteSelectedCommand.CanExecuteChanged += (_, _) => announced = vm.DeleteSelectedCommand.CanExecute(null);
+
+        vm.Albums.StartAddingCommand.Execute(null);
+        Tape(vm, videos[1]).IsSelected = true; // Shown in add mode, so it is a visible selection.
+        Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+        Assert.False(announced);
+    }
+
+    private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter
+    {
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
     }
 
     private sealed class FakeImporter(LibraryCatalog catalog, FakeMatroska files) : IVideoImporter

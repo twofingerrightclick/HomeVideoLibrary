@@ -63,8 +63,11 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         report.Begin("Inspecting source", 0, determinate: false);
         var sourceStamp = Stamp(sourcePath);
         var fingerprint = await ComputeFingerprintAsync(sourcePath, cancellationToken);
-        if (await catalog.FindBySourceFingerprintAsync(fingerprint, cancellationToken) is { } existing)
-            return new ImportResult(ImportOutcome.AlreadyInLibrary, existing, []);
+        // A video whose file is gone (moved to the Trash with its row left behind, or deleted outside the app) does not
+        // count: importing the source again makes a new video, which takes the fingerprint over when it is published.
+        var match = await catalog.FindBySourceFingerprintAsync(fingerprint, cancellationToken);
+        if (match is not null && LibraryFiles.Probe(catalog.GetVideoPath(match.RelativePath)) != FilePresence.Absent)
+            return new ImportResult(ImportOutcome.AlreadyInLibrary, match, []);
 
         var source = await ProbeAsync(sourcePath, cancellationToken);
         var recordedAt = (UsableRecordedDate(source.RecordedAt) ?? new DateTimeOffset(File.GetLastWriteTimeUtc(sourcePath))).ToUniversalTime();
@@ -128,6 +131,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             };
             try
             {
+                if (match is not null) await catalog.ReleaseSourceFingerprintAsync(match.Id, fingerprint, cancellationToken);
                 if ((await LibraryPublisher.PublishAsync(catalog, [(video, staging)], cancellationToken)).Unfinished.Count > 0)
                     warnings.Add(PublishResult.UnfinishedNotice);
             }

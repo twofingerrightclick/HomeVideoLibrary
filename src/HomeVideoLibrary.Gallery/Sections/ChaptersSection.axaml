@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:demo="using:HomeVideoLibrary.Gallery.Demo"
+             x:Class="HomeVideoLibrary.Gallery.Sections.ChaptersSection">
+  <StackPanel>
+    <TextBlock Classes="gallery-title" Text="CHAPTERS" Margin="0,0,0,14"/>
+    <Border Classes="gallery-plate">
+      <Grid ColumnDefinitions="340,32,*">
+        <StackPanel Spacing="8">
+          <TextBlock Classes="gallery-note" Text="Row states: current (under playhead), placeholder (yellow), hover with an action, inline editing, focus, untitled"/>
+          <Border Classes="bezel" Padding="8">
+            <StackPanel Spacing="2">
+              <c:SectionHeader Title="CHAPTERS" Margin="4,0,4,6">
+                <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Chapter}" Content="Add  M"/>
+              </c:SectionHeader>
+              <c:ChapterListItem Start="0:00:00" Title="Opening presents"/>
+              <c:ChapterListItem Start="0:04:12" Title="Grandma arrives" IsCurrent="True"/>
+              <c:ChapterPlaceholderRow Start="0:06:30"/>
+              <c:ChapterListItem Start="0:09:05" Title="Sledding on Miller Hill" g:ForcedState.States=":pointerover">
+                <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" ToolTip.Tip="Remove chapter"/>
+              </c:ChapterListItem>
+              <c:ChapterListItem Start="0:17:44" Title="Hot cocoa" IsEditing="True"/>
+              <c:ChapterListItem Start="0:23:10" Title="Snowball fight in the dark" g:ForcedState.States=":focus-visible"/>
+              <c:ChapterListItem Start="1:02:15" Title=""/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Spacing="8">
+          <TextBlock Classes="gallery-note" Text="Reference page: one VideoPageViewModel per video, shown through a non-recycling template, so switching videos builds a fresh view and drafts stay with their video. Scrub or play: the yellow row moves, rows are never rebuilt, and a title being edited survives. ADD CHAPTER opens the new row's title."/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <c:LatchButton x:Name="PlayLatch" Classes="toolbar" Icon="{StaticResource Vcr.Icon.Play}" Content="PLAY"/>
+            <c:PlasticButton x:Name="ShowA" Classes="toolbar" Content="VIDEO A"/>
+            <c:PlasticButton x:Name="ShowB" Classes="toolbar" Content="VIDEO B"/>
+          </StackPanel>
+          <ContentControl x:Name="PageHost" ContentTemplate="{x:Static demo:VideoPageViewModel.ViewTemplate}"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </StackPanel>
+</UserControl>

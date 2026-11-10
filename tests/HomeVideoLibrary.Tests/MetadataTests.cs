@@ -13,6 +13,81 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task AVideoNoImportWroteGetsOnlyItsMissingTitleAndDateAndKeepsEverythingAsWritten()
+    {
+        var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));
+        await catalog.InitializeAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var recorded = new DateTimeOffset(1997, 7, 3, 18, 30, 0, TimeSpan.Zero);
+        async Task<LibraryVideo> VideoAsync(string name, string? fingerprint, params (string Name, string Value)[] tags)
+        {
+            var id = Guid.NewGuid();
+            var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), name, TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, recorded)
+            {
+                SourceFingerprint = fingerprint,
+            };
+            var path = catalog.GetVideoPath(video.RelativePath);
+            await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+                "-pix_fmt", "yuv420p", path]);
+            if (tags.Length > 0)
+            {
+                var xml = Path.Combine(_root, $"{id:N}.xml");
+                await File.WriteAllTextAsync(xml, "<Tags><Tag><Targets><TargetTypeValue>50</TargetTypeValue></Targets>" +
+                    string.Concat(tags.Select(tag => $"<Simple><Name>{tag.Name}</Name><String>{tag.Value}</String></Simple>")) + "</Tag></Tags>");
+                await ToolAsync(_tools.MkvPropEdit, [path, "--tags", "all:" + xml]);
+            }
+            await catalog.AddAsync(video);
+            return video;
+        }
+        var old = await VideoAsync("grandma visit", null, ("KEYWORDS", "summer, Beach"), ("DESCRIPTION", "Two  spaces stay"));
+        var imported = await VideoAsync("imported later", "v2:0123");
+        var clearedByUser = await VideoAsync("cleared", null, (VideoImporter.SourceFingerprintTag, "v1:4567"));
+
+        Assert.True(await service.FillMissingIdentityAsync(old));
+        Assert.False(await service.FillMissingIdentityAsync(old));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
+        Assert.False(await service.FillMissingIdentityAsync(clearedByUser));
+        File.Delete(catalog.GetVideoPath(imported.RelativePath));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
+
+        var path = catalog.GetVideoPath(old.RelativePath);
+        var metadata = (await service.ReadTextAsync(path)).Metadata;
+        Assert.Equal(("grandma visit", recorded), (metadata.Title, metadata.RecordedAt));
+        var xml = await TagsXmlAsync(path);
+        Assert.Contains("<String>summer, Beach</String>", xml);
+        Assert.Contains("<String>Two  spaces stay</String>", xml);
+        Assert.DoesNotContain(VideoImporter.OriginalFileNameTag, xml);
+        Assert.Equal("", (await service.ReadTextAsync(catalog.GetVideoPath(clearedByUser.RelativePath))).Metadata.Title);
+    }
+
+    private async Task<string> TagsXmlAsync(string mkvPath)
+    {
+        var output = Path.Combine(_root, $"tags-{Guid.NewGuid():N}.xml");
+        await ToolAsync(_tools.MkvExtract, [mkvPath, "tags", output]);
+        return await File.ReadAllTextAsync(output);
+    }
+
+    [Fact]
+    public async Task AnExclusiveLeaseHoldsOffReadsAndSavesUntilItIsReleased()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var path = catalog.GetVideoPath(video.RelativePath);
+
+        var lease = await MatroskaMetadataService.AcquireExclusiveAsync(path);
+        var read = service.ReadTextAsync(path);
+        var save = service.SaveAsync(video, VideoMetadata.Empty with { Title = "after the lease" });
+        await Task.Delay(300);
+        Assert.False(read.IsCompleted);
+        Assert.False(save.IsCompleted);
+
+        lease.Dispose();
+        await read;
+        await save;
+        Assert.Equal("after the lease", (await service.ReadTextAsync(path)).Metadata.Title);
+    }
+
+    [Fact]
     public async Task RoundTripsEmbeddedMetadataAndJpegTimestampsAfterReopen()
     {
         var (catalog, video) = await CreateVideoAsync();
@@ -516,6 +591,59 @@ public sealed class MetadataTests : IDisposable
 
         var probe = await ToolAsync(_tools.Ffprobe, ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", output]);
         Assert.Equal("640,480", probe.StandardOutput.Trim());
+    }
+
+    [Fact]
+    public async Task MediaIdentitySurvivesMetadataSavesAndTheCacheButNotNewMedia()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        // mkvmerge writes statistics tags stamped with its version and the date.
+        var muxed = Path.Combine(_root, "muxed.mkv");
+        await ToolAsync(_tools.MkvMerge, ["-o", muxed, path]);
+        File.Move(muxed, path, overwrite: true);
+        Assert.Contains("tag__statistics_writing_date_utc", (await ToolAsync(_tools.MkvMerge, ["-J", path])).StandardOutput);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var model = new LibraryModel(catalog, service);
+        var imported = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(imported.MediaIdentity);
+
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        await service.SaveAsync(video, imported.ToMetadata()! with { Title = "Renamed", Tags = ["family"], Thumbnails = [thumbnail] });
+        var saved = await model.UpsertFromFileAsync(video);
+        Assert.NotEqual(imported.Stamp, saved.Stamp);
+        Assert.Equal(imported.MediaIdentity, saved.MediaIdentity);
+
+        var reopened = new LibraryModel(new LibraryCatalog(catalog.Paths), service);
+        await reopened.LoadAsync();
+        Assert.Equal(saved.MediaIdentity, reopened.Snapshot.Find(video.Id)!.MediaIdentity);
+
+        var trimmed = Path.Combine(_root, "trimmed.mkv");
+        // A lossless trim of the end, which unlike mkvmerge's split need not end on a keyframe.
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-t", "1", "-c", "copy", trimmed]);
+        File.Move(trimmed, path, overwrite: true);
+        var trim = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(trim.MediaIdentity);
+        Assert.NotEqual(saved.MediaIdentity, trim.MediaIdentity);
+
+        // Same size and length, different pictures.
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", path]);
+        var replaced = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(replaced.MediaIdentity);
+        Assert.NotEqual(saved.MediaIdentity, replaced.MediaIdentity);
+    }
+
+    [Fact]
+    public void MediaIdentityIgnoresWhenAndByWhatStatisticsWereWrittenButNotTheMediaTheyDescribe()
+    {
+        static string Track(string frames, string date, string app) =>
+            $$$"""{"id":0,"type":"video","codec":"AVC","properties":{"uid":42,"codec_id":"V_MPEG4/ISO/AVC","pixel_dimensions":"640x480","tag_number_of_frames":"{{{frames}}}","tag__statistics_writing_date_utc":"{{{date}}}","tag__statistics_writing_app":"{{{app}}}","language":"und"}}""";
+        var original = MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("25", "2024-01-01 00:00:00", "mkvmerge v80")]);
+
+        Assert.Equal(original, MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("25", "2026-11-10 09:00:00", "mkvmerge v103")]));
+        Assert.NotEqual(original, MatroskaMetadataService.MediaIdentityOf(1_000_000_000, [Track("24", "2024-01-01 00:00:00", "mkvmerge v80")]));
+        Assert.NotEqual(original, MatroskaMetadataService.MediaIdentityOf(960_000_000, [Track("25", "2024-01-01 00:00:00", "mkvmerge v80")]));
     }
 
     private async Task<(LibraryCatalog Catalog, LibraryVideo Video)> CreateVideoAsync()

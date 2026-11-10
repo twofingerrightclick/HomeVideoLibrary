@@ -1,0 +1,140 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="using:HomeVideoLibrary.UI">
+
+  <!--
+    Inspector tabs (TabControl.inspector): a row of adjoined plastic segments in one recessed well,
+    iPhoto-style with the icon above the label. The selected segment latches in and lights its LED,
+    matching LatchButton. Set the glyph with ui:Vcr.Icon on each TabItem.
+  -->
+  <ControlTheme x:Key="Vcr.Theme.InspectorTabItem" TargetType="TabItem">
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="MinHeight" Value="46"/>
+    <Setter Property="Padding" Value="6,7,6,5"/>
+    <Setter Property="CornerRadius" Value="0"/>
+    <Setter Property="ui:Vcr.IconSize" Value="15"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Border Name="PART_Cap"
+                  Margin="0.5,0"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Cap.Raised}"
+                  RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+            <Border.Transitions>
+              <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
+                <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.06"/>
+              </Transitions>
+            </Border.Transitions>
+            <Panel>
+              <Border Name="PART_Led"
+                      Width="12" Height="2"
+                      CornerRadius="1"
+                      Margin="0,3,0,0"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Top"
+                      Background="#1E2A22"/>
+              <StackPanel Margin="{TemplateBinding Padding}"
+                          Spacing="4"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center">
+                <PathIcon Data="{TemplateBinding ui:Vcr.Icon}"
+                          Width="{TemplateBinding ui:Vcr.IconSize}"
+                          Height="{TemplateBinding ui:Vcr.IconSize}"
+                          HorizontalAlignment="Center"
+                          IsVisible="{TemplateBinding ui:Vcr.Icon, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Content="{TemplateBinding Header}"
+                                  ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                  HorizontalAlignment="Center"/>
+              </StackPanel>
+            </Panel>
+          </Border>
+          <Border Name="PART_FocusRing"
+                  Margin="1.5,0.5"
+                  BorderThickness="2"
+                  BorderBrush="{DynamicResource Vcr.Brush.Focus}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  IsVisible="False"/>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:nth-child(1)">
+      <Setter Property="CornerRadius" Value="3,0,0,3"/>
+    </Style>
+    <Style Selector="^:nth-last-child(1)">
+      <Setter Property="CornerRadius" Value="0,3,3,0"/>
+    </Style>
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Hover}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+    </Style>
+    <Style Selector="^:selected">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Pressed}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+      <Style Selector="^ /template/ Border#PART_Cap">
+        <Setter Property="RenderTransform" Value="translate(0px, 1.5px)"/>
+        <Setter Property="BoxShadow" Value="0 1 3 0 #73000000 inset, 0 -1 0 0 #14FFFFFF inset, 0 0 0 0 #0A0B0C, 0 1 1 0 #80000000"/>
+      </Style>
+      <Style Selector="^ /template/ Border#PART_Led">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Green.Led}"/>
+        <Setter Property="BoxShadow" Value="0 0 6 1 #994BE38A"/>
+      </Style>
+    </Style>
+    <Style Selector="^:pressed /template/ Border#PART_Cap">
+      <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Pressed}"/>
+      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Pressed}"/>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_FocusRing">
+      <Setter Property="IsVisible" Value="True"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="Vcr.Theme.InspectorTabControl" TargetType="TabControl">
+    <Setter Property="TabStripPlacement" Value="Bottom"/>
+    <Setter Property="ItemContainerTheme" Value="{StaticResource Vcr.Theme.InspectorTabItem}"/>
+    <Setter Property="ItemsPanel">
+      <ItemsPanelTemplate>
+        <UniformGrid Rows="1"/>
+      </ItemsPanelTemplate>
+    </Setter>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DockPanel>
+          <Border Name="PART_Strip"
+                  DockPanel.Dock="{TemplateBinding TabStripPlacement}"
+                  Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
+                  CornerRadius="{DynamicResource Vcr.Radius.Well}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Well}"
+                  Padding="2,2,2,4"
+                  Margin="0,10,0,0">
+            <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}"/>
+          </Border>
+          <ContentPresenter Name="PART_SelectedContentHost"
+                            Content="{TemplateBinding SelectedContent}"
+                            ContentTemplate="{TemplateBinding SelectedContentTemplate}"
+                            Padding="{TemplateBinding Padding}"/>
+        </DockPanel>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^[TabStripPlacement=Top] /template/ Border#PART_Strip">
+      <Setter Property="Margin" Value="0,0,0,10"/>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>

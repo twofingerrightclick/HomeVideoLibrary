@@ -1,0 +1,143 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <ControlTheme x:Key="{x:Type c:ChapterListItem}" TargetType="c:ChapterListItem">
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="MinHeight" Value="38"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Border Name="PART_Row"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="Transparent"
+                  BorderThickness="1"
+                  CornerRadius="3">
+            <DockPanel>
+              <!-- The host's editor for an expanded row, below the header. -->
+              <ContentPresenter Name="PART_ExpandedPresenter"
+                                DockPanel.Dock="Bottom"
+                                IsVisible="{TemplateBinding IsExpanded}"
+                                Content="{TemplateBinding ExpandedContent}"
+                                ContentTemplate="{TemplateBinding ExpandedContentTemplate}"/>
+              <Grid ColumnDefinitions="3,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
+                <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
+                <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+                  <TextBlock Text="{TemplateBinding StartGhostText}"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="11"
+                             Foreground="{DynamicResource Vcr.Brush.Amber.Ghost}"
+                             HorizontalAlignment="Right"/>
+                  <TextBlock Text="{TemplateBinding StartText}"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="11"
+                             Foreground="{DynamicResource Vcr.Brush.Amber}"
+                             HorizontalAlignment="Right"/>
+                </Panel>
+                <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
+                  <Panel Name="PART_TitleRow">
+                    <TextBlock Name="PART_TitleText"
+                               Text="{TemplateBinding Title}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Name="PART_Watermark"
+                               Text="{TemplateBinding TitleWatermark}"
+                               FontStyle="Italic"
+                               Foreground="{DynamicResource Vcr.Brush.Legend.Dim}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"
+                               IsVisible="{TemplateBinding Title, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+                  </Panel>
+                  <!-- The title field exists only while editing; the control creates it per edit. -->
+                  <ContentControl Name="PART_Editor" Margin="-9,0,0,0" IsVisible="False"/>
+                </Panel>
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Grid.Column="3"
+                                  Margin="0,0,4,0"
+                                  Content="{TemplateBinding Content}"
+                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  VerticalAlignment="Center"/>
+              </Grid>
+            </DockPanel>
+          </Border>
+          <Border Name="PART_FocusRing"
+                  BorderThickness="2"
+                  CornerRadius="4"
+                  BorderBrush="{DynamicResource Vcr.Brush.Focus}"
+                  IsVisible="False"/>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="#12FFFFFF"/>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="#08FFFFFF"/>
+    </Style>
+    <Style Selector="^:focus-visible /template/ Border#PART_FocusRing">
+      <Setter Property="IsVisible" Value="True"/>
+    </Style>
+
+    <!-- The chapter under the playhead: red played bar and a brighter title. -->
+    <Style Selector="^:current">
+      <Setter Property="Background" Value="#0FFFFFFF"/>
+      <Style Selector="^ /template/ Border#PART_Bar">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Red}"/>
+      </Style>
+      <Style Selector="^ /template/ TextBlock#PART_TitleText">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+      </Style>
+    </Style>
+
+    <!-- An expanded row reads as one card: the header and the editor below it on a raised face. -->
+    <Style Selector="^:expanded /template/ Border#PART_Row">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Chassis.Edge}"/>
+    </Style>
+
+    <Style Selector="^:editing">
+      <Style Selector="^ /template/ Panel#PART_TitleRow"><Setter Property="IsVisible" Value="False"/></Style>
+      <Style Selector="^ /template/ ContentControl#PART_Editor"><Setter Property="IsVisible" Value="True"/></Style>
+    </Style>
+  </ControlTheme>
+
+  <!-- Where a chapter added at the playhead would land: yellow, matching the scrub bar's slice marker. -->
+  <ControlTheme x:Key="{x:Type c:ChapterPlaceholderRow}" TargetType="c:ChapterPlaceholderRow">
+    <Setter Property="MinHeight" Value="38"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{DynamicResource Vcr.Brush.Yellow.Soft}"
+                BorderBrush="#80F2C521"
+                BorderThickness="1"
+                CornerRadius="3">
+          <Grid ColumnDefinitions="3,Auto,*">
+            <Border CornerRadius="1.5" Margin="0,6" Background="{DynamicResource Vcr.Brush.Yellow}"/>
+            <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+              <TextBlock Text="{TemplateBinding StartGhostText}"
+                         FontFamily="{DynamicResource Vcr.Font.Segment}"
+                         FontSize="11"
+                         Foreground="#3D3410"
+                         HorizontalAlignment="Right"/>
+              <TextBlock Text="{TemplateBinding StartText}"
+                         FontFamily="{DynamicResource Vcr.Font.Segment}"
+                         FontSize="11"
+                         Foreground="{DynamicResource Vcr.Brush.Yellow}"
+                         HorizontalAlignment="Right"/>
+            </Panel>
+            <StackPanel Grid.Column="2" Margin="8,0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <PathIcon Data="{DynamicResource Vcr.Icon.Slice}" Width="12" Height="12" Foreground="{DynamicResource Vcr.Brush.Yellow}"/>
+              <TextBlock FontStyle="Italic" Foreground="{DynamicResource Vcr.Brush.Yellow}" VerticalAlignment="Center">
+                <Run Text="New chapter at "/><Run Text="{TemplateBinding StartText}"/>
+              </TextBlock>
+            </StackPanel>
+          </Grid>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+</ResourceDictionary>

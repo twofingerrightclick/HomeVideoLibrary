@@ -7,15 +7,22 @@ namespace HomeVideoLibrary.Tests;
 /// <summary>An in-memory stand-in for the MKV tools: text metadata per file path, and fake JPEG output.</summary>
 internal sealed class FakeMatroska : IMatroskaFileEditor
 {
-    private int _reads, _extracts, _captures;
+    private int _reads, _extracts, _captures, _keyframes;
     public ConcurrentDictionary<string, VideoTextMetadata> Content { get; } = new();
     public ConcurrentDictionary<string, string> Failures { get; } = new();
     public Func<string, CancellationToken, Task>? BeforeRead { get; set; }
     public Func<CancellationToken, Task>? BeforeCapture { get; set; }
+    /// <summary>Runs before each keyframe capture, with the video path.</summary>
+    public Func<string, CancellationToken, Task>? BeforeKeyframe { get; set; }
+    public Func<CancellationToken, Task>? BeforeTile { get; set; }
     public string OutputDirectory { get; } = Path.Combine(Path.GetTempPath(), "hvl-fake-" + Guid.NewGuid().ToString("N"));
     public int Reads => _reads;
     public int Extracts => _extracts;
     public int Captures => _captures;
+    public int Keyframes => _keyframes;
+    /// <summary>The media identity every read reports. Null by default, like a reader that cannot tell: such records get no
+    /// hover strips, and a cache entry without one is read again.</summary>
+    public string? MediaIdentity { get; init; }
 
     public static VideoTextMetadata Text(VideoMetadata metadata, TimeSpan? duration = null, params VideoThumbnailRef[] thumbnails) =>
         new(metadata, thumbnails, duration ?? TimeSpan.FromSeconds(10), []);
@@ -31,7 +38,7 @@ internal sealed class FakeMatroska : IMatroskaFileEditor
         var failed = Failures.TryGetValue(path, out var failure);
         var text = Content.TryGetValue(path, out var content) ? content : Text(VideoMetadata.Empty);
         if (BeforeRead is { } before) await before(mkvPath, cancellationToken);
-        return failed ? throw new InvalidDataException(failure) : text;
+        return failed ? throw new InvalidDataException(failure) : text with { MediaIdentity = MediaIdentity };
     }
 
     public Task WriteStagedAsync(string mkvPath, VideoMetadata metadata, MetadataWriteOptions? options = null,
@@ -52,6 +59,23 @@ internal sealed class FakeMatroska : IMatroskaFileEditor
         Interlocked.Increment(ref _captures);
         if (BeforeCapture is { } before) await before(cancellationToken);
         await File.WriteAllTextAsync(outputPath, $"frame {position}", cancellationToken);
+    }
+
+    public async Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth,
+        CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _keyframes);
+        if (BeforeKeyframe is { } before) await before(mkvPath, cancellationToken);
+        await File.WriteAllTextAsync(outputPath, $"keyframe {position}", cancellationToken);
+    }
+
+    /// <summary>Writes the images' text, one per line, in tile order.</summary>
+    public async Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default)
+    {
+        if (BeforeTile is { } before) await before(cancellationToken);
+        var lines = new List<string>();
+        foreach (var image in images) lines.Add(await File.ReadAllTextAsync(image, cancellationToken));
+        await File.WriteAllLinesAsync(outputPath, lines, cancellationToken);
     }
 }
 
@@ -91,4 +115,45 @@ internal static class TestLibrary
     {
         if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
+}
+
+/// <summary>Answers modal questions from a queue (KeepEditing when it runs out) and counts them. Set
+/// <see cref="Pending"/> to hold the next answer until the test completes it.</summary>
+internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInteraction
+{
+    public Queue<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> Answers { get; } = new();
+    public TaskCompletionSource<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice>? Pending { get; set; }
+    public int Asked { get; private set; }
+
+    public Task<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> AskLeaveAsync(string title)
+    {
+        Asked++;
+        if (Pending is { } pending) { Pending = null; return pending.Task; }
+        return Task.FromResult(Answers.TryDequeue(out var answer) ? answer : HomeVideoLibrary.Desktop.ViewModels.LeaveChoice.KeepEditing);
+    }
+
+    public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
+
+    /// <summary>Answers from <see cref="ConfirmAnswers"/>, declining when it runs out, so nothing is ever destroyed by default.</summary>
+    public Queue<bool> ConfirmAnswers { get; } = new();
+    public List<HomeVideoLibrary.Desktop.ViewModels.Confirmation> Confirmations { get; } = [];
+    public Task<bool> ConfirmAsync(HomeVideoLibrary.Desktop.ViewModels.Confirmation confirmation)
+    {
+        Confirmations.Add(confirmation);
+        return Task.FromResult(ConfirmAnswers.TryDequeue(out var answer) && answer);
+    }
+
+    public HomeVideoLibrary.Desktop.ViewModels.CloseChoice CloseChoice { get; set; } = HomeVideoLibrary.Desktop.ViewModels.CloseChoice.CancelJobs;
+    public int CloseAsked { get; private set; }
+    public Task<HomeVideoLibrary.Desktop.ViewModels.CloseChoice> AskCloseWithJobsAsync(int activeJobs)
+    {
+        CloseAsked++;
+        return Task.FromResult(CloseChoice);
+    }
+
+    public HomeVideoLibrary.Desktop.ViewModels.PickedFiles Picked { get; set; } = HomeVideoLibrary.Desktop.ViewModels.PickedFiles.None;
+    public Task<HomeVideoLibrary.Desktop.ViewModels.PickedFiles> PickVideosAsync() => Task.FromResult(Picked);
+    public string? Folder { get; set; }
+    public Task<string?> PickFolderAsync(string title) => Task.FromResult(Folder);
+    public Task ShowSettingsAsync(HomeVideoLibrary.Desktop.ViewModels.SettingsViewModel settings) => Task.CompletedTask;
 }

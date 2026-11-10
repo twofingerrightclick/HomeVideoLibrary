@@ -12,7 +12,7 @@ namespace HomeVideoLibrary.Infrastructure;
 /// <summary>Reads and writes the metadata the MKV owns. Every operation on a file is serialized through a per-path gate
 /// shared by all instances. Writes are in place with mkvpropedit, which rewrites only metadata elements.</summary>
 public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, MediaTools tools, MediaProcess? process = null)
-    : IVideoMetadataService, IMatroskaFileEditor
+    : IVideoMetadataService, IMatroskaFileEditor, IIdentityWriter
 {
     private const string ManifestName = "home-video-library.thumbnails.v1.json";
     private const int MaxThumbnails = 20;
@@ -49,7 +49,10 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         {
             var state = await ReadStateAsync(path, scratch, cancellationToken);
             var duration = state.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : TimeSpan.Zero;
-            return new VideoTextMetadata(state.Metadata, state.Manifest.Select(ToRef).ToArray(), duration, state.Warnings);
+            return new VideoTextMetadata(state.Metadata, state.Manifest.Select(ToRef).ToArray(), duration, state.Warnings)
+            {
+                MediaIdentity = state.Container.MediaIdentity,
+            };
         }
         finally { DeleteDirectory(scratch); }
     }
@@ -67,6 +70,49 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration);
             var plan = await PlanWriteAsync(original, metadata, null, keepThumbnails: false, scratch, cancellationToken);
             await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
+        }
+        finally { DeleteDirectory(scratch); }
+    }
+
+    /// <summary>Writes TITLE and DATE_RECORDED into a library video that no import of this app wrote them into (one
+    /// imported before imports did, or an edit of one), so the file says what it is on its own. Only an absent tag is
+    /// added, with the catalog's value: TITLE from the segment title, else the name the video was added under; DATE_RECORDED
+    /// from the catalog date. Nothing else in the file is rewritten or re-normalized. A file an import of this app wrote
+    /// (it carries a source fingerprint) is never changed: a tag missing there was cleared by the user. Written in place
+    /// like <see cref="SaveAsync"/>: verified, and rolled back on failure.</summary>
+    /// <returns>False, without writing, when nothing was missing.</returns>
+    public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+    {
+        if (video.SourceFingerprint is not null) return false;
+        var path = catalog.GetVideoPath(video.RelativePath);
+        using var _ = await EnterGateAsync(path, cancellationToken);
+        var scratch = CreateScratch();
+        try
+        {
+            var original = await ReadStateAsync(path, scratch, cancellationToken);
+            if (MatroskaMetadataXml.HasGlobal(original.Tags, VideoImporter.SourceFingerprintTag)) return false;
+            var additions = new Dictionary<string, string>();
+            var expected = original.Written;
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "TITLE") &&
+                MetadataText.NormalizeTitle(original.Metadata.Title.Length > 0 ? original.Metadata.Title : video.DisplayName) is { Length: > 0 } title)
+            {
+                additions["TITLE"] = title;
+                expected = expected with { Title = title };
+            }
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "DATE_RECORDED"))
+            {
+                var date = video.RecordedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+                additions["DATE_RECORDED"] = date;
+                expected = expected with { RecordedAt = RecordedDate.TryParse(date, out var parsed) ? parsed : null, RecordedAtText = date };
+            }
+            if (additions.Count == 0) return false;
+            var tags = new XDocument(original.Tags);
+            MatroskaMetadataXml.AddGlobal(tags, additions);
+            var tagsPath = Path.Combine(scratch, "tags.xml");
+            await File.WriteAllTextAsync(tagsPath, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + tags, cancellationToken);
+            var plan = new WritePlan(["--tags", "all:" + tagsPath], original.Manifest, TouchesAttachments: false, additions);
+            await WriteWithRollbackAsync(path, original, expected, plan, scratch, cancellationToken);
+            return true;
         }
         finally { DeleteDirectory(scratch); }
     }
@@ -125,18 +171,46 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(position, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxWidth, 2);
+        await CaptureAsync(["-ss", Seconds(position), "-i", mkvPath, "-frames:v", "1", "-vf", SquarePixels(maxWidth), "-q:v", "2"],
+            outputPath, NoFrame, cancellationToken);
+    }
+
+    public async Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(position, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxWidth, 2);
+        // Frame threading would decode frames ahead that are never shown; one thread keeps a capture to about one core.
+        // Without -copyts the keyframe the seek lands on gets a negative timestamp and is dropped, so ffmpeg writes the next
+        // keyframe instead, or nothing when the position is past the last one.
+        await CaptureAsync(["-threads", "1", "-skip_frame", "nokey", "-noaccurate_seek", "-copyts", "-ss", Seconds(position), "-i", mkvPath,
+            "-map", "0:v:0", "-frames:v", "1", "-vf", SquarePixels(maxWidth), "-c:v", "bmp"], outputPath, NoFrame, cancellationToken);
+    }
+
+    public async Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(images.Count, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
+        var rows = (images.Count + columns - 1) / columns;
+        var filter = string.Create(CultureInfo.InvariantCulture,
+            $"concat=n={images.Count}:v=1:a=0,tile={columns}x{rows},scale=out_range=full,format=yuv420p");
+        await CaptureAsync([.. images.SelectMany(image => new[] { "-i", image }), "-filter_complex", filter, "-frames:v", "1", "-q:v", "4"],
+            outputPath, "The images could not be tiled.", cancellationToken);
+    }
+
+    private const string NoFrame = "No video frame was available at that position.";
+
+    /// <summary>Runs ffmpeg with <paramref name="arguments"/> writing one image to <paramref name="outputPath"/>; on failure
+    /// no partial file is left.</summary>
+    private async Task CaptureAsync(IEnumerable<string> arguments, string outputPath, string noOutput, CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         File.Delete(outputPath);
-        // Display width from the sample aspect ratio, then square pixels, so anamorphic (e.g. 720x480 8:9) sources keep
-        // their shape in viewers that ignore JFIF density. yadif touches only frames the decoder flags as interlaced.
-        var filter = string.Create(CultureInfo.InvariantCulture,
-            $"yadif=deint=interlaced,scale=w='min({maxWidth / 2 * 2},trunc(iw*sar/2)*2)':h='trunc(ow/dar/2)*2',setsar=1");
         try
         {
-            await RunAsync(tools.Ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-y",
-                "-ss", position.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture), "-i", mkvPath,
-                "-frames:v", "1", "-vf", filter, "-q:v", "2", outputPath], cancellationToken);
-            if (!File.Exists(outputPath)) throw new InvalidDataException("No video frame was available at that position.");
+            await RunAsync(tools.Ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-y", .. arguments, "-update", "1", outputPath],
+                cancellationToken);
+            if (!File.Exists(outputPath)) throw new InvalidDataException(noOutput);
         }
         catch
         {
@@ -144,6 +218,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             throw;
         }
     }
+
+    private static string Seconds(TimeSpan position) => position.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture);
+
+    /// <summary>Display width from the sample aspect ratio, then square pixels, so anamorphic (e.g. 720x480 8:9) sources
+    /// keep their shape in viewers that ignore JFIF density. yadif touches only frames the decoder flags as interlaced.</summary>
+    private static string SquarePixels(int maxWidth) => string.Create(CultureInfo.InvariantCulture,
+        $"yadif=deint=interlaced,scale=w='min({maxWidth / 2 * 2},trunc(iw*sar/2)*2)':h='trunc(ow/dar/2)*2',setsar=1");
 
     public async Task<VideoThumbnail> CaptureThumbnailAsync(LibraryVideo video, TimeSpan position, CancellationToken cancellationToken = default)
     {
@@ -156,6 +237,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
 
     private string ThumbnailCachePath(Guid videoId, Guid thumbnailId) =>
         Path.Combine(catalog.Paths.ThumbnailCacheDirectory, videoId.ToString("N"), thumbnailId.ToString("N") + ".jpg");
+
+    /// <summary>Takes the per-path gate that every read and write of <paramref name="mkvPath"/> goes through: an
+    /// operation in progress finishes first, and none starts until the returned lease is disposed. For work that needs the
+    /// file to itself, such as moving it to the Trash. Not reentrant: do not use this service on the same file while
+    /// holding the lease.</summary>
+    public static Task<IDisposable> AcquireExclusiveAsync(string mkvPath, CancellationToken cancellationToken = default) =>
+        EnterGateAsync(Path.GetFullPath(mkvPath), cancellationToken);
 
     private static async Task<IDisposable> EnterGateAsync(string path, CancellationToken cancellationToken)
     {
@@ -428,7 +516,36 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         /// <summary>Selects by UID: positional IDs shift as earlier deletions in the same mkvpropedit run take effect.</summary>
         public string DeleteSelector => "=" + Uid.ToString(CultureInfo.InvariantCulture);
     }
-    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title);
+    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title)
+    {
+        public string MediaIdentity => MediaIdentityOf(DurationNanoseconds, Tracks);
+    }
+
+    /// <summary>What a track's media is, among the properties mkvmerge -J reports. Every one is also covered by
+    /// <see cref="VerifyAsync"/>, so metadata writes keep them; the statistics tags' writing date and application are left
+    /// out because a remux or an MKVToolNix upgrade rewrites them without touching the media.</summary>
+    private static readonly string[] MediaProperties =
+    [
+        "uid", "codec_id", "codec_private_data", "pixel_dimensions", "display_dimensions", "default_duration", "minimum_timestamp",
+        "tag_number_of_frames", "tag_number_of_bytes", "tag_bps",
+    ];
+
+    /// <summary>A hash of the duration and each track's <see cref="MediaProperties"/>; see <see cref="VideoTextMetadata.MediaIdentity"/>.</summary>
+    internal static string MediaIdentityOf(long? durationNanoseconds, IEnumerable<string> tracks)
+    {
+        var text = new System.Text.StringBuilder(durationNanoseconds?.ToString(CultureInfo.InvariantCulture) ?? "");
+        foreach (var track in tracks)
+        {
+            using var json = JsonDocument.Parse(track);
+            var root = json.RootElement;
+            text.Append('\n').Append(Raw(root, "id")).Append(' ').Append(Raw(root, "type"));
+            if (!root.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object) continue;
+            foreach (var name in MediaProperties) text.Append(' ').Append(name).Append('=').Append(Raw(properties, name));
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString())), 0, 8);
+
+        static string Raw(JsonElement element, string name) => element.TryGetProperty(name, out var value) ? value.GetRawText() : "";
+    }
     /// <param name="Manifest">The thumbnail manifest the file must have after the write.</param>
     /// <param name="TouchesAttachments">Whether the write deletes the owned attachments and adds the planned ones.</param>
     private sealed record WritePlan(IReadOnlyList<string> Arguments, IReadOnlyList<ThumbnailEntry> Manifest, bool TouchesAttachments,

@@ -19,7 +19,12 @@ public sealed record VideoThumbnailRef(Guid Id, TimeSpan Position, string Attach
 
 /// <param name="Metadata">Text metadata; its <see cref="VideoMetadata.Thumbnails"/> is always empty.</param>
 public sealed record VideoTextMetadata(VideoMetadata Metadata, IReadOnlyList<VideoThumbnailRef> Thumbnails,
-    TimeSpan Duration, IReadOnlyList<string> Warnings);
+    TimeSpan Duration, IReadOnlyList<string> Warnings)
+{
+    /// <summary>Identifies the file's media (its tracks and duration), not its metadata: saving metadata leaves it
+    /// unchanged, and replacing the media changes it. Null when the reader cannot tell.</summary>
+    public string? MediaIdentity { get; init; }
+}
 
 public sealed record MetadataWriteOptions
 {
@@ -53,6 +58,16 @@ public interface IMatroskaFileEditor : IVideoTextMetadataReader
     /// overwriting <paramref name="outputPath"/>.</summary>
     Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Writes the keyframe at or before <paramref name="position"/> (at most one GOP early) as a square-pixel BMP,
+    /// deinterlaced when needed, overwriting <paramref name="outputPath"/>. Only keyframes are decoded, on one thread, so
+    /// the cost does not grow with the video's length or GOP.</summary>
+    Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Tiles same-sized images into one JPEG at <paramref name="outputPath"/>: left to right, then top to bottom,
+    /// <paramref name="columns"/> per row, without gaps.</summary>
+    Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default);
 }
 
 public interface IVideoMetadataService

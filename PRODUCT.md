@@ -28,6 +28,7 @@ Import home videos into a chosen library folder, browse them as a chronological 
 - Playback includes seeking, a collapsible right inspector, chapter navigation, and the M shortcut to mark a chapter.
 - Albums support multi-selection, drag-and-drop, and adding videos that are not already members.
 - Secondary editing supports trim, merge, split into two clips, and saving outputs.
+- Deleting a video moves its MKV to the operating system's Trash and then forgets it, never the reverse, and only after the user confirms. Restoring it means importing it again from the Trash; its album memberships are not kept. A drive without a Trash gets a second, explicit "delete permanently" question for those videos only. A video whose file is missing can only be removed from the library (its row), never "trashed".
 - Implementation proceeds in sequential agent stages. Terra reviews bugs after every stage; the original implementer fixes findings. Tests are limited to changed behavior.
 
 ## Brand Commitments

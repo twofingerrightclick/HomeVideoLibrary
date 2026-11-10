@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             x:Class="HomeVideoLibrary.Gallery.Sections.SpinesSection">
+  <StackPanel>
+    <TextBlock Classes="gallery-title" Text="VHS SPINES" Margin="0,0,0,14"/>
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="12">
+        <TextBlock Classes="gallery-note" Text="Sticker stock from the reference: printed bands and brand marks run sideways as on a real spine label; the handwritten label reads horizontally and truncates."/>
+        <c:VhsSpine Sticker="Branded" BrandText="SH" ShellText="E-180" Accent="#7D2A35" Label="Christmas '91 + New Years at Grandma's"/>
+        <c:VhsSpine Sticker="Graph" BrandText="TMT" ShellText="E-120" Accent="#3F5F95" Label="Little league finals"/>
+        <c:VhsSpine Sticker="Cream" ShellText="T-160" Accent="#E35A44" Label="Lake Tahoe, summer 1994"/>
+        <c:VhsSpine Sticker="Branded" BrandText="HG" ShellText="42 MIN" Accent="#2F5D4A" Label="Kindergarten play — Jamie as the third sheep, then the cookie table, then the long drive home in the snow"/>
+        <c:VhsSpine Sticker="Graph" BrandText="EQ" ShellText="E-60" Accent="#7A5A2A" Label=""/>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="gallery-plate">
+      <StackPanel Spacing="12">
+        <TextBlock Classes="gallery-note" Text="States: hover (comes forward), selected, keyboard focus, selected + focus; host check box via LeadingContent"/>
+        <Grid ColumnDefinitions="*,24,*" RowDefinitions="Auto,14,Auto,14,Auto">
+          <StackPanel>
+            <c:VhsSpine Sticker="Cream" ShellText="T-120" Accent="#E35A44" Label="First steps" g:ForcedState.States=":pointerover"/>
+            <TextBlock Classes="state" Text="HOVER"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2">
+            <c:VhsSpine Sticker="Branded" BrandText="SH" ShellText="E-180" Accent="#7D2A35" Label="Disneyland 1989" IsSelected="True"/>
+            <TextBlock Classes="state" Text="SELECTED"/>
+          </StackPanel>
+          <StackPanel Grid.Row="2">
+            <c:VhsSpine Sticker="Graph" BrandText="TMT" ShellText="E-120" Accent="#3F5F95" Label="Science fair" g:ForcedState.States=":focus-visible"/>
+            <TextBlock Classes="state" Text="FOCUS"/>
+          </StackPanel>
+          <StackPanel Grid.Row="2" Grid.Column="2">
+            <c:VhsSpine Sticker="Branded" BrandText="SH" ShellText="E-180" Accent="#52407A" Label="Wedding reception" IsSelected="True" g:ForcedState.States=":focus-visible"/>
+            <TextBlock Classes="state" Text="SELECTED + FOCUS"/>
+          </StackPanel>
+          <StackPanel Grid.Row="4">
+            <c:VhsSpine Sticker="Cream" ShellText="T-160" Accent="#2F5D4A" Label="Camping at Big Sur">
+              <c:VhsSpine.LeadingContent>
+                <CheckBox IsChecked="True" MinWidth="0" Padding="0" ToolTip.Tip="Select for albums"/>
+              </c:VhsSpine.LeadingContent>
+            </c:VhsSpine>
+            <TextBlock Classes="state" Text="LEADING CHECK BOX"/>
+          </StackPanel>
+          <StackPanel Grid.Row="4" Grid.Column="2">
+            <c:VhsSpine Sticker="Graph" BrandText="EQ" ShellText="E-90" Accent="#7A5A2A" Label="Grandpa's 70th">
+              <c:VhsSpine.LeadingContent>
+                <CheckBox MinWidth="0" Padding="0"/>
+              </c:VhsSpine.LeadingContent>
+            </c:VhsSpine>
+            <TextBlock Classes="state" Text="UNCHECKED"/>
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

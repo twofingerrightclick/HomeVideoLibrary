@@ -46,6 +46,8 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     /// <summary>Sorted by start.</summary>
     public IReadOnlyList<VideoChapterRecord> Chapters { get; init; } = [];
     public IReadOnlyList<VideoThumbnailRef> Thumbnails { get; init; } = [];
+    /// <summary>See <see cref="VideoTextMetadata.MediaIdentity"/>; unlike <see cref="Stamp"/>, a metadata save keeps it.</summary>
+    public string? MediaIdentity { get; init; }
     /// <summary>The file stamp of the last read attempt (see <see cref="State"/>); null when none counts.</summary>
     public FileStamp? Stamp { get; init; }
     /// <summary>The outcome of the last read attempt.</summary>
@@ -102,6 +104,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
             Chapters = BuildChapters(metadata.Chapters.Select(chapter =>
                 (chapter.Uid, chapter.Position, chapter.Title, chapter.Description, chapter.Tags)), duration),
             Thumbnails = text.Thumbnails.OrderBy(thumbnail => thumbnail.Position).ToArray(),
+            MediaIdentity = text.MediaIdentity,
             Stamp = stamp,
             State = VideoRecordState.Ok,
             Error = null,
@@ -121,9 +124,11 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     internal string ToCacheJson() => JsonSerializer.Serialize(new CachedContent(CachedContent.CurrentVersion, Duration.Ticks, Title, Description,
         Tags, EmbeddedRecordedAt, RecordedAtText,
         Chapters.Select(chapter => new CachedChapter(chapter.Uid, chapter.Start.Ticks, chapter.Title, chapter.Description, chapter.Tags)).ToArray(),
-        Thumbnails.Select(thumbnail => new CachedThumbnail(thumbnail.Id, thumbnail.Position.Ticks, thumbnail.AttachmentName, thumbnail.Sha256)).ToArray()));
+        Thumbnails.Select(thumbnail => new CachedThumbnail(thumbnail.Id, thumbnail.Position.Ticks, thumbnail.AttachmentName, thumbnail.Sha256)).ToArray(),
+        MediaIdentity));
 
-    /// <summary>Applies cached content; returns null when the cache entry is unreadable or from another format version.</summary>
+    /// <summary>Applies cached content; returns null when the cache entry is unreadable or from another format version. The
+    /// record is <see cref="VideoRecordState.Pending"/> when the entry lacks a <see cref="MediaIdentity"/>.</summary>
     internal VideoRecord? WithCachedContent(CatalogCacheEntry entry)
     {
         CachedContent? content;
@@ -143,15 +148,20 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
                 chapter.Title ?? "", chapter.Description ?? "", (IReadOnlyList<string>)(chapter.Tags ?? []))), duration),
             Thumbnails = (content.Thumbnails ?? []).Select(thumbnail => new VideoThumbnailRef(thumbnail.Id, TimeSpan.FromTicks(thumbnail.PositionTicks),
                 thumbnail.AttachmentName ?? "", thumbnail.Sha256 ?? "")).OrderBy(thumbnail => thumbnail.Position).ToArray(),
+            MediaIdentity = content.MediaIdentity,
             Stamp = new FileStamp(entry.FileLength, entry.ModifiedTicks),
-            State = VideoRecordState.Ok,
+            // An entry written before media identities existed shows its content until the file is read again.
+            State = content.MediaIdentity is null ? VideoRecordState.Pending : VideoRecordState.Ok,
             Error = null,
         };
     }
 
     private sealed record CachedContent(int Version, long DurationTicks, string? Title, string? Description, IReadOnlyList<string>? Tags,
-        DateTimeOffset? RecordedAt, string? RecordedAtText, IReadOnlyList<CachedChapter>? Chapters, IReadOnlyList<CachedThumbnail>? Thumbnails)
+        DateTimeOffset? RecordedAt, string? RecordedAtText, IReadOnlyList<CachedChapter>? Chapters, IReadOnlyList<CachedThumbnail>? Thumbnails,
+        string? MediaIdentity)
     {
+        // MediaIdentity is optional rather than a new version, so entries from either side of it still show their content
+        // and an older app reading a newer entry just ignores it.
         public const int CurrentVersion = 1;
     }
 

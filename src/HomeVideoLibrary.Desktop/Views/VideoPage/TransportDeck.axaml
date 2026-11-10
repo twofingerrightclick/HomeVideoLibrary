@@ -1,0 +1,74 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.TransportDeck"
+             x:DataType="vp:VideoPageViewModel">
+  <!-- The scrub bar and the deck's keys. The page shows one below the video and another over it in fullscreen. -->
+  <UserControl.Resources>
+    <StreamGeometry x:Key="Page.Icon.Fullscreen">M1,1 H6 V3 H3 V6 H1 Z M10,1 H15 V6 H13 V3 H10 Z M15,10 V15 H10 V13 H13 V10 Z M1,10 H3 V13 H6 V15 H1 Z</StreamGeometry>
+  </UserControl.Resources>
+  <UserControl.Styles>
+    <Style Selector="c|PlasticButton.playPause">
+      <Setter Property="Icon" Value="{StaticResource Vcr.Icon.Play}"/>
+    </Style>
+    <Style Selector="c|PlasticButton.playPause.playing">
+      <Setter Property="Icon" Value="{StaticResource Vcr.Icon.Pause}"/>
+    </Style>
+  </UserControl.Styles>
+  <StackPanel Spacing="10">
+    <c:ScrubBar Margin="6,0"
+                Duration="{Binding Player.Duration}"
+                Position="{Binding Player.Position}"
+                ChapterSegments="{Binding Details.Chapters.Marks}"
+                SeekCommand="{Binding Player.SeekCommand}"
+                PreviewMarkerPosition="{Binding ScrubMarker}"
+                RangeStart="{Binding Edit.RangeStart}"
+                RangeEnd="{Binding Edit.RangeEnd}"
+                HoverTime="{Binding Preview.HoverTime, Mode=OneWayToSource}"
+                HoverPreview="{Binding Preview.Image}"/>
+    <WrapPanel ItemSpacing="14" LineSpacing="8" VerticalAlignment="Bottom">
+      <c:LegendFrame Legend="TRACK SEARCH">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Previous}" Command="{Binding Details.Chapters.PreviousChapterCommand}" ToolTip.Tip="Previous chapter ( [ )"/>
+          <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Next}" Command="{Binding Details.Chapters.NextChapterCommand}" ToolTip.Tip="Next chapter ( ] )"/>
+        </StackPanel>
+      </c:LegendFrame>
+      <c:LegendFrame Legend="REW">
+        <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Rewind}" Command="{Binding Player.SkipCommand}"
+                         CommandParameter="{x:Static vp:PlayerViewModel.RewindStep}" ToolTip.Tip="Back 10 seconds (J)"/>
+      </c:LegendFrame>
+      <c:LegendFrame Legend="PLAY/PAUSE">
+        <c:PlasticButton Classes="transport playPause" Classes.playing="{Binding Player.IsPlaying}" MinWidth="84"
+                         Foreground="{DynamicResource Vcr.Brush.Green.Led}" Command="{Binding Player.PlayPauseCommand}" ToolTip.Tip="Play or pause (Space)"/>
+      </c:LegendFrame>
+      <c:LegendFrame Legend="FF">
+        <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.FastForward}" Command="{Binding Player.SkipCommand}"
+                         CommandParameter="{x:Static vp:PlayerViewModel.LongStep}" ToolTip.Tip="Forward 10 seconds (L)"/>
+      </c:LegendFrame>
+      <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+        <c:LcdCounter Value="{Binding Player.Position}" Hours="Always" Caption="TIME"/>
+        <c:LcdCounter Classes="small" Value="{Binding Player.Duration}" Hours="Always" Caption="TOTAL" VerticalAlignment="Bottom"/>
+      </StackPanel>
+      <c:LegendFrame Legend="M" LegendDot="{DynamicResource Vcr.Brush.Yellow}">
+        <c:RubberButton Classes="yellow" Icon="{StaticResource Vcr.Icon.Chapter}" Content="MARK"
+                        Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
+      </c:LegendFrame>
+      <c:LegendFrame Legend="VOL">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Slider Classes="volume" Width="110" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1"
+                  Value="{Binding Player.Volume, Mode=TwoWay}" VerticalAlignment="Center" AutomationProperties.Name="Volume"/>
+          <c:LatchButton Classes="red icon" Icon="{StaticResource Vcr.Icon.Mute}" IsChecked="{Binding Player.IsMuted, Mode=TwoWay}" ToolTip.Tip="Mute (0)"/>
+        </StackPanel>
+      </c:LegendFrame>
+      <c:LegendFrame Legend="SCREEN">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <c:PlasticButton Classes="transport" Icon="{StaticResource Page.Icon.Fullscreen}" Command="{Binding Fullscreen.ToggleCommand}" ToolTip.Tip="Fullscreen (F)"/>
+          <c:LatchButton Classes="icon" Icon="{StaticResource Vcr.Icon.Info}" IsChecked="{Binding IsInspectorOpen, Mode=TwoWay}"
+                         IsVisible="{Binding !Fullscreen.IsFullscreen}" ToolTip.Tip="Show or hide details (⌘\)"/>
+        </StackPanel>
+      </c:LegendFrame>
+    </WrapPanel>
+  </StackPanel>
+</UserControl>

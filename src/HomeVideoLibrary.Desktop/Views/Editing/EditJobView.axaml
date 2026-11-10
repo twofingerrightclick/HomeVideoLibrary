@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels"
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.EditJobView" x:DataType="vm:JobViewModel">
+ <!-- The latest edit a page started; the activity drawer lists every job. -->
+ <Border Classes="bezel">
+  <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+   <TextBlock Classes="legend" Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+    <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"/>
+    <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"
+     Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
+   </StackPanel>
+   <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
+    IsVisible="{Binding IsRunning}"/>
+   <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Classes="meta" Text="{Binding StatusText}" TextWrapping="Wrap"/>
+  </Grid>
+ </Border>
+</UserControl>

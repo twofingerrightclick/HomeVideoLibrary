@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:g="using:HomeVideoLibrary.Gallery"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:ui="using:HomeVideoLibrary.UI"
+             x:Class="HomeVideoLibrary.Gallery.Sections.TabsSection">
+  <StackPanel>
+    <TextBlock Classes="gallery-title" Text="INSPECTOR TABS" Margin="0,0,0,14"/>
+    <Border Classes="gallery-plate">
+      <StackPanel Orientation="Horizontal" Spacing="28">
+        <StackPanel Spacing="8" Width="320">
+          <TextBlock Classes="gallery-note" Text="TabControl.inspector — strip at the base (iPhoto), Info selected"/>
+          <Border Classes="bezel" Height="300" Padding="12">
+            <TabControl Classes="inspector" SelectedIndex="0">
+              <TabItem Header="INFO" ui:Vcr.Icon="{StaticResource Vcr.Icon.Info}">
+                <StackPanel Spacing="8">
+                  <TextBlock Classes="legend" Text="DESCRIPTION"/>
+                  <TextBox Classes="area" MinHeight="80" Text="First steps in the back yard."/>
+                  <TextBlock Classes="meta" Text="42:13 · 1080p · Mar 3, 2026"/>
+                </StackPanel>
+              </TabItem>
+              <TabItem Header="CHAPTERS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Chapters}">
+                <TextBlock Text="Chapters"/>
+              </TabItem>
+              <TabItem Header="TAGS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Tag}">
+                <TextBlock Text="Tags"/>
+              </TabItem>
+              <TabItem Header="FRAMES" ui:Vcr.Icon="{StaticResource Vcr.Icon.Frame}">
+                <TextBlock Text="Thumbnails"/>
+              </TabItem>
+            </TabControl>
+          </Border>
+        </StackPanel>
+        <StackPanel Spacing="8" Width="320">
+          <TextBlock Classes="gallery-note" Text="Strip on top, hover + focus specimens, disabled tab"/>
+          <Border Classes="bezel" Height="300" Padding="12">
+            <TabControl Classes="inspector" TabStripPlacement="Top" SelectedIndex="1">
+              <TabItem Header="INFO" ui:Vcr.Icon="{StaticResource Vcr.Icon.Info}" g:ForcedState.States=":pointerover"/>
+              <TabItem Header="CHAPTERS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Chapters}">
+                <TextBlock Classes="meta" Text="Chapters content"/>
+              </TabItem>
+              <TabItem Header="TAGS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Tag}" g:ForcedState.States=":focus-visible"/>
+              <TabItem Header="FRAMES" ui:Vcr.Icon="{StaticResource Vcr.Icon.Frame}" IsEnabled="False"/>
+            </TabControl>
+          </Border>
+        </StackPanel>
+        <StackPanel Spacing="8" Width="280">
+          <TextBlock Classes="gallery-note" Text="Text-only segments"/>
+          <Border Classes="bezel" Padding="12">
+            <TabControl Classes="inspector" TabStripPlacement="Top" SelectedIndex="0">
+              <TabItem Header="ALL"/>
+              <TabItem Header="ALBUMS"/>
+              <TabItem Header="RECENT"/>
+            </TabControl>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>
