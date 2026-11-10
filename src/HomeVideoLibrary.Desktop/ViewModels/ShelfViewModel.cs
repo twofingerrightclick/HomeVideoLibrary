@@ -144,6 +144,30 @@ public sealed class ShelfViewModel : ViewModelBase
         NotifySelection();
     }
 
+    /// <summary>Raised when keyboard focus should move to a tape.</summary>
+    public event Action<TapeViewModel>? FocusRequested;
+
+    /// <summary>The tape to continue from once <paramref name="leaving"/> have left the shelf: the first visible tape after
+    /// the first of them that is not leaving, else the nearest one before it. Null when none would remain.</summary>
+    public Guid? TapeAfter(IReadOnlyCollection<Guid> leaving)
+    {
+        var first = -1;
+        for (var index = 0; index < Tapes.Count && first < 0; index++)
+            if (leaving.Contains(Tapes[index].Id)) first = index;
+        if (first < 0) return null;
+        for (var index = first + 1; index < Tapes.Count; index++)
+            if (!leaving.Contains(Tapes[index].Id)) return Tapes[index].Id;
+        for (var index = first - 1; index >= 0; index--)
+            if (!leaving.Contains(Tapes[index].Id)) return Tapes[index].Id;
+        return null;
+    }
+
+    /// <summary>Asks the view to focus the tape of <paramref name="videoId"/> when this view shows it.</summary>
+    public void RequestFocus(Guid videoId)
+    {
+        if (_visibleIds.Contains(videoId) && _tapeIndex.TryGetValue(videoId, out var tape)) FocusRequested?.Invoke(tape);
+    }
+
     /// <summary>The ids a drag starting on <paramref name="tape"/> carries: the selection when the tape is part of it.</summary>
     public IReadOnlyList<Guid> DragVideoIds(TapeViewModel tape) => tape.IsSelected ? [.. _selection] : [tape.Id];
 

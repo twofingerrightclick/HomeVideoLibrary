@@ -30,6 +30,7 @@ public sealed record MainWindowDependencies
         cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
     public Func<LibraryLock, CancellationToken, Task> SweepScratch { get; init; } = ScratchSweeper.SweepAsync;
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
+    public IFileTrash Trash { get; init; } = FileTrash.ForCurrentPlatform();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
     /// <summary>The clock for toasts and job estimates.</summary>
@@ -73,6 +74,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
+        // TODO(strips): pass the hover previews and frame strips as IVideoHolders once the strip scheduler lands, so a
+        // trash waits for their reads and drops their caches.
+        Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash), Shelf, Jobs, dependencies.Interaction,
+            LeavePagesShowingAsync, () => IsSettled, message => Status = message, RefreshView);
+        Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
@@ -108,6 +114,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AlbumsViewModel Albums { get; }
     public ImportViewModel Import { get; }
     public SettingsViewModel Settings { get; }
+    public TrashViewModel Trash { get; }
     /// <summary>Background imports and edits, shown in the activity drawer.</summary>
     public JobQueue Jobs { get; }
 
@@ -215,6 +222,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
             return Refuse($"“{video.Label}” is no longer in the library.");
         if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
+        if (Trash.Holds(record.Id)) return Refuse($"“{record.Label}” is being moved to the Trash.");
         return NavigateAsync(() =>
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
@@ -231,9 +239,13 @@ public sealed class MainWindowViewModel : ViewModelBase
                     if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
                 },
                 AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
+                MoveToTrash = () => Trash.MoveToTrashAsync([record.Id]),
             });
         });
     }
+
+    private Task<bool> LeavePagesShowingAsync(IReadOnlyCollection<Guid> videoIds) =>
+        Page is { } page && videoIds.Any(page.Shows) ? NavigateAsync(() => null) : Task.FromResult(true);
 
     private Task Refuse(string reason)
     {
@@ -571,6 +583,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         _shown = snapshot;
         Albums.Apply(snapshot);
         Shelf.Apply(snapshot, Albums.Filter);
+        Trash.UpdateCommands();
         (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
         OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
@@ -585,6 +598,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         Import.UpdateCommands();
         Settings.UpdateCommands();
+        Trash.UpdateCommands();
         foreach (var command in new[] { PlaySelectedCommand, TrimSelectedCommand, MergeSelectedCommand, BackCommand })
             command.RaiseCanExecuteChanged();
         DeleteSelectedCommand.RaiseCanExecuteChanged();

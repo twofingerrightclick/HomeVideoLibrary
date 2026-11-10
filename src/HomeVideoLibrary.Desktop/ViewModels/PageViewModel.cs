@@ -14,6 +14,10 @@ public abstract class PageViewModel : ViewModelBase, IAsyncDisposable
     /// no page is ever a dead end.</summary>
     public virtual bool HasBackKey => false;
 
+    /// <summary>Whether the page shows or works on <paramref name="videoId"/>, so the video cannot leave the library
+    /// while the page is open.</summary>
+    public virtual bool Shows(Guid videoId) => false;
+
     /// <summary>Runs once after the page's view exists (so native surfaces can bind first).</summary>
     public virtual Task LoadAsync() => Task.CompletedTask;
 
