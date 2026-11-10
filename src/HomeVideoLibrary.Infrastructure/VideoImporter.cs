@@ -412,12 +412,10 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         if (!streams.Any(stream => stream.Type == "video" && !stream.AttachedPicture))
             throw new InvalidDataException("Import requires a video stream.");
         var seconds = Seconds(Text(format, "duration")) ?? streams.Max(stream => stream.Duration);
-        if (seconds is null && formatNames.Contains("matroska"))
-        {
-            // Matroska written to a pipe or cut off by a crash has no duration; its packets still have timestamps.
-            var timeline = await MediaProbe.ReadTimelineAsync(_process, tools, path, cancellationToken);
-            seconds = (timeline.PacketEnd - timeline.StartTime).TotalSeconds;
-        }
+        // Matroska header durations are missing in piped or crashed recordings and differ between muxers for files that
+        // start late; the timeline reconciles them with the packets.
+        if (formatNames.Contains("matroska"))
+            seconds = (await MediaProbe.ReadTimelineAsync(_process, tools, path, cancellationToken)).ClaimedLength.TotalSeconds;
         if (seconds is not { } duration || duration <= 0 || duration > TimeSpan.MaxValue.TotalSeconds / 2)
             throw new InvalidDataException("Import requires a finite positive duration.");
         DateTimeOffset? recordedAt = format.ValueKind == JsonValueKind.Object && format.TryGetProperty("tags", out var tags) &&

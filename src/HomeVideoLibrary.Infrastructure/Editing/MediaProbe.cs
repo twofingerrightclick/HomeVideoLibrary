@@ -139,6 +139,19 @@ internal sealed record MediaTimeline(TimeSpan StartTime, TimeSpan ContainerEnd, 
     TimeSpan PacketEnd)
 {
     public string Seek(TimeSpan absolute) => MediaProbe.Seconds(absolute > StartTime ? absolute - StartTime : TimeSpan.Zero);
+
+    /// <summary>How long the file claims to be, from its first timestamp. Matroska muxers disagree on the header
+    /// duration of a file that starts late (ffmpeg writes the end timestamp, mkvmerge the length), so the larger of the
+    /// two readings and the last packet's end is taken: a file cut off after its header was written still claims its
+    /// full length.</summary>
+    public TimeSpan ClaimedLength
+    {
+        get
+        {
+            var headerEnd = ContainerEnd - StartTime;
+            return (PacketEnd > headerEnd ? PacketEnd : headerEnd) - StartTime;
+        }
+    }
 }
 
 /// <param name="Timeline">Absolute times; see <see cref="MediaTimeline"/>.</param>

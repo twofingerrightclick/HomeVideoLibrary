@@ -59,7 +59,7 @@ internal static class VideoEncoding
         }
         else return null;
         // The source's reorder depth, as LosslessCut's smart cut sets it, so encoded pieces resemble the copied GOPs.
-        if (video.BFrames > 0) arguments.AddRange(["-bf", video.BFrames.ToString(CultureInfo.InvariantCulture)]);
+        arguments.AddRange(["-bf", video.BFrames.ToString(CultureInfo.InvariantCulture)]);
         arguments.AddRange(["-pix_fmt", video.PixelFormat]);
         arguments.AddRange(ColorArguments(video));
         return arguments;

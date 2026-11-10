@@ -219,7 +219,6 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         }
     }
 
-    /// <summary>Resolves a stored path inside the Videos directory. Accepts <c>\</c> separators from Windows-created rows.</summary>
     /// <summary>The file for a stored relative path. When the file is missing because its publication has not been
     /// finished yet (a committed video still under its pending name), the pending file is returned, so the video
     /// plays and edits until recovery renames it.</summary>
@@ -231,7 +230,8 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         return File.Exists(pending) ? pending : path;
     }
 
-    /// <summary>The file a stored relative path names, without the pending fallback of <see cref="GetVideoPath"/>.</summary>
+    /// <summary>The file a stored relative path names, without the pending fallback of <see cref="GetVideoPath"/>. Accepts
+    /// <c>\</c> separators from Windows-created rows and refuses paths outside the Videos directory.</summary>
     internal string GetFinalVideoPath(string relativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);

@@ -6,9 +6,8 @@ namespace HomeVideoLibrary.Infrastructure;
 
 public sealed partial record MediaTools(string Ffmpeg, string Ffprobe)
 {
-    /// <summary>ffmpeg 6.0 has the per-stream frame timing and encoder time base options decoding checks rely on
-    /// (<c>-fps_mode</c>, <c>-enc_time_base demux</c>).</summary>
-    public static readonly Version MinimumFfmpeg = new(6, 0);
+    /// <summary>ffmpeg 5.1 added <c>-fps_mode</c>, which decoding checks rely on; everything else used is older.</summary>
+    public static readonly Version MinimumFfmpeg = new(5, 1);
 
     /// <summary>MKVToolNix 50 has everything the edits use: append with generated chapters, v2 timestamp files and
     /// <c>--ui-language en_US</c>.</summary>
@@ -24,7 +23,7 @@ public sealed partial record MediaTools(string Ffmpeg, string Ffprobe)
     public static MediaTools Discover() => new(Find("ffmpeg"), Find("ffprobe"));
 
     /// <summary>The tools that do not answer a version query within 10 s, by file name, or that are older than the
-    /// minimum, named with the version required (for example "ffmpeg 6.0 or newer"). A tool that passed once is not
+    /// minimum, with what is needed and found (for example "ffmpeg (needs 5.1 or newer; found 4.4)"). A tool that passed once is not
     /// probed again in this process; one that failed is probed again on the next call. Cancellation stops the wait,
     /// not the probes.</summary>
     public async Task<IReadOnlyList<string>> FindUnavailableAsync(CancellationToken cancellationToken = default)
@@ -60,7 +59,7 @@ public sealed partial record MediaTools(string Ffmpeg, string Ffprobe)
         if (ParseVersion(result.StandardOutput) is { } version && version < minimum)
         {
             System.Diagnostics.Trace.TraceWarning($"{executable} is version {version}; {minimum} or newer is required.");
-            return $"{name} {minimum} or newer";
+            return $"{name} (needs {minimum} or newer; found {version})";
         }
         KnownAvailable.TryAdd(executable, true);
         return null;

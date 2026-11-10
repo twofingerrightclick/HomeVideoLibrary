@@ -65,19 +65,31 @@ public sealed class MediaValidatorTests : IDisposable
         [in#0/matroska,webm @ 0xb10c2c000] [verbose]   Input stream #0:0 (video): 220 packets read (35963 bytes); 220 frames decoded; 0 decode errors;
         """;
 
-    // ffmpeg before 7 printed the summary without a decode error count.
-    private const string OlderSummary = """
+    // A seek to an open-GOP keyframe: the decoder drops the leading pictures and says so, the file is intact.
+    private const string OpenGopSeek = """
+        [info] Input #0, matroska,webm, from 'open-gop.mkv':
+        [h264 @ 0x9e8025500] [error] mmco: unref short failure
+        [in#0/matroska,webm @ 0x9e8c2c000] [verbose]   Input stream #0:0 (video): 50 packets read (40211 bytes); 48 frames decoded; 0 decode errors;
+        """;
+
+    // ffmpeg before 7: demuxer messages carry the input format's name, and the summary has no decode error count.
+    private const string OlderFfmpeg = """
+        [matroska,webm @ 0x7f8] [error] Element at 0x144a7e ending at 0x100144987 exceeds containing master element ending at 0x28521d
+        [info] Input #0, matroska,webm, from 'wrecked.mkv':
         [verbose] Input stream #0:0 (video): 149 packets read (175739 bytes); 149 frames decoded;
         """;
 
     [Fact]
-    public void DecodeLogsCountDemuxerAndDecoderDamageButNotTiming()
+    public void DecodeLogsCountDemuxerAndDecoderDamageButNotTimingOrDiscardedPictures()
     {
-        Assert.Equal(new DecodeLog(4, 3, 398), DecodeLog.Parse(GlitchedTransportStream));
+        var glitched = DecodeLog.Parse(GlitchedTransportStream);
+        Assert.Equal((0, 3, 3, 398L), (glitched.DemuxerErrors, glitched.CountedErrors, glitched.Errors, glitched.FramesDecoded));
         Assert.Equal(2, DecodeLog.Parse(WreckedCluster).Errors);
-        Assert.Equal(new DecodeLog(0, 0, 220), DecodeLog.Parse(MixedFrameRates));
-        Assert.Equal(new DecodeLog(0, 0, 149), DecodeLog.Parse(OlderSummary));
-        Assert.Equal(new DecodeLog(0, 0, null), DecodeLog.Parse(""));
+        Assert.Equal((0, 220L), (DecodeLog.Parse(MixedFrameRates).Errors, DecodeLog.Parse(MixedFrameRates).FramesDecoded));
+        Assert.Equal(0, DecodeLog.Parse(OpenGopSeek).Errors);
+        var older = DecodeLog.Parse(OlderFfmpeg);
+        Assert.Equal((1, 149L), (older.Errors, older.FramesDecoded));
+        Assert.Null(DecodeLog.Parse("").FramesDecoded);
     }
 
     [Fact]

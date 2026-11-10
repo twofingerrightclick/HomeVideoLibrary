@@ -493,7 +493,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     private static string DescribeUnavailable(IReadOnlyList<string> tools) => tools.Count == 0 ? "" :
-        $"Missing {string.Join(", ", tools)}. Install FFmpeg and MKVToolNix (see README), then reopen the library. " +
+        $"Missing or too old: {string.Join(", ", tools)}. Install FFmpeg and MKVToolNix (see README), then reopen the library. " +
         "Until then importing, clip editing, library refresh and hover previews are off.";
 
     /// <param name="unavailablePicks">Picked items that were skipped because they are not local files.</param>

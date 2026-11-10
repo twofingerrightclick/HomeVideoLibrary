@@ -13,8 +13,11 @@ public sealed class MediaProcess
 {
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
+    /// <param name="outputReceived">Sees every chunk of standard output; the result keeps only the last 4 MB.</param>
+    /// <param name="errorReceived">Sees every chunk of standard error; the result keeps only the last 32 KB.</param>
     public async Task<MediaProcessResult> RunAsync(string executable, IEnumerable<string> arguments,
-        TimeSpan timeout, CancellationToken cancellationToken = default, Action<string>? outputReceived = null)
+        TimeSpan timeout, CancellationToken cancellationToken = default, Action<string>? outputReceived = null,
+        Action<string>? errorReceived = null)
     {
         using var timeoutSource = new CancellationTokenSource(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
@@ -44,7 +47,7 @@ public sealed class MediaProcess
             catch (System.ComponentModel.Win32Exception) { }
         });
         var stdout = ReadBoundedAsync(process.StandardOutput, 4 * 1024 * 1024, outputReceived);
-        var stderr = ReadBoundedAsync(process.StandardError, 32 * 1024, null);
+        var stderr = ReadBoundedAsync(process.StandardError, 32 * 1024, errorReceived);
         await process.WaitForExitAsync(CancellationToken.None);
         var output = await stdout;
         var error = await stderr;

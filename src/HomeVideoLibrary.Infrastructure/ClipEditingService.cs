@@ -78,7 +78,8 @@ public sealed class ClipEditingService : IClipEditingService
                 var staged = Path.Combine(scratch, plan.IsLossless ? "trim.mkv" : "trim-precise.mkv");
                 await _cuts.RenderTrimAsync(probe, plan, staged, scratch, local => report.Report(local), cancellationToken);
                 return new RenderedOutput(name, staged, [new Segment(source, probe.Timeline.StartTime, plan.ActualStart, plan.ActualEnd, TimeSpan.Zero)],
-                    plan.Duration, tracks, plan.Boundaries(probe.Path), [], IsMerge: false);
+                    plan.Duration, tracks, [Start(probe.Path, plan.ActualStart), .. plan.Boundaries(probe.Path), End(plan.Duration, probe.Path, plan.ActualEnd)],
+                    IsMerge: false);
             }
             async Task<RenderedOutput> RenderFastAsync() =>
                 await RenderAsync(await _cuts.PlanTrimAsync(probe, range.Start, range.End, ClipCutMode.Fast, cancellationToken));
@@ -112,8 +113,10 @@ public sealed class ClipEditingService : IClipEditingService
             await _cuts.RenderSplitAsync(probe, split, first, second, scratch, local => report.Report(local), cancellationToken);
             var tracks = probe.Mkv.Tracks.Select(track => track.Expected).ToArray();
             var origin = probe.Timeline.StartTime;
-            return [new RenderedOutput(name + " · part 1", first, [new Segment(source, origin, origin, split, TimeSpan.Zero)], split - origin, tracks, [], [], false),
-                new RenderedOutput(name + " · part 2", second, [new Segment(source, origin, split, probe.VideoEnd, TimeSpan.Zero)], probe.VideoEnd - split, tracks, [], [], false)];
+            return [new RenderedOutput(name + " · part 1", first, [new Segment(source, origin, origin, split, TimeSpan.Zero)], split - origin, tracks,
+                    [Start(probe.Path, origin), End(split - origin, probe.Path, split)], false),
+                new RenderedOutput(name + " · part 2", second, [new Segment(source, origin, split, probe.VideoEnd, TimeSpan.Zero)], probe.VideoEnd - split, tracks,
+                    [Start(probe.Path, split), End(probe.VideoEnd - split, probe.Path, probe.VideoEnd)], false)];
         }, cancellationToken);
     }
 
@@ -144,12 +147,13 @@ public sealed class ClipEditingService : IClipEditingService
             var segments = clips.Select((clip, index) =>
                 new Segment(sources[index], clip.Timeline.StartTime, clip.Timeline.StartTime, clip.VideoEnd, offsets[index])).ToArray();
             var radius = MediaValidator.BoundaryRadius;
-            var boundaries = output.Joins.Select((join, index) => new EditBoundary(join,
+            var joins = output.Joins.Select((join, index) => new EditBoundary(join,
                 [new DecodeWindow(clips[index].Path, clips[index].VideoEnd - radius, radius),
-                    new DecodeWindow(clips[index + 1].Path, clips[index + 1].Timeline.StartTime, radius)])).ToArray();
+                    new DecodeWindow(clips[index + 1].Path, clips[index + 1].Timeline.StartTime, radius)]));
             var tracks = output.IsAppend ? clips[0].Mkv.Tracks.Select(track => track.Expected).ToArray() : plan.CompositeTracks;
             var planned = output.IsAppend ? offsets[^1] + clips[^1].VideoEnd - clips[^1].Timeline.StartTime : output.Duration;
-            return [new RenderedOutput(name, staged, segments, planned, tracks, boundaries, output.ReencodedRanges, IsMerge: true)];
+            return [new RenderedOutput(name, staged, segments, planned, tracks,
+                [Start(clips[0].Path, clips[0].Timeline.StartTime), .. joins, End(planned, clips[^1].Path, clips[^1].VideoEnd)], IsMerge: true)];
         }, cancellationToken);
     }
 
@@ -227,12 +231,6 @@ public sealed class ClipEditingService : IClipEditingService
             warnings = await _validator.ValidateStructureAsync(output.StagedPath, output.Tracks, output.Duration, output.Boundaries, cancellationToken);
         }
         foreach (var warning in warnings) report.Warn(warning);
-        foreach (var (start, end) in output.ReencodedRanges)
-        {
-            var decoded = await _validator.ValidateDecodedRangeAsync(new DecodeWindow(output.StagedPath, start, end - start),
-                DecodeTolerance.ForEdit(TimeSpan.FromSeconds(0.1)), cancellationToken);
-            if (decoded.ErrorCount > 0) report.Warn($"{decoded.ErrorCount} decoder error(s) in a re-encoded part.");
-        }
         return output;
     }
 
@@ -315,6 +313,14 @@ public sealed class ClipEditingService : IClipEditingService
         ScratchFiles.EnsureFreeSpace(scratch, (long)(bytes * factor));
     }
 
+    /// <summary>The output's start, which shows the source from <paramref name="sourceStart"/>.</summary>
+    private static EditBoundary Start(string sourcePath, TimeSpan sourceStart) =>
+        new(TimeSpan.Zero, [new DecodeWindow(sourcePath, sourceStart, MediaValidator.BoundaryRadius)]);
+
+    /// <summary>The output's end at <paramref name="length"/>, which shows the source up to <paramref name="sourceEnd"/>.</summary>
+    private static EditBoundary End(TimeSpan length, string sourcePath, TimeSpan sourceEnd) =>
+        new(length, [new DecodeWindow(sourcePath, sourceEnd - MediaValidator.BoundaryRadius, MediaValidator.BoundaryRadius)]);
+
     private static string TitleOrDefault(string title, string fallback) => string.IsNullOrWhiteSpace(title) ? fallback : title.Trim();
 
     /// <summary>A source range [Start, End) placed at <paramref name="Offset"/> in the output. Times are absolute source
@@ -327,8 +333,7 @@ public sealed class ClipEditingService : IClipEditingService
     /// <param name="Duration">The planned length of the output's video.</param>
     /// <param name="Fallback">Renders the same output with keyframe cuts when this one fails validation.</param>
     private sealed record RenderedOutput(string Title, string StagedPath, IReadOnlyList<Segment> Segments, TimeSpan Duration,
-        IReadOnlyList<ExpectedTrack> Tracks, IReadOnlyList<EditBoundary> Boundaries, IReadOnlyList<(TimeSpan Start, TimeSpan End)> ReencodedRanges,
-        bool IsMerge)
+        IReadOnlyList<ExpectedTrack> Tracks, IReadOnlyList<EditBoundary> Boundaries, bool IsMerge)
     {
         public const string FallbackWarning = "A frame-accurate cut was not possible; the cuts snap to keyframes instead.";
         public Func<Task<RenderedOutput>>? Fallback { get; init; }
