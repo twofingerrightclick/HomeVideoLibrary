@@ -15,16 +15,24 @@ namespace HomeVideoLibrary.Desktop.Views;
 /// unless the mapping allows it.</summary>
 public sealed class ShortcutRouter
 {
+    /// <summary>How soon after the previous press of the same key, with no release between, a press counts as key
+    /// repeat. It covers the default delay before repeat starts on Windows (500 ms), macOS and X11 (about 660 ms).</summary>
+    public static readonly TimeSpan RepeatWindow = TimeSpan.FromSeconds(1);
+
     private readonly List<Shortcut> _shortcuts = [];
-    private readonly HashSet<Key> _held = [];
+    // Each held key and when its last KeyDown arrived.
+    private readonly Dictionary<Key, long> _held = [];
     private readonly IClickSoundService _sounds;
+    private readonly TimeProvider _time;
 
     /// <param name="commandModifier">The platform's command key (Meta on macOS, Control elsewhere); see
     /// <see cref="CommandModifierOf"/>.</param>
-    public ShortcutRouter(KeyModifiers commandModifier, IClickSoundService? sounds = null)
+    /// <param name="time">The clock that tells key repeat from a new press.</param>
+    public ShortcutRouter(KeyModifiers commandModifier, IClickSoundService? sounds = null, TimeProvider? time = null)
     {
         CommandModifier = commandModifier;
         _sounds = sounds ?? ClickSounds.Service;
+        _time = time ?? TimeProvider.System;
     }
 
     public KeyModifiers CommandModifier { get; }
@@ -54,37 +62,56 @@ public sealed class ShortcutRouter
     {
         root.AddHandler(InputElement.KeyDownEvent, (_, args) => Handle(args), RoutingStrategies.Bubble);
         root.AddHandler(InputElement.KeyUpEvent, (_, args) => Released(args.Key), RoutingStrategies.Bubble, handledEventsToo: true);
-        root.LostFocus += (_, _) => _held.Clear();
+        // Keys released in another window never send KeyUp here. Focus moving between controls inside the window is
+        // not a release, so only the window losing activation forgets held keys.
+        if (root is WindowBase window) window.Deactivated += ForgetHeldKeys;
+        root.AttachedToVisualTree += (_, args) => { if (args.Root is WindowBase attached) attached.Deactivated += ForgetHeldKeys; };
+        root.DetachedFromVisualTree += (_, args) => { if (args.Root is WindowBase detached) detached.Deactivated -= ForgetHeldKeys; };
     }
 
-    /// <summary>Executes the first matching shortcut whose command can run; returns whether one ran. A key already
-    /// held (auto-repeat) runs only shortcuts that allow repeats, and silently.</summary>
+    /// <summary>Executes the first matching shortcut whose command can run; returns whether one ran. Key repeat of such
+    /// a shortcut runs it again (silently) only if it allows repeats, and is otherwise swallowed; a key whose shortcuts
+    /// cannot run falls through, repeat or not.</summary>
     public bool Handle(KeyEventArgs args)
     {
-        var repeat = !_held.Add(args.Key);
+        var repeat = Pressed(args.Key);
         if (args.Handled) return false;
         var typing = IsTextEntry(args.Source);
         foreach (var shortcut in _shortcuts)
         {
             if (shortcut.Key != args.Key || shortcut.Modifiers != args.KeyModifiers || (typing && !shortcut.InTextEntry)) continue;
-            if (repeat && !shortcut.Repeats) { args.Handled = true; return false; }
             if (shortcut.Command() is not { } command || !command.CanExecute(shortcut.Parameter)) continue;
+            args.Handled = true;
+            if (repeat && !shortcut.Repeats) return false;
             command.Execute(shortcut.Parameter);
             if (!repeat && shortcut.Sound != ClickSoundKind.None) _sounds.Play(shortcut.Sound);
-            args.Handled = true;
             return true;
         }
         return false;
     }
 
-    // macOS sends no KeyUp for a key released while Command is down, so releasing a modifier forgets every held key
-    // rather than leaving one marked as repeating forever.
+    /// <summary>Records a KeyDown and returns whether it is key repeat: the same key went down within
+    /// <see cref="RepeatWindow"/> before, with no KeyUp between. Being held alone is not enough, because macOS sends no
+    /// KeyUp for a key released while Command is down; holding Command and pressing F again must still count as a new
+    /// press. The price is that a deliberate second press within the window, with that KeyUp lost, counts as repeat,
+    /// and an OS repeat delay longer than the window yields one extra press.</summary>
+    private bool Pressed(Key key)
+    {
+        var now = _time.GetTimestamp();
+        var repeat = _held.TryGetValue(key, out var previous) && _time.GetElapsedTime(previous, now) <= RepeatWindow;
+        _held[key] = now;
+        return repeat;
+    }
+
+    // Releasing a modifier forgets every held key: macOS sends no KeyUp for keys released while Command was down.
     private void Released(Key key)
     {
         if (key is Key.LWin or Key.RWin or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift)
             _held.Clear();
         else _held.Remove(key);
     }
+
+    private void ForgetHeldKeys(object? sender, EventArgs args) => _held.Clear();
 
     /// <summary>Whether a key from <paramref name="source"/> is text input: a text box (including a chapter title being
     /// edited) or the tag entry.</summary>
