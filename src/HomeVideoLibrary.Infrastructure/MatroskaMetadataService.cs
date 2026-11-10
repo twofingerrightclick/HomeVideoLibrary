@@ -83,14 +83,14 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     /// <returns>False, without writing, when nothing was missing.</returns>
     public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
     {
+        if (video.SourceFingerprint is not null) return false;
         var path = catalog.GetVideoPath(video.RelativePath);
         using var _ = await EnterGateAsync(path, cancellationToken);
         var scratch = CreateScratch();
         try
         {
             var original = await ReadStateAsync(path, scratch, cancellationToken);
-            if (video.SourceFingerprint is not null || MatroskaMetadataXml.HasGlobal(original.Tags, VideoImporter.SourceFingerprintTag))
-                return false;
+            if (MatroskaMetadataXml.HasGlobal(original.Tags, VideoImporter.SourceFingerprintTag)) return false;
             var additions = new Dictionary<string, string>();
             var expected = original.Written;
             if (!MatroskaMetadataXml.HasGlobal(original.Tags, "TITLE") &&

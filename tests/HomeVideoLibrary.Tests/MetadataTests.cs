@@ -47,6 +47,8 @@ public sealed class MetadataTests : IDisposable
         Assert.False(await service.FillMissingIdentityAsync(old));
         Assert.False(await service.FillMissingIdentityAsync(imported));
         Assert.False(await service.FillMissingIdentityAsync(clearedByUser));
+        File.Delete(catalog.GetVideoPath(imported.RelativePath));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
 
         var path = catalog.GetVideoPath(old.RelativePath);
         var metadata = (await service.ReadTextAsync(path)).Metadata;
