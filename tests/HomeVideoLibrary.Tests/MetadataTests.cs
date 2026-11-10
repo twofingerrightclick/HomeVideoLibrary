@@ -13,6 +13,26 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task AnExclusiveLeaseHoldsOffReadsAndSavesUntilItIsReleased()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var path = catalog.GetVideoPath(video.RelativePath);
+
+        var lease = await MatroskaMetadataService.AcquireExclusiveAsync(path);
+        var read = service.ReadTextAsync(path);
+        var save = service.SaveAsync(video, VideoMetadata.Empty with { Title = "after the lease" });
+        await Task.Delay(300);
+        Assert.False(read.IsCompleted);
+        Assert.False(save.IsCompleted);
+
+        lease.Dispose();
+        await read;
+        await save;
+        Assert.Equal("after the lease", (await service.ReadTextAsync(path)).Metadata.Title);
+    }
+
+    [Fact]
     public async Task RoundTripsEmbeddedMetadataAndJpegTimestampsAfterReopen()
     {
         var (catalog, video) = await CreateVideoAsync();

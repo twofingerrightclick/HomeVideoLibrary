@@ -157,6 +157,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     private string ThumbnailCachePath(Guid videoId, Guid thumbnailId) =>
         Path.Combine(catalog.Paths.ThumbnailCacheDirectory, videoId.ToString("N"), thumbnailId.ToString("N") + ".jpg");
 
+    /// <summary>Takes the per-path gate that every read and write of <paramref name="mkvPath"/> goes through: an
+    /// operation in progress finishes first, and none starts until the returned lease is disposed. For work that needs the
+    /// file to itself, such as moving it to the Trash. Not reentrant: do not use this service on the same file while
+    /// holding the lease.</summary>
+    public static Task<IDisposable> AcquireExclusiveAsync(string mkvPath, CancellationToken cancellationToken = default) =>
+        EnterGateAsync(Path.GetFullPath(mkvPath), cancellationToken);
+
     private static async Task<IDisposable> EnterGateAsync(string path, CancellationToken cancellationToken)
     {
         var gate = Gates.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
