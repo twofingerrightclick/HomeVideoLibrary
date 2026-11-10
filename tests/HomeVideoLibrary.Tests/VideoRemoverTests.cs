@@ -117,6 +117,45 @@ public sealed class VideoRemoverTests : IDisposable
     }
 
     [Fact]
+    public void AFileIsAbsentOnlyWhenItsReadableDirectorySaysSo()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Directory.CreateDirectory(Path.Combine(_root, "probe", "Videos")).FullName;
+        var file = Path.Combine(directory, "here.mkv");
+        File.WriteAllText(file, "video");
+
+        Assert.Equal(FilePresence.Present, LibraryFiles.Probe(file));
+        Assert.Equal(FilePresence.Absent, LibraryFiles.Probe(Path.Combine(directory, "gone.mkv")));
+        Assert.Equal(FilePresence.Unknown, LibraryFiles.Probe(Path.Combine(_root, "unplugged", "Videos", "gone.mkv")));
+        File.SetUnixFileMode(directory, UnixFileMode.None);
+        try
+        {
+            Assert.Equal(FilePresence.Unknown, LibraryFiles.Probe(file));
+            Assert.Equal(FilePresence.Unknown, LibraryFiles.Probe(Path.Combine(directory, "gone.mkv")));
+        }
+        finally { File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+    }
+
+    [Fact]
+    public async Task AVideoWhoseFileCannotBeCheckedIsNeitherRemovedNorTrashed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (model, video, trash) = await OpenAsync();
+        var videos = model.Catalog.Paths.VideosDirectory;
+        File.SetUnixFileMode(videos, UnixFileMode.None);
+        try
+        {
+            var remover = new VideoRemover(model, trash);
+            Assert.Equal(RemovalResult.Failed, Assert.Single(await remover.RemoveMissingAsync([video.Id])).Result);
+            Assert.Equal(RemovalResult.Failed, (await remover.MoveToTrashAsync(video.Id)).Result);
+        }
+        finally { File.SetUnixFileMode(videos, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+        Assert.NotNull(model.Snapshot.Find(video.Id));
+        Assert.True(File.Exists(model.Catalog.GetVideoPath(video.RelativePath)));
+        Assert.Empty(trash.Moved);
+    }
+
+    [Fact]
     public async Task TheTrashWaitsForAMetadataOperationOnTheSameFile()
     {
         var (model, video, trash) = await OpenAsync();

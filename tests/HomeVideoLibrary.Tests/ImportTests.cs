@@ -66,6 +66,23 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
+    public async Task AVideoWhoseFileCannotBeCheckedStillCountsAsInTheLibrary()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+        var first = await importer.ImportAsync(source);
+        File.SetUnixFileMode(catalog.Paths.VideosDirectory, UnixFileMode.None);
+        try
+        {
+            var again = await importer.ImportAsync(source);
+            Assert.Equal((ImportOutcome.AlreadyInLibrary, first.Video.Id), (again.Outcome, again.Video.Id));
+        }
+        finally { File.SetUnixFileMode(catalog.Paths.VideosDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+    }
+
+    [Fact]
     public async Task ASourceWhoseVideoFileIsGoneImportsAgainAndTakesTheFingerprintOver()
     {
         var source = await CreateSourceAsync();

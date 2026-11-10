@@ -46,6 +46,7 @@ public sealed class VideoRemover
 {
     // Windows reports a file another program has open as a sharing violation; scanners and indexers let go quickly.
     private static readonly TimeSpan[] LockedRetries = [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(1)];
+    private const string UnreadableFile = "Its file could not be checked (no permission, or its drive is not there); nothing was changed.";
     private readonly LibraryModel _model;
     private readonly IFileTrash _trash;
     private readonly IVideoHolders _holders;
@@ -79,16 +80,20 @@ public sealed class VideoRemover
         }, cancellationToken);
 
     /// <summary>Removes videos whose files are gone from the library (their rows, albums and caches). A video whose file
-    /// is there after all is left alone and reported as <see cref="RemovalResult.Failed"/>, so this never orphans a file.</summary>
+    /// is there after all, or cannot be checked, is left alone and reported as <see cref="RemovalResult.Failed"/>, so this
+    /// never orphans a file.</summary>
     public async Task<IReadOnlyList<VideoRemoval>> RemoveMissingAsync(IReadOnlyCollection<Guid> videoIds, CancellationToken cancellationToken = default)
     {
         var results = new List<VideoRemoval>();
         foreach (var id in videoIds)
         {
             if (_model.Snapshot.Find(id) is not { } record) continue;
-            results.Add(File.Exists(_model.GetVideoPath(record))
-                ? new VideoRemoval(id, record.Label, RemovalResult.Failed, "Its file is there after all; move it to the Trash instead.")
-                : new VideoRemoval(id, record.Label, RemovalResult.RemovedFromLibrary));
+            results.Add(LibraryFiles.Probe(_model.GetVideoPath(record)) switch
+            {
+                FilePresence.Absent => new VideoRemoval(id, record.Label, RemovalResult.RemovedFromLibrary),
+                FilePresence.Present => new VideoRemoval(id, record.Label, RemovalResult.Failed, "Its file is there after all; move it to the Trash instead."),
+                _ => new VideoRemoval(id, record.Label, RemovalResult.Failed, UnreadableFile),
+            });
         }
         var removed = results.Where(result => result.IsRemoved).Select(result => result.VideoId).ToArray();
         await _model.RemoveVideosAsync(removed, cancellationToken);
@@ -107,7 +112,11 @@ public sealed class VideoRemover
             var path = _model.GetVideoPath(record);
             using (await MatroskaMetadataService.AcquireExclusiveAsync(path, cancellationToken))
             {
-                if (!File.Exists(path)) return new VideoRemoval(videoId, record.Label, RemovalResult.Missing);
+                switch (LibraryFiles.Probe(path))
+                {
+                    case FilePresence.Absent: return new VideoRemoval(videoId, record.Label, RemovalResult.Missing);
+                    case FilePresence.Unknown: return new VideoRemoval(videoId, record.Label, RemovalResult.Failed, UnreadableFile);
+                }
                 result = await RetryWhileLockedAsync(() => remove(path), cancellationToken);
             }
         }

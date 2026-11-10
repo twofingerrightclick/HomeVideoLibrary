@@ -66,7 +66,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         // A video whose file is gone (moved to the Trash with its row left behind, or deleted outside the app) does not
         // count: importing the source again makes a new video, which takes the fingerprint over when it is published.
         var match = await catalog.FindBySourceFingerprintAsync(fingerprint, cancellationToken);
-        if (match is not null && File.Exists(catalog.GetVideoPath(match.RelativePath)))
+        if (match is not null && LibraryFiles.Probe(catalog.GetVideoPath(match.RelativePath)) != FilePresence.Absent)
             return new ImportResult(ImportOutcome.AlreadyInLibrary, match, []);
 
         var source = await ProbeAsync(sourcePath, cancellationToken);
