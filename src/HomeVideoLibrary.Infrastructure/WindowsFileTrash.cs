@@ -220,7 +220,7 @@ internal static class WindowsTrashRules
     private const int Cancelled = 0x4C7, OperationCancelled = 0x75; // ERROR_CANCELLED, DE_OPCANCELLED
     private const int SharingViolation = 0x20, LockViolation = 0x21;
     // COPYENGINE_E_* from the Windows SDK's sherrors.h.
-    private const int CopyEngineUserCancelled = unchecked((int)0x80270000),
+    private const int CopyEngineUserCancelled = unchecked((int)0x80270000), CopyEngineCancelled = unchecked((int)0x80270001),
         CopyEngineSharingViolationSource = unchecked((int)0x80270027), CopyEngineSharingViolationDestination = unchecked((int)0x80270028);
 
     /// <summary>The root to ask about the drive of a final path (<c>\\?\C:\...</c>, <c>\\?\Volume{...}\...</c>), or null
@@ -256,7 +256,7 @@ internal static class WindowsTrashRules
     private static bool IsLocked(int result) => result is CopyEngineSharingViolationSource or CopyEngineSharingViolationDestination ||
         IsWin32(result) && (result & 0xFFFF) is SharingViolation or LockViolation;
 
-    private static bool IsCancel(int result) => result is OperationCancelled or CopyEngineUserCancelled ||
+    private static bool IsCancel(int result) => result is OperationCancelled or CopyEngineUserCancelled or CopyEngineCancelled ||
         IsWin32(result) && (result & 0xFFFF) is Cancelled or OperationCancelled;
 
     private static bool IsWin32(int result) => (result & 0x1FFF0000) == 0x00070000;
