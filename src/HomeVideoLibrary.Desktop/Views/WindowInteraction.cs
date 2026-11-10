@@ -43,6 +43,14 @@ public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
         ? new PromptWindow<bool>(title, message, true, [new("OK", true, "primary", IsDefault: true, IsCancel: true)]).AskAsync(window)
         : Task.CompletedTask;
 
+    public Task<bool> ConfirmAsync(Confirmation confirmation) => owner() is { } window
+        ? new PromptWindow<bool>(confirmation.Title, confirmation.Message, false,
+            [
+                new("CANCEL", false, IsDefault: true, IsCancel: true),
+                new(confirmation.ConfirmLabel, true, "destructive"),
+            ], confirmation.Details).AskAsync(window)
+        : Task.FromResult(false);
+
     public async Task<PickedFiles> PickVideosAsync()
     {
         if (owner() is not { } window) return PickedFiles.None;
