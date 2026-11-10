@@ -38,7 +38,7 @@
   <Style Selector="TextBlock.legend">
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="LetterSpacing" Value="{DynamicResource Vcr.LetterSpacing.Legend}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
   </Style>
@@ -47,7 +47,7 @@
   <Style Selector="TextBlock.title">
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="20"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="LetterSpacing" Value="0.5"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
   </Style>

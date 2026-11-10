@@ -10,6 +10,12 @@ namespace HomeVideoLibrary.Desktop;
 
 public sealed partial class App : Application
 {
+    private void ShowAbout(object? sender, EventArgs args)
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime { MainWindow: MainWindow window })
+            AppErrors.Run(window.ShowAboutAsync, "About Home Video Library");
+    }
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()

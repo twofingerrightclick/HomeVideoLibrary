@@ -35,6 +35,11 @@ keys green.
 
 **The Paper Rule.** Light material belongs to tape labels, the sticky month pill and toasts.
 
+**Control typography.** Bundle Roboto Condensed Regular for button legends, field captions, headings and tabs.
+Use regular weight for those roles, without the previous semibold styling.
+Its neutral, narrow lettering follows printed VCR and remote controls. Ordinary text entries keep
+the platform default; digital counters use DSEG7 Classic.
+
 **The Handwriting Rule.** Caveat handwriting is the user's tape label only, never navigation or form controls.
 
 ## Library window

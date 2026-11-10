@@ -3,7 +3,7 @@
   <Style Selector="TextBlock.gallery-title">
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="22"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
     <Setter Property="LetterSpacing" Value="1"/>
   </Style>

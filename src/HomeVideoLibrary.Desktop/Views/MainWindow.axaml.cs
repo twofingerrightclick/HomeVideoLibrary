@@ -44,6 +44,15 @@ public sealed partial class MainWindow : Window
         AlbumList.AddHandler(DragDrop.DropEvent, AlbumDrop);
     }
 
+    public Task ShowAboutAsync() => new PromptWindow<bool>(
+        $"About {AppInfo.Name}",
+        $"{AppInfo.Name}\nVersion {AppInfo.Version}\nBuild {AppInfo.Build}",
+        true, [new("OK", true, "primary", IsDefault: true, IsCancel: true)])
+        .AskAsync(this);
+
+    private void ShowAbout(object? sender, RoutedEventArgs args) =>
+        AppErrors.Run(ShowAboutAsync, "About Home Video Library");
+
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
     private MainWindowViewModel? _subscribed;

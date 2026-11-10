@@ -227,9 +227,8 @@
   <x:Double x:Key="Vcr.Size.Icon">14</x:Double>
   <x:Double x:Key="Vcr.Size.Tape">60</x:Double>
 
-  <!-- Typography. Barlow Semi Condensed approximates the condensed grotesque silkscreened on
-       Sony remotes; DSEG7 is a seven-segment display face; Caveat is the handwritten tape label. -->
-  <FontFamily x:Key="Vcr.Font.Legend">avares://HomeVideoLibrary.UI/Assets/Fonts#Barlow Semi Condensed</FontFamily>
+  <!-- Typography. Roboto Condensed Regular provides light, narrow hardware legends; DSEG7 is a seven-segment display face; Caveat is the handwritten tape label. -->
+  <FontFamily x:Key="Vcr.Font.Legend">avares://HomeVideoLibrary.UI/Assets/Fonts#Roboto Condensed</FontFamily>
   <FontFamily x:Key="Vcr.Font.Segment">avares://HomeVideoLibrary.UI/Assets/Fonts#DSEG7 Classic</FontFamily>
   <FontFamily x:Key="Vcr.Font.Hand">avares://HomeVideoLibrary.UI/Assets/Fonts#Caveat</FontFamily>
   <x:Double x:Key="Vcr.FontSize.Legend">11</x:Double>

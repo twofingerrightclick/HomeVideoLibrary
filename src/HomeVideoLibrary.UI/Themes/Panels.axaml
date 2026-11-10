@@ -6,7 +6,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Section}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="MinHeight" Value="26"/>
     <Setter Property="Template">
       <ControlTemplate>
@@ -63,7 +63,7 @@
                 <TextBlock Text="{TemplateBinding Title}"
                            FontFamily="{DynamicResource Vcr.Font.Legend}"
                            FontSize="15"
-                           FontWeight="SemiBold"
+                           FontWeight="Normal"
                            LetterSpacing="1"
                            Foreground="{DynamicResource Vcr.Brush.Legend}"
                            VerticalAlignment="Center"/>

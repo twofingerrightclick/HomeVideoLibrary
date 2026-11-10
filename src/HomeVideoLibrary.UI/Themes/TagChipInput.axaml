@@ -108,7 +108,7 @@
     <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Chip}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="Height" Value="22"/>
     <Setter Property="Padding" Value="9,0,2,0"/>
     <Setter Property="Margin" Value="0,1,5,1"/>
@@ -158,7 +158,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
-    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="CornerRadius" Value="2"/>
     <Setter Property="Height" Value="26"/>
     <Setter Property="Padding" Value="9,0"/>
@@ -219,7 +219,7 @@
     <Setter Property="Padding" Value="6,5"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
-    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="Cursor" Value="Ibeam"/>
     <!-- TemplatedControl clips by default, which would cut off the focus ring drawn outside the field. -->
     <Setter Property="ClipToBounds" Value="False"/>

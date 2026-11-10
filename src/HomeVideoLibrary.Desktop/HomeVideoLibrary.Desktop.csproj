@@ -2,6 +2,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>HomeVideoLibrary</AssemblyName>
+    <Title>Home Video Library</Title>
+    <Product>Home Video Library</Product>
+    <Description>A home for your videos, chapters and memories.</Description>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
     <RootNamespace>HomeVideoLibrary.Desktop</RootNamespace>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>

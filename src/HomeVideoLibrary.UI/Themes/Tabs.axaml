@@ -15,7 +15,7 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="MinHeight" Value="46"/>
     <Setter Property="Padding" Value="6,7,6,5"/>
     <Setter Property="CornerRadius" Value="0"/>

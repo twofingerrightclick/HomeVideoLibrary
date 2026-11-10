@@ -83,7 +83,7 @@
  <Style Selector="Border.pill > TextBlock">
   <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Ink}"/>
   <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
-  <Setter Property="FontWeight" Value="SemiBold"/>
+  <Setter Property="FontWeight" Value="Normal"/>
   <Setter Property="LetterSpacing" Value="{DynamicResource Vcr.LetterSpacing.Legend}"/>
  </Style>
 

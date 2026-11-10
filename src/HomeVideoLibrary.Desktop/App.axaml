@@ -1,4 +1,10 @@
-<Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="HomeVideoLibrary.Desktop.App" RequestedThemeVariant="Dark">
+<Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="HomeVideoLibrary.Desktop.App" Name="Home Video Library" RequestedThemeVariant="Dark">
+ <NativeMenu.Menu>
+  <NativeMenu>
+   <NativeMenuItem Header="About Home Video Library…" Click="ShowAbout"/>
+   <NativeMenuItemSeparator/>
+  </NativeMenu>
+ </NativeMenu.Menu>
  <Application.Styles>
   <FluentTheme/>
   <StyleInclude Source="avares://HomeVideoLibrary.UI/VcrTheme.axaml"/>

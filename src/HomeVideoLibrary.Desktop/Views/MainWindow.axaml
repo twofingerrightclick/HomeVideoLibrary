@@ -2,7 +2,8 @@
  xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:views="using:HomeVideoLibrary.Desktop.Views"
  xmlns:c="using:HomeVideoLibrary.UI.Controls" xmlns:ui="using:HomeVideoLibrary.UI"
  x:Class="HomeVideoLibrary.Desktop.Views.MainWindow" x:DataType="vm:MainWindowViewModel" Title="{Binding Title}"
- Width="1440" Height="900" MinWidth="900" MinHeight="600">
+ Width="1440" Height="900" MinWidth="900" MinHeight="600"
+ Icon="/Assets/app-icon.png">
  <Window.Resources>
   <x:Double x:Key="ShelfStackWidth">760</x:Double>
   <!-- The activity key stays a small status light; its tooltip and accessible name carry the whole summary. -->
@@ -45,6 +46,7 @@
      <Separator/>
      <c:PlasticButton Classes="toolbar" Content="SETTINGS" Icon="{StaticResource Vcr.Icon.Power}" HorizontalAlignment="Left"
       Command="{Binding OpenSettingsCommand}"/>
+     <Button Classes="nav" Content="About Home Video Library…" Click="ShowAbout" HorizontalAlignment="Left"/>
      <TextBlock Classes="meta" Text="{Binding Settings.IndexStatus}" TextWrapping="Wrap"/>
     </StackPanel>
     <ScrollViewer Margin="0,18,0,12" Padding="4,0">

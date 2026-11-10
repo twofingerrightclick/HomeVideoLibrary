@@ -22,7 +22,7 @@
     <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Control}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
     <Setter Property="ui:Vcr.IconSize" Value="{DynamicResource Vcr.Size.Icon}"/>
@@ -73,6 +73,11 @@
         </Panel>
       </ControlTemplate>
     </Setter>
+
+    <!-- Center Roboto Condensed's visible lettering within the plastic key face. -->
+    <Style Selector="^ /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="RenderTransform" Value="translate(0px, 0.5px)"/>
+    </Style>
 
     <Style Selector="^:pointerover">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Hover}"/>
@@ -186,7 +191,7 @@
     <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Rubber}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
     <Setter Property="ui:Vcr.IconSize" Value="12"/>
@@ -302,7 +307,7 @@
     <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Control}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
     <Setter Property="ui:Vcr.IconSize" Value="{DynamicResource Vcr.Size.Icon}"/>
@@ -435,7 +440,7 @@
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
     <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
-    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
     <Setter Property="Template">
       <ControlTemplate>

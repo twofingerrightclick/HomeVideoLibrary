@@ -48,7 +48,7 @@
                            Opacity="0.75"
                            FontFamily="{DynamicResource Vcr.Font.Legend}"
                            FontSize="9"
-                           FontWeight="SemiBold"
+                           FontWeight="Normal"
                            LetterSpacing="{DynamicResource Vcr.LetterSpacing.Legend}"
                            VerticalAlignment="Top"
                            Margin="0,0,7,0"/>

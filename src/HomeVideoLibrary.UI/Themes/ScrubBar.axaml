@@ -80,7 +80,7 @@
                            TextTrimming="CharacterEllipsis"
                            FontFamily="{DynamicResource Vcr.Font.Legend}"
                            FontSize="{DynamicResource Vcr.FontSize.CapLegend}"
-                           FontWeight="SemiBold"
+                           FontWeight="Normal"
                            LetterSpacing="0.3"
                            Foreground="{DynamicResource Vcr.Brush.Legend}"/>
                 <Panel HorizontalAlignment="Center">
