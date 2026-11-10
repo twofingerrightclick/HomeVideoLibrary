@@ -21,7 +21,7 @@ public sealed class TapePreviewSession : IDisposable
     {
         _video = video;
         _request = strips.RequestAsync(video, _lifetime.Token);
-        Strip = DecodeAsync(_lifetime.Token);
+        Strip = DecodeAsync(strips, _lifetime.Token);
     }
 
     /// <summary>Completes with the decoded strip, or with null when the tape has none or the session ended first. Never faults.</summary>
@@ -42,12 +42,14 @@ public sealed class TapePreviewSession : IDisposable
         return new PixelRect(x, y, width, height);
     }
 
-    private async Task<Bitmap?> DecodeAsync(CancellationToken cancellationToken)
+    private async Task<Bitmap?> DecodeAsync(HoverStripScheduler strips, CancellationToken cancellationToken)
     {
+        string? path = null;
         try
         {
-            if (await _request is not { } path) return null;
-            var strip = await Task.Run(() => new Bitmap(path), cancellationToken);
+            if ((path = await _request) is null) return null;
+            var file = path;
+            var strip = await Task.Run(() => new Bitmap(file), cancellationToken);
             if (cancellationToken.IsCancellationRequested)
             {
                 strip.Dispose();
@@ -58,8 +60,9 @@ public sealed class TapePreviewSession : IDisposable
         catch (OperationCanceledException) { return null; }
         catch (Exception exception)
         {
-            // A preview is decoration: an unreadable strip just shows none.
+            // A preview is decoration: this hover shows none, and the strip is built again for the next.
             Trace.TraceWarning($"Could not load the hover strip of “{_video.Label}”: {exception.Message}");
+            if (path is not null) strips.Invalidate(_video.Id, path);
             return null;
         }
     }

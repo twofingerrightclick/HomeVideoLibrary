@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -10,9 +11,10 @@ public sealed class HoverStripSchedulerTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-strip-scheduler-" + Guid.NewGuid().ToString("N"));
     private readonly FakeMatroska _frames = new();
+    private readonly FakeTimeProvider _time = new();
     /// <summary>The video path of each build, in the order builds started.</summary>
     private readonly List<string> _builds = [];
-    private readonly JobQueue _jobs = new(_ => Task.CompletedTask);
+    private bool _busy;
     private LibraryPaths Paths => new(_root);
 
     public HoverStripSchedulerTests() => _frames.BeforeKeyframe = (path, _) =>
@@ -21,68 +23,114 @@ public sealed class HoverStripSchedulerTests : IDisposable
         return Task.CompletedTask;
     };
 
+    private string[] Builds { get { lock (_builds) return _builds.ToArray(); } }
+
     [Fact]
-    public Task TapesBuildOneAtATimeAndARequestedTapeJumpsTheQueue() => UiThread.Run(async () =>
+    public Task RestingOnTheLastTapeOfASweepBuildsItFirstAndSweptTapesKeepTheirBackfillPlace() => UiThread.Run(async () =>
     {
         var (store, scheduler) = Create();
-        var tapes = await TapesAsync(3);
+        var tapes = await TapesAsync(6);
         var first = new TaskCompletionSource();
         Hold(tapes[0], first.Task);
-
         scheduler.Enqueue(tapes);
-        await WaitUntilAsync(() => { lock (_builds) return _builds.Count == 1; });
-        var requested = scheduler.RequestAsync(tapes[2], default);
-        await UiThread.Settle();
-        lock (_builds) Assert.Single(_builds);
+        await WaitUntilAsync(() => Builds.Length == 1);
+
+        foreach (var swept in tapes[2..5])
+        {
+            using var leave = new CancellationTokenSource();
+            var request = scheduler.RequestAsync(swept, leave.Token);
+            _time.Advance(HoverStripScheduler.Dwell / 3);
+            leave.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        }
+        var rested = scheduler.RequestAsync(tapes[5], default);
+        _time.Advance(HoverStripScheduler.Dwell);
         first.SetResult();
 
-        var strip = await requested;
-        Assert.Equal(store.TryGet(tapes[2]), strip);
-        await WaitUntilAsync(() => store.TryGet(tapes[1]) is not null);
-        var paths = tapes.Select(PathOf).ToArray();
-        lock (_builds) Assert.Equal([paths[0], paths[2], paths[1]], _builds);
+        var strip = await rested;
+        Assert.Equal(store.TryGet(tapes[5]), strip);
+        await WaitUntilAsync(() => tapes.All(tape => store.TryGet(tape) is not null));
+        Assert.Equal(new[] { 0, 5, 1, 2, 3, 4 }.Select(index => PathOf(tapes[index])), Builds);
         await scheduler.DisposeAsync();
     });
 
     [Fact]
-    public Task BackfillWaitsForUserJobsButARequestedTapeDoesNot() => UiThread.Run(async () =>
+    public Task AHoverShorterThanTheDwellBuildsNothing() => UiThread.Run(async () =>
+    {
+        var (_, scheduler) = Create();
+        var tape = (await TapesAsync(1))[0];
+        using var leave = new CancellationTokenSource();
+
+        var request = scheduler.RequestAsync(tape, leave.Token);
+        _time.Advance(HoverStripScheduler.Dwell / 2);
+        leave.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        _time.Advance(HoverStripScheduler.Dwell);
+        await UiThread.Settle();
+
+        Assert.Empty(Builds);
+        await scheduler.DisposeAsync();
+    });
+
+    [Fact]
+    public Task BackfillStaysPausedWhileBusyAndResumesAfterButARequestedTapeBuildsMeanwhile() => UiThread.Run(async () =>
     {
         var (store, scheduler) = Create();
         var tapes = await TapesAsync(2);
-        var job = new TaskCompletionSource();
-        _jobs.Enqueue("import", JobLane.Import, async (_, _) => { await job.Task; return JobOutcome.Done("ok"); });
+        _busy = true;
 
         scheduler.Enqueue(tapes);
         await UiThread.Settle();
-        lock (_builds) Assert.Empty(_builds);
-        Assert.NotNull(await scheduler.RequestAsync(tapes[1], default));
+        scheduler.BusyChanged();
+        await UiThread.Settle();
+        Assert.Empty(Builds);
+        var requested = scheduler.RequestAsync(tapes[1], default);
+        _time.Advance(HoverStripScheduler.Dwell);
+        Assert.NotNull(await requested);
         await UiThread.Settle();
         Assert.Null(store.TryGet(tapes[0]));
 
-        job.SetResult();
+        _busy = false;
+        scheduler.BusyChanged();
         await WaitUntilAsync(() => store.TryGet(tapes[0]) is not null);
         await scheduler.DisposeAsync();
     });
 
     [Fact]
-    public Task AFailedBuildIsNotRetriedUntilTheMediaChanges() => UiThread.Run(async () =>
+    public Task OnlyAFailureOfTheUnchangedFileIsRememberedAndOnlyForAWhile() => UiThread.Run(async () =>
     {
         var (store, scheduler) = Create();
         var tape = (await TapesAsync(1))[0];
-        _frames.BeforeKeyframe = (_, _) => throw new InvalidDataException("unreadable");
 
-        Assert.Null(await scheduler.RequestAsync(tape, default));
+        _frames.BeforeKeyframe = (_, _) => throw new IOException("disk busy");
+        Assert.Null(await RequestAsync(scheduler, tape));
         var attempts = _frames.Keyframes;
-        Assert.Null(await scheduler.RequestAsync(tape, default));
-        scheduler.Enqueue([tape with { Title = "Retitled" }]);
+        _frames.BeforeKeyframe = async (path, _) =>
+        {
+            await File.AppendAllTextAsync(path, " saved meanwhile");
+            throw new InvalidDataException("file changed under ffmpeg");
+        };
+        Assert.Null(await RequestAsync(scheduler, tape));
+        Assert.True(_frames.Keyframes > attempts, "an I/O failure was remembered");
+        attempts = _frames.Keyframes;
+
+        _frames.BeforeKeyframe = (_, _) => throw new InvalidDataException("unreadable");
+        var current = tape with { Stamp = FileStamp.TryRead(PathOf(tape)) };
+        scheduler.Enqueue([current]);
+        await WaitUntilAsync(() => _frames.Keyframes > attempts);
+        await UiThread.Settle();
+        attempts = _frames.Keyframes;
+        Assert.Null(await RequestAsync(scheduler, current));
+        scheduler.Enqueue([current with { Title = "Retitled" }]);
         await UiThread.Settle();
         Assert.Equal(attempts, _frames.Keyframes);
 
         _frames.BeforeKeyframe = null;
-        var replaced = tape with { MediaIdentity = "feed" };
-        var strip = await scheduler.RequestAsync(replaced, default);
-        Assert.NotNull(strip);
-        Assert.Equal(store.TryGet(replaced), strip);
+        _time.Advance(HoverStripScheduler.FailureRetry);
+        Assert.NotNull(await RequestAsync(scheduler, current));
+        var replaced = current with { MediaIdentity = "feed" };
+        scheduler.Enqueue([replaced]);
+        await WaitUntilAsync(() => store.TryGet(replaced) is not null);
         await scheduler.DisposeAsync();
     });
 
@@ -91,7 +139,7 @@ public sealed class HoverStripSchedulerTests : IDisposable
     {
         var (_, scheduler) = Create();
         var tape = (await TapesAsync(1))[0];
-        var strip = await scheduler.RequestAsync(tape, default);
+        var strip = await RequestAsync(scheduler, tape);
         var captured = _frames.Keyframes;
 
         await File.AppendAllTextAsync(PathOf(tape), " retitled");
@@ -105,7 +153,27 @@ public sealed class HoverStripSchedulerTests : IDisposable
     });
 
     [Fact]
-    public Task DisposingCancelsTheRunningBuildAndWaitingRequestsSilently() => UiThread.Run(async () =>
+    public Task ARequestUsesTheNewestRecordAndEndsWhenItsVideoCanNoLongerHaveAStrip() => UiThread.Run(async () =>
+    {
+        var (store, scheduler) = Create();
+        var tapes = await TapesAsync(2);
+        var newer = tapes[0] with { MediaIdentity = "beef" };
+        scheduler.Enqueue([newer]);
+
+        var strip = await RequestAsync(scheduler, tapes[0]);
+        Assert.NotNull(strip);
+        Assert.Equal(store.TryGet(newer), strip);
+        Assert.Null(store.TryGet(tapes[0]));
+
+        _busy = true;
+        var orphan = scheduler.RequestAsync(tapes[1], default);
+        scheduler.Enqueue([tapes[1] with { IsMissing = true }]);
+        Assert.Null(await orphan.WaitAsync(TimeSpan.FromSeconds(5)));
+        await scheduler.DisposeAsync();
+    });
+
+    [Fact]
+    public Task DisposingCancelsTheRunningBuildAndWaitingRequestsSilentlyOnce() => UiThread.Run(async () =>
     {
         var (store, scheduler) = Create();
         var tapes = await TapesAsync(2);
@@ -115,6 +183,8 @@ public sealed class HoverStripSchedulerTests : IDisposable
         scheduler.Enqueue(tapes);
         var requested = scheduler.RequestAsync(tapes[1], default);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var disposals = new[] { scheduler.DisposeAsync().AsTask(), scheduler.DisposeAsync().AsTask() };
+        await Task.WhenAll(disposals).WaitAsync(TimeSpan.FromSeconds(5));
         await scheduler.DisposeAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => requested);
@@ -130,8 +200,11 @@ public sealed class HoverStripSchedulerTests : IDisposable
         var tape = (await TapesAsync(1))[0];
         VideoRecord[] unbuildable = [tape with { State = VideoRecordState.Unreadable }, tape with { IsMissing = true }, tape with { MediaIdentity = null }];
 
-        scheduler.Enqueue(unbuildable);
-        foreach (var record in unbuildable) Assert.Null(await scheduler.RequestAsync(record, default));
+        foreach (var record in unbuildable)
+        {
+            scheduler.Enqueue([record]);
+            Assert.Null(await scheduler.RequestAsync(record, default));
+        }
         await UiThread.Settle();
         Assert.Equal(0, _frames.Keyframes);
         await scheduler.DisposeAsync();
@@ -140,7 +213,15 @@ public sealed class HoverStripSchedulerTests : IDisposable
     private (HoverStripStore Store, HoverStripScheduler Scheduler) Create()
     {
         var store = new HoverStripStore(Paths, _frames);
-        return (store, new HoverStripScheduler(store, PathOf, _jobs));
+        return (store, new HoverStripScheduler(store, PathOf, () => _busy, _time));
+    }
+
+    /// <summary>Requests a strip and rests on the tape past the dwell.</summary>
+    private Task<string?> RequestAsync(HoverStripScheduler scheduler, VideoRecord tape)
+    {
+        var request = scheduler.RequestAsync(tape, default);
+        _time.Advance(HoverStripScheduler.Dwell);
+        return request.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private string PathOf(VideoRecord record) => Path.Combine(Paths.VideosDirectory, $"{record.Id:N}.mkv");

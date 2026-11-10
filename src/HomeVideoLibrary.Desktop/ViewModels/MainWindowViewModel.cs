@@ -71,13 +71,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         Jobs = new JobQueue(OpenJobOutputAsync, dependencies.Time);
         Jobs.Finished += JobFinished;
         Jobs.Drained += LaneDrained;
-        Jobs.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.ActiveCount)) UpdateCommands(); };
+        Jobs.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(JobQueue.ActiveCount)) return;
+            UpdateCommands();
+            _strips?.BusyChanged();
+        };
         Shelf = new ShelfViewModel(CreatePreviewSession, (record, at) => OpenVideoAsync(record, at));
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
+        Settings.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(SettingsViewModel.IsIndexing)) _strips?.BusyChanged(); };
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
         Albums.PropertyChanged += (_, args) =>
@@ -509,7 +515,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             var store = new HoverStripStore(paths, services.Files);
             _ = store.LoadAsync(model.Snapshot.Videos.Keys.ToHashSet());
-            _strips = new HoverStripScheduler(store, model.GetVideoPath, Jobs);
+            _strips = new HoverStripScheduler(store, model.GetVideoPath, () => Jobs.HasActive || Settings.IsIndexing);
         }
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);

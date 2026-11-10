@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Layout;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using HomeVideoLibrary.Core;
@@ -24,51 +25,115 @@ public sealed class TapeHoverTests : IDisposable
     [AvaloniaFact]
     public void A_tape_without_a_strip_shows_its_time_over_a_placeholder_then_crops_of_the_strip()
     {
-        var paths = new LibraryPaths(_root);
-        Directory.CreateDirectory(paths.VideosDirectory);
-        var video = Path.Combine(paths.VideosDirectory, "tape.mkv");
-        File.WriteAllText(video, "tape");
-        var id = Guid.NewGuid();
-        var record = new VideoRecord(id, LibraryPaths.VideoRelativePath(id), "Tape", Duration, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
-            with { State = VideoRecordState.Ok, MediaIdentity = "abcd", Stamp = FileStamp.TryRead(video) };
-        var scheduler = new HoverStripScheduler(new HoverStripStore(paths, _frames), _ => video, new JobQueue(_ => Task.CompletedTask));
-        var tape = new TapeViewModel(record, (_, _) => { }, shelved => new TapePreviewSession(shelved.Record, scheduler),
-            (_, _) => Task.CompletedTask, _ => { });
-        var view = new TapeView { DataContext = tape };
-        var window = new Window { Content = view, Width = 1000, Height = 300 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-        var spine = view.FindControl<VhsSpine>("Spine")!;
-        var popup = view.FindControl<Popup>("PreviewPopup")!;
-        var plate = view.FindControl<Border>("PreparingPlate")!;
-        var current = view.FindControl<Image>("CurrentPreview")!;
-        var time = view.FindControl<TextBlock>("PreviewTime")!;
-        Point At(double fraction) => spine.TranslatePoint(new Point(spine.Bounds.Width * fraction, spine.Bounds.Height / 2), window)!.Value;
+        using var shelf = new Shelf(_root, _frames);
 
-        window.MouseMove(At(0.62));
-        Dispatcher.UIThread.RunJobs();
+        shelf.HoverAt(0.62);
 
-        Assert.True(popup.IsOpen);
-        Assert.True(plate.IsVisible);
-        Assert.Null(current.Source);
-        Assert.Equal(ScrubTimeline.FormatTimestamp(HoverStripStore.SlotTime(12, Duration)), time.Text);
+        Assert.True(shelf.Popup.IsOpen);
+        Assert.True(shelf.Plate.IsVisible);
+        Assert.Null(shelf.Current.Source);
+        Assert.Equal(ScrubTimeline.FormatTimestamp(HoverStripStore.SlotTime(12, Duration)), shelf.Time.Text);
 
         _frames.Release.SetResult();
-        WaitFor(() => current.Source is CroppedBitmap);
-        Assert.False(plate.IsVisible);
+        WaitFor(() => shelf.Current.Source is CroppedBitmap);
+        Assert.False(shelf.Plate.IsVisible);
         var strip = new PixelSize(Frames.TileWidth * HoverStripStore.Columns, Frames.TileHeight * HoverStripStore.Rows);
         Assert.Equal(new PixelRect(2 * Frames.TileWidth, 2 * Frames.TileHeight, Frames.TileWidth, Frames.TileHeight),
-            ((CroppedBitmap)current.Source!).SourceRect);
+            ((CroppedBitmap)shelf.Current.Source!).SourceRect);
 
-        window.MouseMove(At(0.07));
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal(TapePreviewSession.TileOf(1, strip), ((CroppedBitmap)current.Source!).SourceRect);
-        Assert.Equal(ScrubTimeline.FormatTimestamp(HoverStripStore.SlotTime(1, Duration)), time.Text);
+        shelf.HoverAt(0.07);
+        Assert.Equal(TapePreviewSession.TileOf(1, strip), ((CroppedBitmap)shelf.Current.Source!).SourceRect);
+        Assert.Equal(ScrubTimeline.FormatTimestamp(HoverStripStore.SlotTime(1, Duration)), shelf.Time.Text);
         Assert.Equal(HoverStripStore.Slots, _frames.Captures);
+    }
 
-        window.Close();
-        var disposed = scheduler.DisposeAsync().AsTask();
-        WaitFor(() => disposed.IsCompleted);
+    [AvaloniaFact]
+    public void A_strip_that_cannot_be_built_closes_the_popup_and_its_placeholder()
+    {
+        using var shelf = new Shelf(_root, _frames);
+
+        shelf.HoverAt(0.5);
+        Assert.True(shelf.Plate.IsVisible);
+        _frames.Release.SetException(new InvalidDataException("unreadable"));
+
+        WaitFor(() => !shelf.Popup.IsOpen);
+        Assert.False(shelf.Plate.IsVisible);
+        shelf.HoverAt(0.3);
+        Assert.False(shelf.Popup.IsOpen);
+    }
+
+    [AvaloniaFact]
+    public void Coming_back_to_a_tape_whose_strip_finished_meanwhile_shows_its_frame_without_a_placeholder()
+    {
+        using var shelf = new Shelf(_root, _frames);
+        shelf.HoverAt(0.5);
+        WaitFor(() => _frames.Captures > 0);
+
+        shelf.Leave();
+        Assert.False(shelf.Popup.IsOpen);
+        _frames.Release.SetResult();
+        WaitFor(() => shelf.Store.TryGet(shelf.Record) is not null);
+        shelf.HoverAt(0.5);
+
+        Assert.False(shelf.Plate.IsVisible);
+        WaitFor(() => shelf.Current.Source is CroppedBitmap);
+        Assert.True(shelf.Popup.IsOpen);
+        Assert.False(shelf.Plate.IsVisible);
+    }
+
+    /// <summary>One tape on a window, with a scheduler building its strip from <see cref="Frames"/>.</summary>
+    private sealed class Shelf : IDisposable
+    {
+        private readonly Window _window;
+        private readonly TapeView _view;
+        private readonly HoverStripScheduler _scheduler;
+
+        public Shelf(string root, Frames frames)
+        {
+            var paths = new LibraryPaths(root);
+            Directory.CreateDirectory(paths.VideosDirectory);
+            var video = Path.Combine(paths.VideosDirectory, "tape.mkv");
+            File.WriteAllText(video, "tape");
+            var id = Guid.NewGuid();
+            Record = new VideoRecord(id, LibraryPaths.VideoRelativePath(id), "Tape", Duration, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+                with { State = VideoRecordState.Ok, MediaIdentity = "abcd", Stamp = FileStamp.TryRead(video) };
+            Store = new HoverStripStore(paths, frames);
+            _scheduler = new HoverStripScheduler(Store, _ => video, () => false);
+            var tape = new TapeViewModel(Record, (_, _) => { }, shelved => new TapePreviewSession(shelved.Record, _scheduler),
+                (_, _) => Task.CompletedTask, _ => { });
+            _view = new TapeView { DataContext = tape, Width = 750, Height = 100, HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top };
+            _window = new Window { Content = _view, Width = 1000, Height = 400 };
+            _window.Show();
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        public VideoRecord Record { get; }
+        public HoverStripStore Store { get; }
+        public Popup Popup => _view.FindControl<Popup>("PreviewPopup")!;
+        public Border Plate => _view.FindControl<Border>("PreparingPlate")!;
+        public Image Current => _view.FindControl<Image>("CurrentPreview")!;
+        public TextBlock Time => _view.FindControl<TextBlock>("PreviewTime")!;
+
+        public void HoverAt(double fraction)
+        {
+            var spine = _view.FindControl<VhsSpine>("Spine")!;
+            _window.MouseMove(spine.TranslatePoint(new Point(spine.Bounds.Width * fraction, spine.Bounds.Height / 2), _window)!.Value);
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        public void Leave()
+        {
+            _window.MouseMove(new Point(_window.Width - 5, _window.Height - 5));
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        public void Dispose()
+        {
+            _window.Close();
+            var disposed = _scheduler.DisposeAsync().AsTask();
+            WaitFor(() => disposed.IsCompleted);
+        }
     }
 
     private static void WaitFor(Func<bool> condition)

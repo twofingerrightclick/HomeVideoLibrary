@@ -85,7 +85,7 @@ public sealed partial class TapeView : UserControl
         if (session.Strip is { IsCompleted: true, Result: null })
         {
             // Preview is decoration: a tape without a strip shows no popup.
-            PreviewPopup.IsOpen = false;
+            PreviewPopup.IsOpen = false; PreparingPlate.IsVisible = false;
             return;
         }
         var frame = session.FrameOf(_bucket);
