@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using HomeVideoLibrary.Infrastructure;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
@@ -16,10 +17,9 @@ public sealed class FileTrashTests : IDisposable
 
     /// <summary>Uses a disk image mounted inside the test directory, so the file lands in that volume's own
     /// <c>.Trashes</c> and the user's Trash is never touched; the image is detached afterwards.</summary>
-    [Fact]
+    [RealTrashFact, SupportedOSPlatform("macos")]
     public async Task TheMacTrashMovesAFileIntoItsVolumesOwnTrash()
     {
-        if (!OperatingSystem.IsMacOS()) return;
         var image = Path.Combine(_root, "volume.dmg");
         var mount = Directory.CreateDirectory(Path.Combine(_root, "volume")).FullName;
         await HdiutilAsync("create", "-size", "8m", "-fs", "APFS", "-volname", "HVLTrashTest", image);
@@ -37,6 +37,17 @@ public sealed class FileTrashTests : IDisposable
             Assert.True(File.Exists(location));
         }
         finally { await HdiutilAsync("detach", "-force", mount); }
+    }
+
+    /// <summary>Runs only on macOS with <c>HVL_REAL_TRASH=1</c>: it mounts a disk image and drives Finder's Trash, which a
+    /// routine test run must not do.</summary>
+    private sealed class RealTrashFactAttribute : FactAttribute
+    {
+        public RealTrashFactAttribute()
+        {
+            if (!OperatingSystem.IsMacOS()) Skip = "The real Trash is tested on macOS only.";
+            else if (Environment.GetEnvironmentVariable("HVL_REAL_TRASH") != "1") Skip = "Set HVL_REAL_TRASH=1 to use the real Trash.";
+        }
     }
 
     private static async Task HdiutilAsync(params string[] arguments)
