@@ -256,6 +256,7 @@ public sealed class VideoPageTests
         Assert.Equal("", page.Details.Title);
         Assert.Equal("Test video", page.Details.TitleWatermark);
         Assert.Equal("Test video", page.DisplayTitle);
+        Assert.True(page.HasBackKey); // The shell does not add a second back key.
     }
 
     [Fact]

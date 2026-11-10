@@ -94,6 +94,9 @@ public sealed class VideoPageViewModel : PageViewModel
         };
     }
 
+    /// <summary>The page's toolbar has its own ◀ LIBRARY key (and Esc).</summary>
+    public override bool HasBackKey => true;
+
     public Guid Id { get; }
     public PlayerViewModel Player { get; }
     public VideoDetailsViewModel Details { get; }
