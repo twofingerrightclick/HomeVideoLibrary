@@ -362,14 +362,13 @@ public sealed class VideoPageTests
         first.Details.Tags.Draft = "half-typed";
         first.Player.Seek(TimeSpan.FromSeconds(3));
         first.Details.Chapters.AddChapterCommand.Execute(null);
-        Assert.Contains(first.Details.Chapters.Chapters, row => row.IsEditing);
+        Assert.NotNull(first.Details.Chapters.ExpandedChapter);
 
         await using var second = Create(new FakeMetadata(), new FakePlayback());
         await second.LoadAsync();
 
         Assert.Null(second.Details.Tags.Draft);
-        Assert.DoesNotContain(second.Details.Chapters.Chapters, row => row.IsEditing);
-        Assert.Null(second.Details.Chapters.SelectedChapter);
+        Assert.Null(second.Details.Chapters.ExpandedChapter);
     }
 
     [Fact]
@@ -383,19 +382,23 @@ public sealed class VideoPageTests
         await using var page = Create(metadata, playback);
         await page.LoadAsync();
         var row = page.Details.Chapters.Chapters[1];
-        row.IsEditing = true;
+        page.Details.Chapters.ExpandedChapter = row;
         row.DraftTitle = "Half a tit";
-        var changes = new List<NotifyCollectionChangedAction>();
-        page.Details.Chapters.Rows.CollectionChanged += (_, args) => changes.Add(args.Action);
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        page.Details.Chapters.Rows.CollectionChanged += (_, args) => changes.Add(args);
 
         for (var tick = 0; tick < 20; tick++)
             playback.Raise(new PlaybackUpdate(playback.Version, Milliseconds: tick * 450));
 
         Assert.Same(row, page.Details.Chapters.Chapters[1]);
-        Assert.True(row.IsEditing);
+        Assert.True(row.IsExpanded);
         Assert.Equal("Half a tit", row.DraftTitle);
         Assert.NotEmpty(changes);
-        Assert.All(changes, action => Assert.Equal(NotifyCollectionChangedAction.Move, action));
+        Assert.All(changes, change =>
+        {
+            Assert.Equal(NotifyCollectionChangedAction.Move, change.Action);
+            Assert.Same(page.Details.Chapters.Placeholder, Assert.Single(change.OldItems!));
+        });
         Assert.True(row.IsCurrent);
     }
 
@@ -438,8 +441,8 @@ public sealed class VideoPageTests
 
         Assert.Equal(["A", "", "B"], chapters.Chapters.Select(row => row.Title));
         var added = chapters.Chapters[1];
-        Assert.True(added.IsEditing);
-        Assert.Same(added, chapters.SelectedChapter);
+        Assert.True(added.IsExpanded);
+        Assert.Same(added, chapters.ExpandedChapter);
         Assert.Equal(TimeSpan.FromSeconds(4), added.Start);
         Assert.Equal(added, chapters.Rows.OfType<ChapterRowViewModel>().ElementAt(1));
         Assert.Equal(["A", "", "B"], chapters.Marks.Select(mark => mark.Title));

@@ -57,7 +57,7 @@
             <ItemsControl ItemsSource="{Binding Chapters}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vp:ChapterRowViewModel">
-                  <Button Theme="{StaticResource Page.Theme.ChapterLink}" Command="{Binding JumpCommand}" ToolTip.Tip="Play from this chapter">
+                  <Button Theme="{StaticResource Page.Theme.ChapterLink}" Command="{Binding SeekCommand}" ToolTip.Tip="Play from this chapter">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <TextBlock Classes="meta" Text="{Binding StartText}" Foreground="{DynamicResource Vcr.Brush.Amber}"/>
                       <TextBlock Classes="meta" Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>

@@ -72,6 +72,13 @@ public sealed class VideoPageViewModel : PageViewModel
         Details.Tags.ShowPopularFrom(_snapshot.Tags);
         Preview = new ScrubPreviewViewModel(record, dependencies.Path, dependencies.Previews, dependencies.Delay);
         Fullscreen = new FullscreenViewModel(() => Player.IsPlaying, dependencies.Delay);
+        BackCommand = new AsyncCommand(_ => dependencies.Back(), onError: Report);
+        ShowAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.ShowAlbum(album), onError: Report);
+        AddToAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.AddToAlbum(album), onError: Report);
+        RevealFileCommand = new RelayCommand(() => dependencies.RevealFile(dependencies.Path));
+        ToggleInspectorCommand = new RelayCommand(() => IsInspectorOpen = !IsInspectorOpen);
+        SelectTabCommand = new RelayCommand<int>(tab => SelectedTab = tab);
+        AddChapterCommand = new RelayCommand(AddChapter, () => Details.Chapters.CanAddChapter);
         Player.PropertyChanged += PlayerChanged;
         Fullscreen.PropertyChanged += (_, args) =>
         {
@@ -82,14 +89,10 @@ public sealed class VideoPageViewModel : PageViewModel
         Details.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(VideoDetailsViewModel.Title)) OnPropertyChanged(nameof(DisplayTitle)); };
         Details.Chapters.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(ChaptersPanelViewModel.CanAddChapter)) OnPropertyChanged(nameof(ScrubMarker));
+            if (args.PropertyName != nameof(ChaptersPanelViewModel.CanAddChapter)) return;
+            OnPropertyChanged(nameof(ScrubMarker));
+            AddChapterCommand.RaiseCanExecuteChanged();
         };
-        BackCommand = new AsyncCommand(_ => dependencies.Back(), onError: Report);
-        ShowAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.ShowAlbum(album), onError: Report);
-        AddToAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.AddToAlbum(album), onError: Report);
-        RevealFileCommand = new RelayCommand(() => dependencies.RevealFile(dependencies.Path));
-        ToggleInspectorCommand = new RelayCommand(() => IsInspectorOpen = !IsInspectorOpen);
-        SelectTabCommand = new RelayCommand<int>(tab => SelectedTab = tab);
     }
 
     public Guid Id { get; }
@@ -165,6 +168,11 @@ public sealed class VideoPageViewModel : PageViewModel
     /// <summary>Parameter: the tab index (<see cref="InspectorTab"/>).</summary>
     public RelayCommand<int> SelectTabCommand { get; }
 
+    /// <summary>Adds a chapter at the playhead from anywhere on the page (MARK, M): shows it in the CHAPTERS tab with its
+    /// title open for typing. In fullscreen, where the inspector is hidden, the chapter is added untitled and the status
+    /// over the video says so.</summary>
+    public RelayCommand AddChapterCommand { get; }
+
     /// <summary>Starts playback and reads the MKV together; the library's record is already shown. Completes when the
     /// read is done and editing can start. Playback is not awaited: the shell navigates one page at a time, and a slow or
     /// stuck start must not hold that up. It belongs to the page and ends with it.</summary>
@@ -198,6 +206,7 @@ public sealed class VideoPageViewModel : PageViewModel
     public override async Task<bool> CanLeaveAsync(IInteraction interaction)
     {
         await Details.SaveCommand.Completion;
+        Details.CommitOpenEdits();
         if (!Details.IsDirty) return true;
         switch (await interaction.AskLeaveAsync(DisplayTitle))
         {
@@ -232,6 +241,20 @@ public sealed class VideoPageViewModel : PageViewModel
         await Player.DisposeAsync();
         Details.PruneCaptures();
         Details.Frames.Dispose();
+    }
+
+    private void AddChapter()
+    {
+        if (Fullscreen.IsFullscreen)
+        {
+            if (Details.Chapters.AddAtPlayhead(expand: false) is { } untitled)
+                Report($"Chapter added at {Timecode.Format(untitled.Start)}. Name it in CHAPTERS after leaving fullscreen.");
+            return;
+        }
+        SelectedTab = (int)InspectorTab.Chapters;
+        IsInspectorOpen = true;
+        if (Details.Chapters.AddAtPlayhead(expand: true) is { } added)
+            Report($"Chapter added at {Timecode.Format(added.Start)}. Type its title and press Enter.");
     }
 
     private void PlayerChanged(object? sender, PropertyChangedEventArgs args)

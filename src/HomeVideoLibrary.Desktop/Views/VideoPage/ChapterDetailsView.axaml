@@ -1,25 +1,45 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:views="using:HomeVideoLibrary.Desktop.Views"
              xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChapterDetailsView"
-             x:DataType="vp:ChapterRowViewModel">
-  <Border Classes="bezel" Margin="0,6,0,0">
-    <StackPanel Spacing="8">
-      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-        <TextBlock Classes="legend" Text="{Binding StartText}" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"/>
-        <TextBlock Grid.Column="1" Classes="legend" Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-      </Grid>
-      <TextBlock Classes="legend" Text="CHAPTER DESCRIPTION"/>
-      <TextBox Classes="area" Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
-               MinHeight="64" MaxHeight="160" Watermark="What happens in this chapter?" AutomationProperties.Name="Chapter description"/>
-      <TextBlock Classes="legend" Text="CHAPTER TAGS"/>
-      <c:TagChipInput Watermark="Add tags…"
-                      Tags="{Binding Tags.Items}"
-                      Text="{Binding Tags.Draft, Mode=TwoWay}"
-                      AddTagCommand="{Binding Tags.AddTagCommand}"
-                      RemoveTagCommand="{Binding Tags.RemoveTagCommand}"
-                      SuggestionProvider="{Binding Tags.Suggest}"/>
-    </StackPanel>
-  </Border>
+             x:DataType="vp:ChapterRowViewModel"
+             IsEnabled="{Binding CanEdit}">
+  <!-- An expanded chapter row's editor. It is built when the row expands and dropped when it collapses. -->
+  <StackPanel Spacing="6" Margin="12,2,10,10">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <StackPanel Spacing="4">
+        <TextBlock Classes="legend" Text="TITLE"/>
+        <TextBox x:Name="TitleField" Text="{Binding TitleText, Mode=TwoWay}" Watermark="Untitled chapter"
+                 views:FieldBehaviors.FocusOnAttach="True" views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftTitleCommand}"
+                 AutomationProperties.Name="Chapter title">
+          <TextBox.KeyBindings>
+            <KeyBinding Gesture="Enter" Command="{Binding CommitDraftTitleCommand}"/>
+          </TextBox.KeyBindings>
+        </TextBox>
+      </StackPanel>
+      <StackPanel Grid.Column="1" Spacing="4" Width="108">
+        <TextBlock Classes="legend" Text="START"/>
+        <TextBox Text="{Binding StartField, Mode=TwoWay}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                 views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftStartCommand}" AutomationProperties.Name="Chapter start">
+          <TextBox.KeyBindings>
+            <KeyBinding Gesture="Enter" Command="{Binding CommitDraftStartCommand}"/>
+          </TextBox.KeyBindings>
+        </TextBox>
+      </StackPanel>
+    </Grid>
+    <TextBlock Classes="legend" Foreground="{DynamicResource Vcr.Brush.Red.Led}" TextWrapping="Wrap" Text="{Binding StartError}"
+               IsVisible="{Binding StartError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    <TextBlock Classes="legend" Text="DESCRIPTION" Margin="0,4,0,0"/>
+    <TextBox Classes="area" Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
+             MinHeight="56" MaxHeight="160" Watermark="What happens in this chapter?" AutomationProperties.Name="Chapter description"/>
+    <TextBlock Classes="legend" Text="TAGS" Margin="0,4,0,0"/>
+    <c:TagChipInput Watermark="Add tags…"
+                    Tags="{Binding Tags.Items}"
+                    Text="{Binding Tags.Draft, Mode=TwoWay}"
+                    AddTagCommand="{Binding Tags.AddTagCommand}"
+                    RemoveTagCommand="{Binding Tags.RemoveTagCommand}"
+                    SuggestionProvider="{Binding Tags.Suggest}"/>
+  </StackPanel>
 </UserControl>

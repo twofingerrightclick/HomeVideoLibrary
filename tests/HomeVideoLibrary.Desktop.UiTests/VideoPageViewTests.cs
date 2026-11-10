@@ -47,25 +47,70 @@ public sealed class VideoPageViewTests
     }
 
     [AvaloniaFact]
-    public void Each_selected_chapter_gets_a_fresh_details_editor()
+    public void Expanding_a_chapter_builds_a_fresh_editor_in_its_row_with_the_title_focused()
     {
-        var (_, host) = Window();
+        var (window, host) = Window();
         var page = Page(TwoChapters);
         page.SelectedTab = (int)InspectorTab.Chapters;
         Show(host, page);
         var chapters = page.Details.Chapters;
+        Assert.Empty(host.GetVisualDescendants().OfType<ChapterDetailsView>());
 
-        chapters.Chapters[0].JumpCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-        var firstEditor = DescriptionEditor(host);
-        Assert.Equal("Wrapping paper everywhere", firstEditor.Text);
-        chapters.Chapters[1].JumpCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-        var secondEditor = DescriptionEditor(host);
+        Click(window, Row(host, 0));
+        var firstEditor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
+        Assert.Same(Row(host, 0), firstEditor.FindAncestorOfType<ChapterListItem>());
+        Assert.Same(TitleEditor(host), window.FocusManager!.GetFocusedElement());
+        Assert.Equal("Wrapping paper everywhere", firstEditor.GetVisualDescendants().OfType<TextBox>().Single(box => box.Classes.Contains("area")).Text);
+        Click(window, Row(host, 1));
+        var secondEditor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
 
         Assert.NotSame(firstEditor, secondEditor);
-        Assert.Equal("", secondEditor.Text);
-        Assert.Same(chapters.Chapters[1], chapters.SelectedChapter);
+        Assert.Same(chapters.Chapters[1], chapters.ExpandedChapter);
+        window.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(chapters.ExpandedChapter);
+        Assert.Empty(host.GetVisualDescendants().OfType<ChapterDetailsView>());
+        Assert.Same(Row(host, 1), window.FocusManager!.GetFocusedElement());
+    }
+
+    [AvaloniaFact]
+    public void A_chapter_added_from_another_tab_opens_expanded_and_takes_its_typed_title()
+    {
+        var (window, host) = Window();
+        var page = Page();
+        Show(host, page);
+        page.Player.Seek(TimeSpan.FromSeconds(12));
+        PageView(host).Focus();
+
+        window.KeyPressQwerty(PhysicalKey.M, RawInputModifiers.None);
+        window.KeyReleaseQwerty(PhysicalKey.M, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal((int)InspectorTab.Chapters, page.SelectedTab);
+        Assert.Same(TitleEditor(host), window.FocusManager!.GetFocusedElement());
+        window.KeyTextInput("Snowball fight");
+        window.KeyPressQwerty(PhysicalKey.Enter, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+
+        var added = Assert.Single(page.Details.Chapters.Chapters);
+        Assert.Equal("Snowball fight", added.Title);
+        Assert.Equal("Snowball fight", Row(host, 0).Title);
+        Assert.True(page.Details.IsDirty);
+        Assert.True(page.Details.SaveCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void The_chapters_hint_shows_only_without_chapters()
+    {
+        var (_, host) = Window();
+        var page = Page();
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        Show(host, page);
+        var hint = host.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Text?.StartsWith("Play or scrub") == true);
+        Assert.True(hint.IsVisible);
+
+        page.AddChapterCommand.Execute(null);
+
+        Assert.False(hint.IsVisible);
     }
 
     [AvaloniaFact]
@@ -89,7 +134,7 @@ public sealed class VideoPageViewTests
         window.KeyReleaseQwerty(PhysicalKey.M, RawInputModifiers.None);
         var added = Assert.Single(page.Details.Chapters.Chapters);
         Assert.Equal(TimeSpan.FromSeconds(12), added.Start);
-        Assert.True(added.IsEditing);
+        Assert.True(added.IsExpanded);
     }
 
     [AvaloniaFact]
@@ -152,10 +197,22 @@ public sealed class VideoPageViewTests
         Assert.Equal(WindowState.Normal, window.WindowState);
     }
 
+    private static ChapterListItem Row(ContentControl host, int index) =>
+        host.GetVisualDescendants().OfType<ChapterListItem>().ElementAt(index);
+
+    private static TextBox TitleEditor(ContentControl host) =>
+        host.GetVisualDescendants().OfType<ChapterDetailsView>().Single().GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "TitleField");
+
+    private static void Click(Window window, Control control)
+    {
+        var point = control.TranslatePoint(new Point(control.Bounds.Width / 2, 19), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
     private static VideoPageView PageView(ContentControl host) => host.GetVisualDescendants().OfType<VideoPageView>().Single();
 
     private static TextBox TitleField(ContentControl host) => host.GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "TitleField");
 
-    private static TextBox DescriptionEditor(ContentControl host) =>
-        host.GetVisualDescendants().OfType<ChapterDetailsView>().Single().GetVisualDescendants().OfType<TextBox>().First();
 }

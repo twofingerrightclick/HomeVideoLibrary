@@ -51,7 +51,7 @@
       </StackPanel>
       <c:LegendFrame Legend="M" LegendDot="{DynamicResource Vcr.Brush.Yellow}">
         <c:RubberButton Classes="yellow" Icon="{StaticResource Vcr.Icon.Chapter}" Content="MARK"
-                        Command="{Binding Details.Chapters.AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
+                        Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
       </c:LegendFrame>
       <c:LegendFrame Legend="VOL">
         <StackPanel Orientation="Horizontal" Spacing="8">

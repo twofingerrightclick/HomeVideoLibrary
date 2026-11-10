@@ -27,7 +27,21 @@ public sealed class TagListViewModel : ViewModelBase
     public ObservableCollection<string> Items { get; }
 
     /// <summary>The uncommitted entry text.</summary>
-    public string? Draft { get => _draft; set => SetProperty(ref _draft, value); }
+    public string? Draft
+    {
+        get => _draft;
+        set { if (SetProperty(ref _draft, value)) _changed(); }
+    }
+
+    /// <summary>Whether tag text is typed but not added yet.</summary>
+    public bool HasOpenDraft => TagRules.Split(Draft).Count > 0;
+
+    /// <summary>Adds the typed tags, as leaving the entry would.</summary>
+    public void CommitDraft()
+    {
+        foreach (var tag in TagRules.Split(Draft)) Add(tag);
+        Draft = null;
+    }
 
     public TagSuggestionProvider Suggest { get; }
 

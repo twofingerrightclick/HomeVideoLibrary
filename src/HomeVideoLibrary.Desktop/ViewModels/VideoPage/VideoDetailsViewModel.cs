@@ -70,7 +70,17 @@ public sealed class VideoDetailsViewModel : ViewModelBase
         }
     }
 
-    public bool IsDirty => !Matches(_baseline);
+    /// <summary>Whether anything differs from the file, including a title or tag still being typed.</summary>
+    public bool IsDirty => HasOpenEdits || !Matches(_baseline);
+
+    private bool HasOpenEdits => Tags.HasOpenDraft || Chapters.HasOpenEdits;
+
+    /// <summary>Commits text still being typed (a chapter title, tag entry text), as Enter or leaving the field would.</summary>
+    public void CommitOpenEdits()
+    {
+        Tags.CommitDraft();
+        Chapters.CommitOpenEdits();
+    }
 
     public string? RecordedDateError => RecordedAtText.Trim() is var text && (text.Length == 0 || RecordedDate.TryParse(text, out _))
         ? null : "Use a year, year and month, or a full date: 1997, 1997-07 or 1997-07-03.";
@@ -136,6 +146,7 @@ public sealed class VideoDetailsViewModel : ViewModelBase
 
     private async Task SaveAsync(CancellationToken cancellationToken)
     {
+        CommitOpenEdits();
         var draft = BuildMetadata();
         try { await _whileSaving(() => _metadata.SaveAsync(_video, draft, cancellationToken)); }
         catch (OperationCanceledException)
