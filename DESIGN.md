@@ -85,7 +85,7 @@ right inspector that can be hidden and resized.
   LCD TIME and TOTAL counters, MARK (M), volume with mute, and a fullscreen key with an inspector latch.
 - **Inspector tabs** (Cmd/Ctrl+1 to 5): INFO (title, description, recording date, file, albums), CHAPTERS, TAGS, FRAMES
   (the chosen thumbnails stored in the MKV) and EDIT.
-- **Chapters** expand in place into their own editor (title, start, description, tags); one row is open at a time.
+- **Chapters**: clicking a row's start time seeks there; clicking the rest of the row expands it in place into its own editor (title, start, description, tags). One row is open at a time.
 - **Editing is explicit:** nothing is written until SAVE. An amber UNSAVED light shows while edits are pending.
 - **Fullscreen:** the controls come from a transparent native overlay window over the video and hide, with the
   pointer, 2.5 s after the pointer last moved while the video plays.

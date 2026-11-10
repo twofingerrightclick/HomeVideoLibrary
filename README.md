@@ -58,9 +58,9 @@ Hovering the scrub bar shows a tooltip above it with the chapter title, time and
 The inspector's tabs switch with Cmd/Ctrl+1 to 5:
 
 - **INFO**: title, description, optional recording date (`1997`, `1997-07` or `1997-07-03`), file details and the albums the video is in.
-- **CHAPTERS**: press **M** (or MARK) to add a chapter at the playhead; its row opens in place with the title focused. Click a row to expand it into an editor for title, start, description and tags (one row open at a time; Esc collapses it). Each row has keys to play from it, edit (F2) and remove (Delete).
+- **CHAPTERS**: press **M** (or MARK) to add a chapter at the playhead; its row opens in place with the title focused. Click a chapter's start time to play from it; click elsewhere on the row to expand it into an editor for title, start, description and tags (one row open at a time; Esc collapses it). Each row has keys to play from it, edit (F2) and remove (Delete).
 - **TAGS**: video tags as chips with suggestions from the rest of the library, and the chapter tags in use, each linking to its chapter.
-- **FRAMES**: **CAPTURE** (Shift+C) chooses the frame at the playhead as one of up to twenty thumbnails stored in the MKV.
+- **FRAMES**: **CAPTURE** (Shift+C) chooses the frame at the playhead as one of up to twenty thumbnails stored in the MKV; trims, splits and merges carry them along. Click one to play from it.
 - **EDIT**: trim, split and merge (below).
 
 Transport keys: Space or K play/pause; Left/Right seek 5 s (Shift: 1 s); J/L seek 10 s; Home/End; [ and ] (or Page Up/Down) previous and next chapter; Up/Down volume; 0 mute; F fullscreen. I and O set the trim in and out points.
