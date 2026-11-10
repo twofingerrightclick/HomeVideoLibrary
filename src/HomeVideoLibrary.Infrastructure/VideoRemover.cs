@@ -63,6 +63,7 @@ public sealed class VideoRemover
         RemoveAsync(videoId, path => _trash.MoveToTrash(path) switch
         {
             TrashResult.Trashed => RemovalResult.Trashed,
+            TrashResult.Deleted => RemovalResult.Deleted,
             TrashResult.Locked => RemovalResult.Locked,
             _ => RemovalResult.Unavailable,
         }, cancellationToken);

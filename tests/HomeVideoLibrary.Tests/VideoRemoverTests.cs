@@ -132,6 +132,17 @@ public sealed class VideoRemoverTests : IDisposable
     }
 
     [Fact]
+    public async Task AFileTheSystemDeletedOutrightIsReportedDeletedNotTrashed()
+    {
+        var (model, video, trash) = await OpenAsync();
+        trash.Answers.Enqueue(TrashResult.Deleted);
+
+        Assert.Equal(RemovalResult.Deleted, (await new VideoRemover(model, trash).MoveToTrashAsync(video.Id)).Result);
+
+        Assert.Null(model.Snapshot.Find(video.Id));
+    }
+
+    [Fact]
     public async Task DeletingPermanentlyRemovesTheFileAndTheVideo()
     {
         var (model, video, _) = await OpenAsync();
@@ -181,7 +192,11 @@ internal sealed class FakeTrash(string directory) : IFileTrash
         Interlocked.Increment(ref _attempts);
         FileTrash.RequireFile(path);
         if (AlwaysLocked) return TrashResult.Locked;
-        if (Answers.TryDequeue(out var answer) && answer != TrashResult.Trashed) return answer;
+        if (Answers.TryDequeue(out var answer) && answer != TrashResult.Trashed)
+        {
+            if (answer == TrashResult.Deleted) File.Delete(path);
+            return answer;
+        }
         if (ByName.TryGetValue(Path.GetFileName(path), out var named) && named != TrashResult.Trashed) return named;
         Directory.CreateDirectory(directory);
         File.Move(path, Path.Combine(directory, Path.GetFileName(path)));

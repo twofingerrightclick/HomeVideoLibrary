@@ -84,7 +84,7 @@ public sealed class TrashViewModel : ViewModelBase
         UpdateCommands();
         var remover = _createRemover(model);
         var title = videos.Count == 1 ? $"Move “{videos[0].Label}” to Trash" : $"Move {videos.Count} videos to Trash";
-        var batch = Enqueue(title, videos, remover.MoveToTrashAsync, "Moving", Moved);
+        var batch = Enqueue(title, videos, remover.MoveToTrashAsync, "Moving");
         return new TrashRequest(batch.Job, FinishAsync(model, remover, videos, batch, next));
     }
 
@@ -102,7 +102,7 @@ public sealed class TrashViewModel : ViewModelBase
             return;
         var ids = missing.Select(record => record.Id).ToArray();
         var results = await Task.Run(() => _createRemover(model).RemoveMissingAsync(ids));
-        _status(Summarize(results, count => $"Removed {Count(count)} from the library."));
+        _status(Summarize(results));
     }
 
     /// <summary>After the job: the videos whose drive has no Trash are offered for permanent deletion (a second, explicit
@@ -112,7 +112,7 @@ public sealed class TrashViewModel : ViewModelBase
         try
         {
             await trash.Job.Completion;
-            var report = new List<string> { Summarize(trash.Results, Moved) };
+            var report = new List<string> { Summarize(trash.Results) };
             var stranded = videos.Where(video => trash.Results.Any(result => result.VideoId == video.Id && result.Result == RemovalResult.Unavailable))
                 .ToArray();
             if (stranded.Length > 0 && ReferenceEquals(_model(), model) && await _interaction.ConfirmAsync(new Confirmation("DELETE PERMANENTLY",
@@ -121,9 +121,9 @@ public sealed class TrashViewModel : ViewModelBase
                     Details(model, stranded), "DELETE PERMANENTLY")))
             {
                 var deletion = Enqueue(stranded.Length == 1 ? $"Delete “{stranded[0].Label}”" : $"Delete {stranded.Length} videos", stranded,
-                    remover.DeletePermanentlyAsync, "Deleting", Deleted);
+                    remover.DeletePermanentlyAsync, "Deleting");
                 await deletion.Job.Completion;
-                report.Add(Summarize(deletion.Results, Deleted));
+                report.Add(Summarize(deletion.Results));
             }
             if (trash.Results.Any(result => result.Result == RemovalResult.Trashed)) report.Add(UndoHint);
             if (string.Join(" ", report.Where(part => part.Length > 0)) is { Length: > 0 } message) _status(message);
@@ -141,8 +141,7 @@ public sealed class TrashViewModel : ViewModelBase
 
     /// <summary>Queues one job removing <paramref name="videos"/> one by one. It fails only when nothing left the library
     /// and something went wrong; a drive without a Trash is no failure, since the follow-up asks about it.</summary>
-    private Batch Enqueue(string title, IReadOnlyList<VideoRecord> videos, Func<Guid, CancellationToken, Task<VideoRemoval>> remove, string stage,
-        Func<int, string> done)
+    private Batch Enqueue(string title, IReadOnlyList<VideoRecord> videos, Func<Guid, CancellationToken, Task<VideoRemoval>> remove, string stage)
     {
         var results = new List<VideoRemoval>();
         var job = _jobs.Enqueue(title, JobLane.Render, async (progress, cancellationToken) =>
@@ -153,7 +152,7 @@ public sealed class TrashViewModel : ViewModelBase
                 progress.Report(new JobProgress($"{stage} “{videos[index].Label}”", (double)index / videos.Count));
                 results.Add(await remove(videos[index].Id, cancellationToken));
             }
-            var summary = Summarize(results, done);
+            var summary = Summarize(results);
             if (!results.Any(result => result.IsRemoved) && results.Any(result => result.Result != RemovalResult.Unavailable))
                 throw new IOException(summary);
             return JobOutcome.Done(summary);
@@ -201,32 +200,27 @@ public sealed class TrashViewModel : ViewModelBase
         _ => $"{bytes / 1e9:0.##} GB",
     };
 
-    /// <summary>One sentence per outcome: what was removed, then each kind of failure with the videos it hit.</summary>
-    private static string Summarize(IReadOnlyCollection<VideoRemoval> results, Func<int, string> done)
-    {
-        var parts = new List<string>();
-        var removed = results.Count(result => result.IsRemoved);
-        if (removed > 0) parts.Add(done(removed));
-        foreach (var group in results.Where(result => !result.IsRemoved).GroupBy(result => result.Result))
+    /// <summary>One sentence per outcome, in the order of <see cref="RemovalResult"/>: what left the library, then each
+    /// kind of failure with the videos it hit.</summary>
+    private static string Summarize(IReadOnlyCollection<VideoRemoval> results) => string.Join(" ",
+        results.GroupBy(result => result.Result).OrderBy(group => group.Key).Select(group =>
         {
             var labels = group.Select(result => result.Label).ToArray();
             var one = labels.Length == 1;
-            parts.Add(group.Key switch
+            return group.Key switch
             {
+                RemovalResult.Trashed => $"Moved {Count(labels.Length)} to the Trash.",
+                RemovalResult.Deleted => $"Deleted {Count(labels.Length)} permanently.",
+                RemovalResult.RemovedFromLibrary => $"Removed {Count(labels.Length)} from the library.",
                 RemovalResult.Locked => $"{Names(labels)} {(one ? "is" : "are")} open in another program; try again later.",
                 RemovalResult.Unavailable => $"{Names(labels)} cannot go to the Trash on {(one ? "its" : "their")} drive.",
                 RemovalResult.Missing => $"{Names(labels)} {(one ? "has" : "have")} no file; use Remove from library.",
                 _ => string.Join(" ", group.Select(result => $"“{result.Label}”: {result.Error}")),
-            });
-        }
-        return string.Join(" ", parts);
-    }
+            };
+        }));
 
     private static string Names(IReadOnlyList<string> labels) =>
         string.Join(", ", labels.Take(3).Select(label => $"“{label}”")) + (labels.Count > 3 ? $" and {labels.Count - 3} more" : "");
-
-    private static string Moved(int count) => $"Moved {Count(count)} to the Trash.";
-    private static string Deleted(int count) => $"Deleted {Count(count)} permanently.";
 
     private static string Count(int count) => count == 1 ? "1 video" : $"{count} videos";
 }

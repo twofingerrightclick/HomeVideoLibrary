@@ -118,6 +118,41 @@ public sealed class FileTrashTests : IDisposable
         Assert.True(File.Exists(file));
     }
 
+    [Theory]
+    [InlineData(@"\\?\C:\Library\Videos\a.mkv", @"C:\")]
+    [InlineData(@"D:\Videos\a.mkv", @"D:\")]
+    [InlineData(@"\\?\Volume{0b2a7c39-1111-2222-3333-444455556666}\Videos\a.mkv", @"\\?\Volume{0b2a7c39-1111-2222-3333-444455556666}\")]
+    [InlineData(@"\\?\UNC\nas\share\Videos\a.mkv", null)]
+    [InlineData(@"\\nas\share\Videos\a.mkv", null)]
+    public void AWindowsFileIsJudgedByTheDriveItIsReallyOn(string finalPath, string? root) =>
+        Assert.Equal(root, WindowsTrashRules.VolumeRoot(finalPath));
+
+    [Theory]
+    [InlineData(false, null, 5_000_000_000L, true)]
+    [InlineData(true, null, 1L, false)]
+    [InlineData(false, 4_000_000_000L, 5_000_000_000L, false)]
+    [InlineData(false, 4_000_000_000L, 4_000_000_000L, true)]
+    public void TheRecycleBinTakesOnlyFilesItKeeps(bool nukeOnDelete, long? capacity, long length, bool accepts) =>
+        Assert.Equal(accepts, WindowsTrashRules.BinAccepts(length, new RecycleBinPolicy(nukeOnDelete, capacity)));
+
+    [Theory]
+    [InlineData(0, false, true, TrashResult.Trashed)]
+    [InlineData(0, false, false, TrashResult.Deleted)]
+    [InlineData(unchecked((int)0x800704C7), false, null, TrashResult.Unavailable)]
+    [InlineData(0x75, false, null, TrashResult.Unavailable)]
+    [InlineData(0, true, null, TrashResult.Unavailable)]
+    [InlineData(unchecked((int)0x80070020), false, null, TrashResult.Locked)]
+    [InlineData(unchecked((int)0x80270031), false, null, TrashResult.Locked)]
+    public void WindowsOutcomesMapToWhatHappenedToTheFile(int result, bool aborted, bool? recycled, TrashResult expected) =>
+        Assert.Equal(expected, WindowsTrashRules.Map(result, aborted, recycled, "a.mkv"));
+
+    [Fact]
+    public void AFileDeletedOutrightIsNeverReportedAsTrashedAndOtherFailuresThrow()
+    {
+        Assert.NotEqual(TrashResult.Trashed, WindowsTrashRules.Map(0, aborted: true, recycled: false, "a.mkv"));
+        Assert.Throws<IOException>(() => WindowsTrashRules.Map(unchecked((int)0x80070005), false, null, "a.mkv"));
+    }
+
     private static string CreateFile(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
