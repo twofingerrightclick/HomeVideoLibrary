@@ -49,12 +49,28 @@ public sealed class ShortcutRouter
         object? parameter = null, KeyModifiers extra = KeyModifiers.None) =>
         Map(key, CommandModifier | extra, command, sound, parameter, inTextEntry: true);
 
-    /// <summary>Routes unhandled key presses within <paramref name="root"/> through this router.</summary>
-    public void Attach(InputElement root)
+    /// <summary>Routes unhandled key presses within <paramref name="root"/> through this router until the returned
+    /// subscription is disposed.</summary>
+    public IDisposable Attach(InputElement root)
     {
-        root.AddHandler(InputElement.KeyDownEvent, (_, args) => Handle(args), RoutingStrategies.Bubble);
-        root.AddHandler(InputElement.KeyUpEvent, (_, args) => Released(args.Key), RoutingStrategies.Bubble, handledEventsToo: true);
-        root.LostFocus += (_, _) => _held.Clear();
+        EventHandler<KeyEventArgs> down = (_, args) => Handle(args);
+        EventHandler<KeyEventArgs> up = (_, args) => Released(args.Key);
+        EventHandler<RoutedEventArgs> lost = (_, _) => _held.Clear();
+        root.AddHandler(InputElement.KeyDownEvent, down, RoutingStrategies.Bubble);
+        root.AddHandler(InputElement.KeyUpEvent, up, RoutingStrategies.Bubble, handledEventsToo: true);
+        root.LostFocus += lost;
+        return new Subscription(() =>
+        {
+            root.RemoveHandler(InputElement.KeyDownEvent, down);
+            root.RemoveHandler(InputElement.KeyUpEvent, up);
+            root.LostFocus -= lost;
+        });
+    }
+
+    private sealed class Subscription(Action dispose) : IDisposable
+    {
+        private Action? _dispose = dispose;
+        public void Dispose() => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
 
     /// <summary>Executes the first matching shortcut whose command can run; returns whether one ran. A key already
