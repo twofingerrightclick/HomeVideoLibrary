@@ -248,6 +248,32 @@ public sealed class LibrarySelectionTests : IDisposable
     }
 
     [Fact]
+    public async Task ChoosingAnotherLibraryWaitsForJobs()
+    {
+        var (vm, _) = await OpenAsync("first");
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var job = vm.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
+
+        Assert.False(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        gate.SetResult(JobOutcome.Done("ok"));
+        await job.Completion;
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task OpeningAJobOutputThatIsGoneSaysSo()
+    {
+        var (vm, _) = await OpenAsync("first");
+        var job = vm.Jobs.Enqueue("Trim", JobLane.Render, (_, _) => Task.FromResult(new JobOutcome("Saved.", [Guid.NewGuid()])));
+        await job.Completion;
+
+        await job.OpenCommand.ExecuteAsync();
+        Assert.Equal("The video from “Trim” is no longer in the library.", vm.Status);
+        Assert.Null(vm.Page);
+    }
+
+    [Fact]
     public async Task EscapeInAnAlbumRenameKeepsTheOldName()
     {
         var (vm, _) = await OpenAsync("first");

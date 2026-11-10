@@ -69,7 +69,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
-            OpenLibraryAsync, message => Status = message);
+            OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
         Albums.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(AlbumsViewModel.Current)) UpdateCommands(); };
@@ -151,8 +151,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool CanEditClips => _model is not null && ToolsReady && IsSettled;
     private System.Windows.Input.ICommand? DeleteTarget => Albums.IsAllVideos ? Shelf.MoveToTrashCommand : Albums.RemoveSelectedCommand;
 
-    /// <summary>False while the library is being switched or the window is closing; new work waits for that to end.</summary>
-    private bool IsSettled => _opening is not { IsCompleted: false } && _closing is not { IsCompleted: false };
+    /// <summary>Why new work must wait (the library is being switched or the window is closing), or null when it need not.</summary>
+    private string? WaitReason => _closing is { IsCompleted: false } ? "The app is closing." : _opening is { IsCompleted: false } ? "A library is still opening." : null;
+    private bool IsSettled => WaitReason is null;
     /// <summary>Set when <c>.cache/recovery</c> holds snapshots from a save that could not be rolled back; they are
     /// never deleted automatically.</summary>
     public string RecoveryNotice { get => _recoveryNotice; private set { if (SetProperty(ref _recoveryNotice, value)) OnPropertyChanged(nameof(HasRecoveryNotice)); } }
@@ -194,12 +195,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
     }
 
-    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter).</summary>
+    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter). When it cannot (the
+    /// app is busy switching or closing, or the video or its file is gone) the status line says why.</summary>
     public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null)
     {
-        if (!IsSettled || _model is not { } model || _services is not { } services) return Task.CompletedTask;
-        if (model.Snapshot.Find(video.Id) is not { } record) return Task.CompletedTask;
-        if (record.IsMissing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return Task.CompletedTask; }
+        if (WaitReason is { } reason) return Refuse($"“{video.Label}” cannot open yet. {reason}");
+        if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
+            return Refuse($"“{video.Label}” is no longer in the library.");
+        if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
         return NavigateAsync(() =>
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
@@ -207,6 +210,12 @@ public sealed class MainWindowViewModel : ViewModelBase
             return new VideoEditorPage(new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed,
                 _dependencies.CreatePlayback(), record.ToMetadata()));
         });
+    }
+
+    private Task Refuse(string reason)
+    {
+        Status = reason;
+        return Task.CompletedTask;
     }
 
     public Task OpenClipEditorAsync()
@@ -544,7 +553,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task OpenJobOutputAsync(JobViewModel job)
     {
-        if (job.Outcome?.Outputs.FirstOrDefault() is { } id && _model?.Snapshot.Find(id) is { } record) await OpenVideoAsync(record);
+        if (job.Outcome?.Outputs.FirstOrDefault() is not { } id) return;
+        if (_model?.Snapshot.Find(id) is { } record) await OpenVideoAsync(record);
+        else Status = $"The video from “{job.Title}” is no longer in the library.";
     }
 
     private void JobFinished(JobViewModel job)
