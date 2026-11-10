@@ -113,7 +113,7 @@ public sealed class CatalogMigrationTests : IDisposable
     {
         var catalog = await CreateCatalogAsync(_root);
         Assert.Empty(Directory.GetFiles(catalog.Paths.CacheDirectory, "backup-*"));
-        await ExecuteAsync(catalog.Paths, $"PRAGMA user_version = {LibraryCatalog.SchemaVersion + 1}");
+        await ExecuteAsync(catalog.Paths, "PRAGMA user_version = 6");
         await Assert.ThrowsAsync<InvalidDataException>(() => new LibraryCatalog(catalog.Paths).InitializeAsync());
     }
 
