@@ -17,6 +17,7 @@ public sealed partial class VideoPageView : UserControl
     private const double SplitterKeyStep = 16;
     private readonly ShortcutRouter _shortcuts;
     private Window? _window;
+    private VideoOverlayWindow? _overlay;
     private IDisposable? _windowShortcuts, _windowState;
     // The window state before this page made the window fullscreen; null when the page did not change it.
     private WindowState? _restoreState;
@@ -26,11 +27,6 @@ public sealed partial class VideoPageView : UserControl
         InitializeComponent();
         _shortcuts = MapShortcuts(new ShortcutRouter(
             Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control));
-        Overlay.AttachedToVisualTree += (_, _) => { if (TopLevel.GetTopLevel(Overlay) is Window overlayWindow) ConnectOverlay(overlayWindow); };
-        Overlay.PointerMoved += (_, _) => ViewModel?.Fullscreen.Wake();
-        Overlay.DoubleTapped += (_, _) => ViewModel?.Fullscreen.ToggleCommand.Execute(null);
-        FullscreenControls.PointerEntered += (_, _) => ViewModel?.Fullscreen.Hold(true);
-        FullscreenControls.PointerExited += (_, _) => ViewModel?.Fullscreen.Hold(false);
         InspectorSplitter.AddHandler(PointerMovedEvent, ResizeInspector, RoutingStrategies.Bubble, handledEventsToo: true);
         InspectorSplitter.KeyDown += ResizeInspectorWithKeys;
         AddHandler(GotFocusEvent, SelectAllOnTab, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -50,6 +46,17 @@ public sealed partial class VideoPageView : UserControl
         _windowShortcuts = _shortcuts.Attach(_window);
         _windowState = _window.GetObservable(Window.WindowStateProperty).Subscribe(new WindowStateObserver(this));
         page.Fullscreen.PropertyChanged += FullscreenChanged;
+        _overlay = new VideoOverlayWindow { DataContext = page };
+        // Every layout pass (resizes, fullscreen enter and exit, the inspector opening), every move of the window and
+        // every change of screens can change where the video is on screen.
+        _window.LayoutUpdated += PlaceOverlay;
+        _window.PositionChanged += PlaceOverlay;
+        _window.Screens.Changed += PlaceOverlay;
+    }
+
+    private void PlaceOverlay(object? sender, EventArgs args)
+    {
+        if (_window is { } window) _overlay?.Place(window, Video);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -58,6 +65,14 @@ public sealed partial class VideoPageView : UserControl
         _windowShortcuts?.Dispose();
         _windowState?.Dispose();
         _windowShortcuts = _windowState = null;
+        if (_window is { } window)
+        {
+            window.LayoutUpdated -= PlaceOverlay;
+            window.PositionChanged -= PlaceOverlay;
+            window.Screens.Changed -= PlaceOverlay;
+        }
+        _overlay?.Close();
+        _overlay = null;
         if (ViewModel is { } page)
         {
             page.Fullscreen.PropertyChanged -= FullscreenChanged;
@@ -95,40 +110,6 @@ public sealed partial class VideoPageView : UserControl
             if (state == WindowState.FullScreen || view.ViewModel is not { Fullscreen.IsFullscreen: true } page) return;
             view._restoreState = null;
             page.Fullscreen.IsFullscreen = false;
-        }
-
-        public void OnCompleted() { }
-        public void OnError(Exception error) { }
-    }
-
-    /// <summary>Wires the window LibVLCSharp shows the overlay in. Over the video, keys go to that window (it may become
-    /// the key window), so the ones it does not handle are passed on to the page's window, where the page's and the
-    /// shell's shortcuts listen; and each time it is shown it is tied to the page's window so it follows it into
-    /// fullscreen.</summary>
-    private void ConnectOverlay(Window overlayWindow)
-    {
-        overlayWindow.AddHandler(KeyDownEvent, ForwardKey, RoutingStrategies.Bubble);
-        overlayWindow.AddHandler(KeyUpEvent, ForwardKey, RoutingStrategies.Bubble);
-        overlayWindow.GetObservable(IsVisibleProperty).Subscribe(new OverlayShownObserver(this, overlayWindow));
-    }
-
-    private void ForwardKey(object? sender, KeyEventArgs args)
-    {
-        if (args.Handled || _window is not { } window) return;
-        var forwarded = new KeyEventArgs
-        {
-            RoutedEvent = args.RoutedEvent, Key = args.Key, KeyModifiers = args.KeyModifiers, PhysicalKey = args.PhysicalKey,
-            KeySymbol = args.KeySymbol, KeyDeviceType = args.KeyDeviceType,
-        };
-        window.RaiseEvent(forwarded);
-        args.Handled = forwarded.Handled;
-    }
-
-    private sealed class OverlayShownObserver(VideoPageView view, Window overlayWindow) : IObserver<bool>
-    {
-        public void OnNext(bool shown)
-        {
-            if (shown && TopLevel.GetTopLevel(view) is Window owner) MacChildWindow.Attach(owner, overlayWindow);
         }
 
         public void OnCompleted() { }

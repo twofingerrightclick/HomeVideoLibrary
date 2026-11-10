@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+        xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+        x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.VideoOverlayWindow"
+        x:DataType="vp:VideoPageViewModel"
+        SystemDecorations="None"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        CanResize="False"
+        SizeToContent="Manual">
+  <!--
+    Drawn over the native video surface, which nothing in the page's own window can do. It covers the visible part of
+    the video, so pointer moves and double-clicks over the video arrive here, and shows the fullscreen controls along
+    its bottom edge.
+  -->
+  <Window.Resources>
+    <!-- Nearly clear, so the window receives pointer input over the video instead of passing it through. -->
+    <SolidColorBrush x:Key="Page.Brush.HitSurface" Color="{StaticResource Vcr.Color.Chassis.Deep}" Opacity="0.01"/>
+  </Window.Resources>
+  <Window.Styles>
+    <Style Selector="Panel#Surface.idle">
+      <Setter Property="Cursor" Value="None"/>
+    </Style>
+  </Window.Styles>
+  <Panel x:Name="Surface" Background="{StaticResource Page.Brush.HitSurface}" Classes.idle="{Binding Fullscreen.IsIdle}">
+    <Border x:Name="FullscreenControls" Classes="chassis" VerticalAlignment="Bottom" Padding="16,12,16,14"
+            IsVisible="{Binding Fullscreen.AreControlsShown}">
+      <StackPanel Spacing="6">
+        <local:TransportDeck/>
+        <TextBlock Classes="meta" Text="{Binding Status}" TextTrimming="CharacterEllipsis"
+                   IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      </StackPanel>
+    </Border>
+  </Panel>
+</Window>

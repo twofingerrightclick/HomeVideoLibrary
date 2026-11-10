@@ -31,7 +31,7 @@ public sealed class TapePreviewSession(VideoRecord video, string mkvPath, IMatro
             var chosen = video.Thumbnails;
             if (chosen.Count > 0)
             {
-                var thumbnail = chosen[Math.Min(chosen.Count - 1, bucket * chosen.Count / Buckets)];
+                var thumbnail = chosen[ThumbnailIndex(bucket, chosen.Count)];
                 return new PreviewFrame(thumbnail.Position, await thumbnails.ExtractThumbnailAsync(mkvPath, video.Id, thumbnail, token));
             }
             var position = TimeSpan.FromSeconds(Math.Max(0, video.Duration.TotalSeconds - 0.1) * bucket / (Buckets - 1));
@@ -39,6 +39,11 @@ public sealed class TapePreviewSession(VideoRecord video, string mkvPath, IMatro
         }
         finally { _gate.Release(); }
     }
+
+    /// <summary>The chosen thumbnail shown for <paramref name="bucket"/>: the buckets span every thumbnail from the first
+    /// to the last, so the right end of the tape reaches the last one.</summary>
+    public static int ThumbnailIndex(int bucket, int count) =>
+        count <= 1 ? 0 : (int)Math.Round(bucket * (count - 1) / (double)(Buckets - 1), MidpointRounding.AwayFromZero);
 
     public void Dispose()
     {

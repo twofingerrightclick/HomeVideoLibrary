@@ -12,6 +12,15 @@ public sealed class TapePreviewTests : IDisposable
     private readonly FakeMatroska _files = new();
     private LibraryPaths Paths => new(_root);
 
+    [Theory]
+    [InlineData(20, 0, 0)]
+    [InlineData(20, 9, 19)]
+    [InlineData(20, 5, 11)]
+    [InlineData(3, 9, 2)]
+    [InlineData(1, 9, 0)]
+    public void ScrubbingAcrossTheTapeReachesTheFirstAndLastChosenThumbnail(int count, int bucket, int expected) =>
+        Assert.Equal(expected, TapePreviewSession.ThumbnailIndex(bucket, count));
+
     [Fact]
     public async Task ChosenThumbnailsComeFromTheRecordRefsWithoutReadingTheMkv()
     {

@@ -24,14 +24,15 @@ internal sealed record AudioTarget(MkvTrack Reference, IReadOnlyList<string> Enc
 /// video (which would leave a hole in the picture where the next clip starts).</param>
 /// <param name="ExpectAppend">mkvmerge is expected to accept the append: codec configurations are identical too.</param>
 /// <param name="Subtitles">Subtitle tracks carried by the composite; empty when the clips' subtitle layouts differ.</param>
+/// <param name="RateNote">Says which frame rates copied clips keep, when they differ; otherwise empty.</param>
 internal sealed record MergePlan(bool TryAppend, bool ExpectAppend, VideoTarget Video, bool CanJoinRaw, IReadOnlyList<AudioTarget> Audio,
-    IReadOnlyList<MkvTrack> Subtitles, IReadOnlyList<MergeClip> Clips, string CompositeNote)
+    IReadOnlyList<MkvTrack> Subtitles, IReadOnlyList<MergeClip> Clips, string CompositeNote, string RateNote = "")
 {
     public const string LosslessNote = "Lossless; the clips are joined without re-encoding.";
 
     public int ReencodedClips => ExpectAppend ? 0 : Clips.Count(clip => clip.IsReencoded);
     public bool IsLossless => ReencodedClips == 0;
-    public string Note => ExpectAppend ? LosslessNote : CompositeNote;
+    public string Note => ((ExpectAppend ? LosslessNote : CompositeNote) + " " + RateNote).Trim();
     public ClipMergePlan ToPublic() => new(IsLossless, ReencodedClips, Note)
     {
         Clips = Clips.Select(clip =>
@@ -79,10 +80,8 @@ internal sealed record MergePlan(bool TryAppend, bool ExpectAppend, VideoTarget 
 }
 
 /// <param name="Joins">Output positions where each clip after the first starts.</param>
-/// <param name="ReencodedRanges">Output ranges whose video was re-encoded.</param>
 /// <param name="IsAppend">mkvmerge appended the files, keeping every track of the first clip's layout.</param>
-internal sealed record MergeOutput(IReadOnlyList<TimeSpan> Joins, TimeSpan Duration, IReadOnlyList<(TimeSpan Start, TimeSpan End)> ReencodedRanges,
-    bool IsAppend);
+internal sealed record MergeOutput(IReadOnlyList<TimeSpan> Joins, TimeSpan Duration, bool IsAppend);
 
 internal static class MergePlanner
 {
@@ -144,11 +143,25 @@ internal static class MergePlanner
         };
         if (clips.Any(clip => clip.Audio.Any(choice => choice.Kind == AudioSourceKind.Silence))) notes.Add("Silent clips get silence.");
         if (!subtitlesAgree) notes.Add("Subtitles are not carried over because the clips' subtitle tracks differ.");
-        return new MergePlan(tryAppend, expectAppend, video, canJoinRaw, audio, subtitles, clips, string.Join(' ', notes));
+        var copiedRates = (expectAppend ? sources : clips.Where(clip => clip.CopyVideo).Select(clip => clip.Source))
+            .Select(source => FormatRate(source.Video.AverageFrameRate)).Distinct().ToArray();
+        var copiedLevels = (expectAppend ? sources : clips.Where(clip => clip.CopyVideo).Select(clip => clip.Source))
+            .Select(source => source.Video.Level).Distinct().Count();
+        var rateNote = (copiedRates.Length > 1 ? $"Clips keep their own frame rates ({string.Join(" and ", copiedRates)} fps). " : "") +
+            (copiedLevels > 1 ? "Clips use different codec levels; a few older players may not play the higher one." : "");
+        return new MergePlan(tryAppend, expectAppend, video, canJoinRaw, audio, subtitles, clips, string.Join(' ', notes), rateNote);
     }
 
-    private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, source.Video.Width, source.Video.Height,
-        source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
+    /// <summary>What copied clips must share to join as one stream: everything that selects the decoder's configuration,
+    /// including the profile family (Baseline, Main, High; bit depth and chroma format are in the pixel format), because
+    /// strict hardware decoders configure themselves from the first sequence header. Level is a ceiling, not a different
+    /// decoder, and frame rate is per frame in Matroska, so neither is part of it; the plan notes them instead, as
+    /// LosslessCut's merge check warns about them rather than refusing.</summary>
+    private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, ProfileFamily(source.Video.Profile),
+        source.Video.Width, source.Video.Height, source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
+
+    private static string ProfileFamily(string profile) =>
+        profile.Replace("Constrained ", "", StringComparison.Ordinal).Replace(" Intra", "", StringComparison.Ordinal);
 
     private static string FormatRate(string rate) =>
         MediaProbe.TryParseRatio(rate, out var value) ? value.ToString("0.##", CultureInfo.InvariantCulture) : rate;
@@ -184,7 +197,7 @@ internal sealed class MergeEditor(MediaTools tools, MediaProcess process, MediaP
         if (starts.Length != sources.Count)
             throw new InvalidDataException($"mkvmerge reported {starts.Length} clip starts for {sources.Count} clips.");
         var timeline = await probe.ReadTimelineAsync(output, cancellationToken);
-        return new MergeOutput(starts.Skip(1).ToArray(), timeline.VideoEnd, [], IsAppend: true);
+        return new MergeOutput(starts.Skip(1).ToArray(), timeline.VideoEnd, IsAppend: true);
     }
 
     public async Task<MergeOutput> CompositeAsync(MergePlan plan, string output, string scratch, Action<double> progress,
@@ -197,7 +210,6 @@ internal sealed class MergeEditor(MediaTools tools, MediaProcess process, MediaP
         var pieces = new List<string>();
         var lengths = new List<TimeSpan>();
         var timestamps = new List<TimeSpan>();
-        var reencoded = new List<(TimeSpan, TimeSpan)>();
         var position = TimeSpan.Zero;
         foreach (var (clip, index) in plan.Clips.Select((clip, index) => (clip, index)))
         {
@@ -223,7 +235,6 @@ internal sealed class MergeEditor(MediaTools tools, MediaProcess process, MediaP
                 if (written <= 0) throw new InvalidDataException($"No video frames could be read from {Path.GetFileName(source.Path)}.");
                 timestamps.AddRange(Enumerable.Range(0, (int)written).Select(frame => position + video.FrameDuration * frame));
                 length = video.FrameDuration * written;
-                reencoded.Add((position, position + length));
             }
             pieces.Add(piece);
             lengths.Add(length);
@@ -254,7 +265,7 @@ internal sealed class MergeEditor(MediaTools tools, MediaProcess process, MediaP
         var joins = new List<TimeSpan>();
         var offset = TimeSpan.Zero;
         foreach (var length in lengths.Take(lengths.Count - 1)) joins.Add(offset += length);
-        return new MergeOutput(joins, position, reencoded, IsAppend: false);
+        return new MergeOutput(joins, position, IsAppend: false);
     }
 
     /// <summary>Each clip's foreign attachments, once per file name, added as attachment-only inputs.</summary>

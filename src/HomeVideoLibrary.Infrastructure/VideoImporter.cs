@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure.Editing;
+using Microsoft.Data.Sqlite;
 
 namespace HomeVideoLibrary.Infrastructure;
 
@@ -19,9 +20,11 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
     public const string SourceFingerprintTag = "HVL_SOURCE_FINGERPRINT";
     public const string OriginalFileNameTag = "HVL_ORIGINAL_FILENAME";
     private const double CopyWeight = 0.6, MetadataWeight = 0.02, DecodeWeight = 0.38;
-    private const double ByteCopyWeight = 0.7, ReadBackWeight = 0.25, ByteCopyMetadataWeight = 0.05;
     private const int FingerprintEdge = 1 << 20, FingerprintSample = 64 * 1024, FingerprintSamples = 8;
     private const int CopyBuffer = 1 << 20;
+
+    /// <summary>Prefix naming how a fingerprint was computed; fingerprints only match ones made the same way.</summary>
+    private const string FingerprintVersion = "v2:";
     private static readonly TimeSpan RebaseThreshold = TimeSpan.FromSeconds(0.1);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMinutes(5);
     private static readonly DateTimeOffset EarliestRecordedDate = new(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -58,6 +61,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             throw new FileNotFoundException("The selected source video no longer exists.", sourcePath);
         var report = new WeightedProgress(1, (stage, fraction) => progress?.Report(new ImportProgress(stage, fraction)));
         report.Begin("Inspecting source", 0, determinate: false);
+        var sourceStamp = Stamp(sourcePath);
         var fingerprint = await ComputeFingerprintAsync(sourcePath, cancellationToken);
         if (await catalog.FindBySourceFingerprintAsync(fingerprint, cancellationToken) is { } existing)
             return new ImportResult(ImportOutcome.AlreadyInLibrary, existing, []);
@@ -76,11 +80,11 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         {
             var copy = source.IsMatroska ? await InspectMatroskaAsync(sourcePath, cancellationToken) : null;
             var byteCopy = copy is { Reasons.Count: 0 };
-            report.Begin("Copying streams to MKV", byteCopy ? ByteCopyWeight : CopyWeight);
+            report.Begin("Copying streams to MKV", CopyWeight);
             StreamCounts expected;
             if (byteCopy)
             {
-                await CopyVerifiedAsync(sourcePath, staging, sourceLength, report, cancellationToken);
+                await CopyAsync(sourcePath, staging, report, cancellationToken);
                 expected = new StreamCounts(source.VideoCount, source.AudioCount, source.SubtitleCount);
             }
             else if (copy is not null)
@@ -91,8 +95,9 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
             }
             else expected = await ConvertAsync(sourcePath, staging, source, report, warnings, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (Stamp(sourcePath) != sourceStamp) throw new IOException(SourceChanged);
 
-            report.Begin("Writing title and recorded date into the MKV", byteCopy ? ByteCopyMetadataWeight : MetadataWeight, determinate: false);
+            report.Begin("Writing title and recorded date into the MKV", MetadataWeight, determinate: false);
             var metadata = await WriteMetadataAsync(staging, sourcePath, fingerprint, recordedAt, cancellationToken);
 
             report.Begin("Verifying MKV", 0, determinate: false);
@@ -106,16 +111,12 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
                     $"The converted video has {result.VideoCount} video, {result.AudioCount} audio and {result.SubtitleCount} subtitle tracks; " +
                     $"{expected.Video}, {expected.Audio} and {expected.Subtitles} were expected. The original was preserved.");
 
-            // A verified byte copy is exactly the original, so decoding it would only re-check the source; streams that were
-            // rewritten are decoded in full.
-            if (!byteCopy)
-            {
-                report.Begin("Checking complete video and audio playback", DecodeWeight);
-                var decoded = await new MediaValidator(tools, _process).ValidateDecodedAsync(staging, source.Duration, tolerance,
-                    new FractionProgress(report), cancellationToken);
-                if (decoded.ErrorCount > 0)
-                    warnings.Add($"{decoded.ErrorCount} damaged frame(s) or audio packet(s) were found; the video was imported as it is.");
-            }
+            // Every import is decoded in full: a byte copy can be exact and still hold a damaged or truncated recording.
+            report.Begin("Checking complete video and audio playback", DecodeWeight);
+            var decoded = await new MediaValidator(tools, _process).ValidateDecodedAsync(staging, source.Duration, tolerance,
+                new FractionProgress(report), cancellationToken);
+            if (decoded.ErrorCount > 0)
+                warnings.Add($"{decoded.ErrorCount} damaged frame(s) or audio packet(s) were found; the video was imported as it is.");
             cancellationToken.ThrowIfCancellationRequested();
 
             var video = new LibraryVideo(id, relativePath, Path.GetFileNameWithoutExtension(sourcePath), result.Duration,
@@ -125,7 +126,18 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
                 Description = metadata.Description,
                 SourceFingerprint = fingerprint,
             };
-            await LibraryPublisher.PublishAsync(catalog, [(video, staging)], cancellationToken);
+            try
+            {
+                if ((await LibraryPublisher.PublishAsync(catalog, [(video, staging)], cancellationToken)).Unfinished.Count > 0)
+                    warnings.Add(PublishResult.UnfinishedNotice);
+            }
+            catch (SqliteException exception) when (LibraryCatalog.IsDuplicateSourceFingerprint(exception))
+            {
+                // Another import of the same source committed first; the unique index made that the deciding insert.
+                if (await catalog.FindBySourceFingerprintAsync(fingerprint, CancellationToken.None) is { } concurrent)
+                    return new ImportResult(ImportOutcome.AlreadyInLibrary, concurrent, []);
+                throw;
+            }
             report.Complete("Imported");
             return new ImportResult(ImportOutcome.Imported, video, warnings);
         }
@@ -157,7 +169,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         for (var sample = 1; sample <= FingerprintSamples; sample++)
             await AppendAsync(stream.Length * sample / (FingerprintSamples + 1), FingerprintSample);
         await AppendAsync(stream.Length - FingerprintEdge, FingerprintEdge);
-        return Convert.ToHexStringLower(hash.GetHashAndReset());
+        return FingerprintVersion + Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     /// <summary>Recorded dates before 1980 or more than a day in the future are camera defaults or corruption.</summary>
@@ -204,47 +216,34 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         return new MatroskaInspection(mkv, timeline, reasons);
     }
 
-    /// <summary>Copies the bytes while hashing them, reads the copy back to compare, and checks that the last packets
-    /// reach the duration the header claims, which catches files cut off during recording or transfer.</summary>
-    private async Task CopyVerifiedAsync(string sourcePath, string staging, long length, WeightedProgress report, CancellationToken cancellationToken)
+    /// <summary>Copies the bytes; the full decode afterwards checks the content.</summary>
+    private static async Task CopyAsync(string sourcePath, string staging, WeightedProgress report, CancellationToken cancellationToken)
     {
-        var buffer = new byte[CopyBuffer];
-        byte[] expected;
-        using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+        var length = new FileInfo(sourcePath).Length;
+        await using (var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBuffer, useAsync: true))
+        await using (var output = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true))
         {
-            await using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBuffer, useAsync: true);
-            await using var output = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true);
+            var buffer = new byte[CopyBuffer];
             long copied = 0;
             int read;
             while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
             {
-                hash.AppendData(buffer, 0, read);
                 await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                 copied += read;
                 report.Report(length > 0 ? copied / (double)length : 1);
             }
-            expected = hash.GetHashAndReset();
+            if (copied != length) throw new IOException(SourceChanged);
         }
-        report.Begin("Verifying the copy", ReadBackWeight);
-        using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-        {
-            await using var input = new FileStream(staging, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBuffer, useAsync: true);
-            long verified = 0;
-            int read;
-            while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
-            {
-                hash.AppendData(buffer, 0, read);
-                verified += read;
-                report.Report(length > 0 ? verified / (double)length : 1);
-            }
-            if (!hash.GetHashAndReset().AsSpan().SequenceEqual(expected))
-                throw new IOException("The copied video does not match the original. The original was preserved.");
-        }
-        var timeline = await MediaProbe.ReadTimelineAsync(_process, tools, staging, cancellationToken);
-        var duration = timeline.ContainerEnd - timeline.StartTime;
-        if (timeline.ContainerEnd - timeline.PacketEnd > DecodeTolerance.ForImport(isMpegStream: false).For(duration))
-            throw new InvalidDataException(
-                $"The MKV stops at {Timecode.Format(timeline.PacketEnd - timeline.StartTime)} but says it is {Timecode.Format(duration)} long; it is truncated. The original was preserved.");
+    }
+
+    private const string SourceChanged = "The video changed while it was being imported. Import it again once it is complete.";
+
+    /// <summary>Size and write time, compared before and after the source is read: a recorder still writing the file
+    /// would otherwise leave a copy, remux or conversion of a partial recording.</summary>
+    private static (long Length, DateTime Modified) Stamp(string path)
+    {
+        var file = new FileInfo(path);
+        return (file.Length, file.LastWriteTimeUtc);
     }
 
     /// <summary>Rewrites a Matroska source with mkvmerge, keeping every track, chapter, tag and attachment, and moving
@@ -413,6 +412,10 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         if (!streams.Any(stream => stream.Type == "video" && !stream.AttachedPicture))
             throw new InvalidDataException("Import requires a video stream.");
         var seconds = Seconds(Text(format, "duration")) ?? streams.Max(stream => stream.Duration);
+        // Matroska header durations are missing in piped or crashed recordings and differ between muxers for files that
+        // start late; the timeline reconciles them with the packets.
+        if (formatNames.Contains("matroska"))
+            seconds = (await MediaProbe.ReadTimelineAsync(_process, tools, path, cancellationToken)).ClaimedLength.TotalSeconds;
         if (seconds is not { } duration || duration <= 0 || duration > TimeSpan.MaxValue.TotalSeconds / 2)
             throw new InvalidDataException("Import requires a finite positive duration.");
         DateTimeOffset? recordedAt = format.ValueKind == JsonValueKind.Object && format.TryGetProperty("tags", out var tags) &&

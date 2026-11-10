@@ -121,22 +121,193 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
-    public async Task RecoveryFinishesPublicationsCommittedBeforeACrashAndDiscardsTheRest()
+    public async Task RecoveryFinishesCommittedPublicationsEvenWithUnreadableRowsAndQuarantinesTheRest()
     {
         var catalog = await CreateCatalogAsync();
         var committed = new LibraryVideo(Guid.NewGuid(), "", "committed", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
         committed = committed with { RelativePath = LibraryPaths.VideoRelativePath(committed.Id) };
         await catalog.AddAsync(committed);
-        var pendingCommitted = Path.Combine(catalog.Paths.VideosDirectory, $".{committed.Id:N}.pending.mkv");
-        var pendingOrphan = Path.Combine(catalog.Paths.VideosDirectory, $".{Guid.NewGuid():N}.pending.mkv");
-        await File.WriteAllTextAsync(pendingCommitted, "video");
-        await File.WriteAllTextAsync(pendingOrphan, "video");
+        await using (var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"UPDATE videos SET imported_at = 'not a date' WHERE id = '{committed.Id}'";
+            await command.ExecuteNonQueryAsync();
+        }
+        var orphan = Guid.NewGuid();
+        await File.WriteAllTextAsync(Path.Combine(catalog.Paths.VideosDirectory, $".{committed.Id:N}.pending.mkv"), "committed video");
+        await File.WriteAllTextAsync(Path.Combine(catalog.Paths.VideosDirectory, $".{orphan:N}.pending.mkv"), "orphaned video");
         using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
 
-        await LibraryPublisher.RecoverAsync(catalog, owner);
+        var first = await LibraryPublisher.RecoverAsync(catalog, owner);
+        var again = await LibraryPublisher.RecoverAsync(catalog, owner);
 
-        Assert.Equal("video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
+        Assert.Equal((1, 1, 0), (first.Finished, first.Quarantined, first.Stuck));
+        Assert.Equal(PublishRecovery.None, again);
+        Assert.Equal("committed video", await File.ReadAllTextAsync(catalog.GetVideoPath(committed.RelativePath)));
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
+        Assert.Equal("orphaned video", await File.ReadAllTextAsync(Assert.Single(Directory.GetFiles(LibraryPublisher.OrphanedDirectory(catalog.Paths),
+            $"{orphan:N}-*.mkv"))));
+    }
+
+    [Fact]
+    public async Task RecoveryReportsStuckPendingFilesAndRegistrationLessVideosButTouchesNeither()
+    {
+        var catalog = await CreateCatalogAsync();
+        var blocked = new LibraryVideo(Guid.NewGuid(), "", "blocked", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        blocked = blocked with { RelativePath = LibraryPaths.VideoRelativePath(blocked.Id) };
+        await catalog.AddAsync(blocked);
+        await File.WriteAllTextAsync(catalog.GetFinalVideoPath(blocked.RelativePath), "in the way");
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(blocked.Id), "pending");
+        using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
+        await LibraryPublisher.RecoverAsync(catalog, owner);
+        var unregistered = Path.Combine(catalog.Paths.VideosDirectory, $"{Guid.NewGuid():N}.mkv");
+        await File.WriteAllTextAsync(unregistered, "lost commit");
+
+        var started = DateTime.UtcNow;
+        var recovery = await LibraryPublisher.RecoverAsync(catalog, owner);
+
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(1));
+        Assert.Equal(1, recovery.Stuck);
+        Assert.Equal([Path.GetFileName(unregistered)], recovery.Unregistered);
+        Assert.Equal("pending", await File.ReadAllTextAsync(catalog.Paths.PendingVideoPath(blocked.Id)));
+        Assert.Equal("lost commit", await File.ReadAllTextAsync(unregistered));
+    }
+
+    [Fact]
+    public async Task ACommittedVideoWhoseRenameIsRefusedIsPublishedAndReadableUntilRecoveryFinishesIt()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var staged = Path.Combine(catalog.Paths.ScratchDirectory, "staged.mkv");
+        Directory.CreateDirectory(catalog.Paths.ScratchDirectory);
+        File.Copy(source, staged);
+        var id = Guid.NewGuid();
+        var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), "blocked", TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var final = catalog.GetVideoPath(video.RelativePath);
+        // A directory of the same name refuses the rename, as a share violation would.
+        Directory.CreateDirectory(final);
+
+        var result = await LibraryPublisher.PublishAsync(catalog, [(video, staged)], CancellationToken.None);
+
+        Assert.Equal([id], result.Unfinished);
+        Assert.True(await catalog.ContainsVideoAsync(id));
+        Assert.Equal(catalog.Paths.PendingVideoPath(id), catalog.GetVideoPath(video.RelativePath));
+        Directory.Delete(final);
+        Assert.Equal(1, await LibraryPublisher.FinishCommittedAsync(catalog));
+        Assert.Equal(final, catalog.GetVideoPath(video.RelativePath));
+        Assert.True(File.Exists(final));
+    }
+
+    [Fact]
+    public async Task RecoveryCarriesOnPastARowWithAnInvalidPathAndAdoptsCommittedVideosLeftInScratch()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo Row(string name) => new LibraryVideo(Guid.NewGuid(), "", name, TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            is var video ? video with { RelativePath = LibraryPaths.VideoRelativePath(video.Id) } : null!;
+        var bad = Row("bad");
+        var good = Row("good");
+        var stranded = Row("stranded");
+        await catalog.AddBatchAsync([bad, good, stranded]);
+        await using (var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"UPDATE videos SET relative_path = '../../etc/x' WHERE id = '{bad.Id}'";
+            await command.ExecuteNonQueryAsync();
+        }
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(bad.Id), "bad");
+        await File.WriteAllTextAsync(catalog.Paths.PendingVideoPath(good.Id), "good");
+        // A power loss undid the move out of scratch but kept the commit.
+        var edit = Path.Combine(catalog.Paths.ScratchDirectory, "edit-0123");
+        Directory.CreateDirectory(edit);
+        await File.WriteAllTextAsync(Path.Combine(edit, LibraryPublisher.StagedName(stranded.Id)), "stranded");
+        using var owner = LibraryLock.TryAcquire(catalog.Paths)!;
+
+        var recovery = await LibraryPublisher.RecoverAsync(catalog, owner);
+
+        Assert.Equal((2, 1), (recovery.Finished, recovery.Stuck));
+        Assert.Equal("good", await File.ReadAllTextAsync(catalog.GetFinalVideoPath(good.RelativePath)));
+        Assert.Equal("stranded", await File.ReadAllTextAsync(catalog.GetFinalVideoPath(stranded.RelativePath)));
+        Assert.True(File.Exists(catalog.Paths.PendingVideoPath(bad.Id)));
+    }
+
+    [Fact]
+    public async Task FinishingDuringOtherPublicationsLeavesUncommittedPendingFilesAlone()
+    {
+        var catalog = await CreateCatalogAsync();
+        var inFlight = catalog.Paths.PendingVideoPath(Guid.NewGuid());
+        await File.WriteAllTextAsync(inFlight, "being published");
+
+        Assert.Equal(0, await LibraryPublisher.FinishCommittedAsync(catalog));
+
+        Assert.True(File.Exists(inFlight));
+    }
+
+    [Fact]
+    public async Task ASecondRowWithTheSameSourceFingerprintIsRefusedByTheCatalog()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo Video() => new LibraryVideo(Guid.NewGuid(), "", "same source", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            is var video ? video with { RelativePath = LibraryPaths.VideoRelativePath(video.Id), SourceFingerprint = "v2:abc" } : null!;
+        await catalog.AddAsync(Video());
+
+        var failure = await Assert.ThrowsAsync<SqliteException>(() => catalog.AddAsync(Video()));
+
+        Assert.True(LibraryCatalog.IsDuplicateSourceFingerprint(failure));
+    }
+
+    [Fact]
+    public async Task DamagedMatroskaIsImportedWithAWarningAndOneWithoutDurationIsRewritten()
+    {
+        Directory.CreateDirectory(_root);
+        var damaged = Path.Combine(_root, "damaged.mkv");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "6", "-c:v", "mpeg2video", "-g", "12", damaged]);
+        var bytes = await File.ReadAllBytesAsync(damaged);
+        new Random(4).NextBytes(bytes.AsSpan(bytes.Length / 2, 4000));
+        await File.WriteAllBytesAsync(damaged, bytes);
+        var live = Path.Combine(_root, "live.mkv");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-live", "1", live]);
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+
+        var damagedResult = await importer.ImportAsync(damaged);
+        var liveResult = await importer.ImportAsync(live);
+
+        Assert.Contains(damagedResult.Warnings, warning => warning.Contains("damaged", StringComparison.Ordinal));
+        Assert.Contains(liveResult.Warnings, warning => warning.Contains("no duration", StringComparison.Ordinal));
+        Assert.InRange(liveResult.Video.Duration.TotalSeconds, 2.9, 3.1);
+    }
+
+    [Fact]
+    public async Task ASourceThatChangesDuringAConversionIsRefused()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var progress = new InlineProgress(update =>
+        {
+            if (update.Stage == "Copying streams to MKV") File.SetLastWriteTimeUtc(source, DateTime.UtcNow.AddMinutes(1));
+        });
+
+        var error = await Assert.ThrowsAsync<IOException>(() => new VideoImporter(catalog, _tools).ImportAsync(source, progress));
+
+        Assert.Contains("changed while it was being imported", error.Message, StringComparison.Ordinal);
+        Assert.Empty(await catalog.ListAsync());
+        AssertNoStaging(catalog);
+    }
+
+    [Fact]
+    public async Task VariableFrameRateFootageImportsWithoutDamageWarnings()
+    {
+        Directory.CreateDirectory(_root);
+        var source = Path.Combine(_root, "phone.mp4");
+        await RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=30", "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", "6",
+            "-vf", "select='not(between(n,60,70))'", "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", source]);
+        var catalog = await CreateCatalogAsync();
+
+        var result = await new VideoImporter(catalog, _tools).ImportAsync(source);
+
+        Assert.Empty(result.Warnings);
     }
 
     [Fact]

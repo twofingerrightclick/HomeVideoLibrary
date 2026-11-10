@@ -64,4 +64,33 @@ public sealed class VhsSpineBehaviorTests
         Assert.Equal(VhsSpine.AspectRatio, spine.Bounds.Width / spine.Bounds.Height, precision: 2);
         Assert.True(spine.Bounds.Width <= width + 0.5 && spine.Bounds.Height <= height + 0.5);
     }
+
+    [AvaloniaFact]
+    public void With_the_open_transition_a_click_still_opens_the_tape_exactly_once()
+    {
+        var open = new RecordingCommand();
+        var (window, spine) = Host(new VhsSpine { Command = open, OpenTransition = true, Width = 600 });
+
+        window.MouseDown(At(spine, 0.5), MouseButton.Left);
+        window.MouseUp(At(spine, 0.5), MouseButton.Left);
+        for (var frame = 0; frame < 30; frame++)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick(16);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.Single(open.Calls);
+    }
+
+    [AvaloniaFact]
+    public void Without_the_open_transition_a_click_opens_at_once()
+    {
+        var open = new RecordingCommand();
+        var (window, spine) = Host(new VhsSpine { Command = open, Width = 600 });
+
+        window.MouseDown(At(spine, 0.5), MouseButton.Left);
+        window.MouseUp(At(spine, 0.5), MouseButton.Left);
+
+        Assert.Single(open.Calls);
+    }
 }

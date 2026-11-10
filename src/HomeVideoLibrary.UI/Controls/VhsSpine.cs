@@ -1,8 +1,13 @@
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Transformation;
+using Avalonia.Styling;
 
 namespace HomeVideoLibrary.UI.Controls;
 
@@ -25,7 +30,7 @@ public enum SpineSticker
 /// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. The spine keeps a
 /// real VHS spine's proportions (187 x 25 mm) at any size: it takes the available width and the height
 /// that ratio implies (or the reverse when only a height is given), and its face scales uniformly. Hover
-/// lights an LED on the shell end; the tape never moves. As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
+/// brings the tape slightly forward (scale and shadow only; it never shifts). As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
 /// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
 /// left to the host list for selection; selection itself is the host's and is only displayed via
 /// <see cref="IsSelected"/>.
@@ -62,6 +67,25 @@ public class VhsSpine : Button
     /// <summary>Optional control placed on the shell's left end in place of the record tab (e.g. a selection check box).</summary>
     public static readonly StyledProperty<object?> LeadingContentProperty =
         AvaloniaProperty.Register<VhsSpine, object?>(nameof(LeadingContent));
+
+    /// <summary>When set, a click first plays the tape coming out of the shelf toward the viewer (a short scale-up and
+    /// fade), then opens it. Hosts turn it off for reduced motion.</summary>
+    public static readonly StyledProperty<bool> OpenTransitionProperty =
+        AvaloniaProperty.Register<VhsSpine, bool>(nameof(OpenTransition));
+
+    private static readonly Animation ComeOut = new()
+    {
+        Duration = TimeSpan.FromMilliseconds(180),
+        Easing = new CubicEaseIn(),
+        Children =
+        {
+            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 1d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.025)")) } },
+            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 0d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.12)")) } },
+        },
+    };
+
+    private Border? _shell;
+    private Task _opening = Task.CompletedTask;
 
     public static readonly StyledProperty<bool> IsSelectedProperty =
         AvaloniaProperty.Register<VhsSpine, bool>(nameof(IsSelected));
@@ -105,6 +129,12 @@ public class VhsSpine : Button
     {
         get => GetValue(LeadingContentProperty);
         set => SetValue(LeadingContentProperty, value);
+    }
+
+    public bool OpenTransition
+    {
+        get => GetValue(OpenTransitionProperty);
+        set => SetValue(OpenTransitionProperty, value);
     }
 
     public bool IsSelected
@@ -152,6 +182,39 @@ public class VhsSpine : Button
         else if (change.Property == LeadingContentProperty)
         {
             PseudoClasses.Set(":has-leading", change.NewValue is not null);
+        }
+    }
+
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
+    {
+        base.OnApplyTemplate(e);
+        _shell = e.NameScope.Find<Border>("PART_Shell");
+    }
+
+    // The open waits for the short come-out animation; a click during it is part of the same open.
+    protected override void OnClick()
+    {
+        if (!OpenTransition || _shell is null)
+        {
+            base.OnClick();
+            return;
+        }
+
+        if (_opening.IsCompleted)
+        {
+            _opening = ComeOutThenOpenAsync(_shell);
+        }
+    }
+
+    private async Task ComeOutThenOpenAsync(Border shell)
+    {
+        try
+        {
+            await ComeOut.RunAsync(shell);
+        }
+        finally
+        {
+            base.OnClick();
         }
     }
 

@@ -372,6 +372,42 @@ public sealed class ClipEditingTests : IDisposable
     }
 
     [Fact]
+    public async Task ClipsOfOneSizeAtDifferentFrameRatesAreJoinedWithTheirOwnFrameTimes()
+    {
+        var catalog = await CreateCatalogAsync();
+        LibraryVideo[] clips = [await CreateSimpleAsync(catalog, "pal", "160x120", 25, 4, audio: true),
+            await CreateSimpleAsync(catalog, "ntsc", "160x120", 30, 2, audio: true)];
+
+        var editing = new ClipEditingService(catalog, _tools);
+
+        var plan = await editing.PlanMergeAsync(clips);
+        var output = Assert.Single(await editing.MergeAsync(clips, "Mixed rates"));
+
+        Assert.Contains("Clips keep their own frame rates (25 and 30 fps).", plan.Note, StringComparison.Ordinal);
+
+        var path = catalog.GetVideoPath(output.RelativePath);
+        Assert.Equal((await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[0].RelativePath)))
+            .Concat(await DecodedFrameHashesAsync(catalog.GetVideoPath(clips[1].RelativePath))), await DecodedFrameHashesAsync(path));
+        var times = await VideoTimesAsync(path);
+        Assert.InRange(times[99] - times[98], 0.039, 0.041);
+        Assert.InRange(times[101] - times[100], 0.033, 0.034);
+    }
+
+    [Fact]
+    public async Task ClipsWithDifferentH264ProfilesAreNotCopiedIntoOneStream()
+    {
+        var catalog = await CreateCatalogAsync();
+        Task<LibraryVideo> ProfileAsync(string profile, int seconds) => AddVideoAsync(catalog, profile, TimeSpan.FromSeconds(seconds),
+            ["-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", seconds.ToString(CultureInfo.InvariantCulture),
+                "-c:v", "libx264", "-profile:v", profile, "-pix_fmt", "yuv420p"]);
+        LibraryVideo[] clips = [await ProfileAsync("high", 3), await ProfileAsync("baseline", 2)];
+
+        var plan = await new ClipEditingService(catalog, _tools).PlanMergeAsync(clips);
+
+        Assert.Equal(1, plan.ReencodedClips);
+    }
+
+    [Fact]
     public async Task InvalidBoundariesPublishNothing()
     {
         var catalog = await CreateCatalogAsync();
@@ -527,7 +563,7 @@ public sealed class ClipEditingTests : IDisposable
 
     private async Task<IReadOnlyList<string>> DecodedFrameHashesAsync(string path)
     {
-        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-map", "0:v:0", "-f", "framemd5", "-"], TimeSpan.FromSeconds(30));
+        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "framemd5", "-"], TimeSpan.FromSeconds(30));
         return result.StandardOutput.Split('\n').Where(line => line.Length > 0 && !line.StartsWith('#')).Select(line => line.Split(',')[^1].Trim()).ToArray();
     }
 

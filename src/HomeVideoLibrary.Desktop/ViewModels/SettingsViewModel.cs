@@ -16,6 +16,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly Func<bool> _toolsReady;
     private readonly Func<string, Task> _openLibrary;
     private readonly Func<bool> _canOpenLibrary;
+    private readonly Func<bool> _nothingHoldsAVideo;
     private readonly Action<string> _status;
     private CancellationTokenSource? _indexCancellation;
     private Task? _indexRun;
@@ -27,11 +28,13 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <param name="openLibrary">Opens the library at a chosen folder.</param>
     /// <param name="canOpenLibrary">Whether another library may be opened now (no switch, close or background job is
     /// running).</param>
+    /// <param name="nothingHoldsAVideo">Whether no page or job holds a video's path, so a refresh may finish renaming
+    /// videos whose publication was committed but not completed.</param>
     public SettingsViewModel(LibrarySettings settings, IClickSoundService sounds, IInteraction interaction, Func<LibraryModel?> model,
-        Func<bool> toolsReady, Func<string, Task> openLibrary, Func<bool> canOpenLibrary, Action<string> status)
+        Func<bool> toolsReady, Func<string, Task> openLibrary, Func<bool> canOpenLibrary, Func<bool> nothingHoldsAVideo, Action<string> status)
     {
         _settings = settings; _sounds = sounds; _interaction = interaction; _model = model; _toolsReady = toolsReady;
-        _openLibrary = openLibrary; _canOpenLibrary = canOpenLibrary; _status = status;
+        _openLibrary = openLibrary; _canOpenLibrary = canOpenLibrary; _nothingHoldsAVideo = nothingHoldsAVideo; _status = status;
         ChooseFolderCommand = new AsyncCommand(_ => ChooseFolderAsync(), () => _canOpenLibrary(), context: "Choose library");
         RefreshCommand = new AsyncCommand(_ => RefreshIndexAsync(), () => CanRefresh, context: "Refresh library");
         RebuildCommand = new AsyncCommand(_ => RefreshIndexAsync(force: true), () => CanRefresh, context: "Rebuild library");
@@ -109,6 +112,12 @@ public sealed class SettingsViewModel : ViewModelBase
         if (!_toolsReady()) { IndexStatus = "Library refresh needs the missing media tools."; return; }
         using var cancellation = new CancellationTokenSource(); _indexCancellation = cancellation;
         IsIndexing = true;
+        // Renaming a pending video changes its path, so it waits until no page or job holds one.
+        if (_nothingHoldsAVideo())
+        {
+            try { await Task.Run(() => LibraryPublisher.FinishCommittedAsync(model.Catalog)); }
+            catch (Exception exception) { Trace.TraceWarning($"Could not finish pending publications: {exception}"); }
+        }
         var progress = new Progress<IndexProgress>(update =>
         {
             if (model == _model()) IndexStatus = $"Reading {update.Completed}/{update.Total} · {update.VideoName}";

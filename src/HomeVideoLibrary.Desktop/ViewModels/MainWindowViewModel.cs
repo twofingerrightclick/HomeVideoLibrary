@@ -75,7 +75,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
-            OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, message => Status = message);
+            OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
         Albums.PropertyChanged += (_, args) =>
@@ -448,6 +448,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         LibraryLoadResult load;
         IReadOnlyList<string> unavailable;
         int recoverySnapshots;
+        var publications = PublishRecovery.None;
         try
         {
             owner = await Task.Run(() => LibraryLock.TryAcquire(paths));
@@ -459,10 +460,15 @@ public sealed class MainWindowViewModel : ViewModelBase
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
             var tools = FindUnavailableToolsAsync();
-            try { await LibraryPublisher.RecoverAsync(catalog, owner); }
+            // Recovery may move committed videos out of scratch, so scratch is swept only after it succeeded.
+            var recovered = false;
+            try { publications = await LibraryPublisher.RecoverAsync(catalog, owner); recovered = true; }
             catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
-            try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
-            catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
+            if (recovered)
+            {
+                try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
+                catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
+            }
             services = _dependencies.CreateServices(catalog);
             model = new LibraryModel(catalog, services.Files);
             load = await Task.Run(() => model.LoadAsync());
@@ -499,6 +505,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         RecoveryNotice = recoverySnapshots == 0 ? "" :
             $"{recoverySnapshots} metadata recovery snapshot(s) are in {MatroskaMetadataService.RecoveryDirectory(paths)}. " +
             "A save could not restore its video's previous metadata; the README explains how to restore it by hand.";
+        if (publications.Quarantined > 0)
+            RecoveryNotice += $" {publications.Quarantined} video(s) from an interrupted import or edit are in " +
+                $"{LibraryPublisher.OrphanedDirectory(paths)}; import them again to add them to the library.";
+        if (publications.Stuck > 0)
+            RecoveryNotice += $" {publications.Stuck} video(s) in {paths.VideosDirectory} still have temporary names; see the log.";
+        if (publications.Unregistered.Count > 0)
+            RecoveryNotice += $" {publications.Unregistered.Count} video file(s) in {paths.VideosDirectory} are not in the library " +
+                $"({string.Join(", ", publications.Unregistered.Take(3))}{(publications.Unregistered.Count > 3 ? ", …" : "")}); import them to add them.";
+        RecoveryNotice = RecoveryNotice.Trim();
         Settings.LibraryRoot = paths.RootDirectory;
         _shown = LibrarySnapshot.Empty;
         Shelf.ClearSelection();
@@ -530,7 +545,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     }
 
     private static string DescribeUnavailable(IReadOnlyList<string> tools) => tools.Count == 0 ? "" :
-        $"Missing {string.Join(", ", tools)}. Install FFmpeg and MKVToolNix (see README), then reopen the library. " +
+        $"Missing or too old: {string.Join(", ", tools)}. Install FFmpeg and MKVToolNix (see README), then reopen the library. " +
         "Until then importing, clip editing, library refresh and hover previews are off.";
 
     /// <summary>Checks file stamps when the window regains focus (at most every 10 s) and reads what changed.</summary>
