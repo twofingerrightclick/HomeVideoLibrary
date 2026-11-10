@@ -197,6 +197,111 @@ public sealed class VideoPageViewTests
         Assert.Equal(WindowState.Normal, window.WindowState);
     }
 
+    [AvaloniaFact]
+    public void Page_shortcuts_drive_playback_and_save_but_not_while_typing()
+    {
+        var (window, host) = Window();
+        var backs = 0;
+        var page = Page(back: () => { backs++; return Task.CompletedTask; });
+        Show(host, page);
+        var command = Command(window);
+        PageView(host).Focus();
+        var playing = page.Player.IsPlaying;
+
+        Press(window, PhysicalKey.Space);
+        Assert.NotEqual(playing, page.Player.IsPlaying);
+        Press(window, PhysicalKey.ArrowRight);
+        Press(window, PhysicalKey.ArrowRight);
+        Assert.Equal(TimeSpan.FromSeconds(10), page.Player.Position);
+        Press(window, PhysicalKey.ArrowLeft, RawInputModifiers.Shift);
+        Assert.Equal(TimeSpan.FromSeconds(9), page.Player.Position);
+
+        TitleField(host).Focus();
+        window.KeyTextInput("Lake day");
+        Press(window, PhysicalKey.ArrowRight);
+        Press(window, PhysicalKey.Space);
+        Assert.Equal(TimeSpan.FromSeconds(9), page.Player.Position);
+        Press(window, PhysicalKey.S, command);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(page.Details.IsDirty);
+
+        Press(window, PhysicalKey.Escape); // Leaves the field...
+        Assert.Equal(0, backs);
+        Press(window, PhysicalKey.Escape); // ...then leaves the page.
+        Assert.Equal(1, backs);
+    }
+
+    [AvaloniaFact]
+    public void Arrows_still_seek_after_clicking_an_inspector_tab()
+    {
+        var (window, host) = Window();
+        var page = Page();
+        Show(host, page);
+        var tags = host.GetVisualDescendants().OfType<TabItem>().Single(tab => (string?)tab.Header == "TAGS");
+        var point = tags.TranslatePoint(new Point(tags.Bounds.Width / 2, tags.Bounds.Height / 2), window)!.Value;
+
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal((int)InspectorTab.Tags, page.SelectedTab);
+        Press(window, PhysicalKey.ArrowRight);
+
+        Assert.Equal((int)InspectorTab.Tags, page.SelectedTab);
+        Assert.Equal(TimeSpan.FromSeconds(5), page.Player.Position);
+    }
+
+    [AvaloniaFact]
+    public void Keys_pressed_over_the_video_reach_the_page_and_the_window()
+    {
+        var (window, host) = Window();
+        var windowKeys = new List<Key>();
+        window.AddHandler(InputElement.KeyDownEvent, (_, args) => windowKeys.Add(args.Key), Avalonia.Interactivity.RoutingStrategies.Bubble,
+            handledEventsToo: true);
+        var page = Page();
+        Show(host, page);
+        var overlay = PageView(host).FindControl<Panel>("Overlay")!;
+        var overlayWindow = Assert.IsAssignableFrom<Window>(TopLevel.GetTopLevel(overlay));
+        Assert.NotSame(window, overlayWindow);
+
+        Press(overlayWindow, PhysicalKey.ArrowRight);
+        Press(overlayWindow, PhysicalKey.Q);
+
+        Assert.Equal(TimeSpan.FromSeconds(5), page.Player.Position);
+        Assert.Equal([Key.Right, Key.Q], windowKeys);
+    }
+
+    [AvaloniaFact]
+    public void A_window_already_fullscreen_is_left_alone()
+    {
+        var (window, host) = Window();
+        window.WindowState = WindowState.FullScreen;
+        var page = Page();
+        Show(host, page);
+        Assert.False(page.Fullscreen.IsFullscreen);
+
+        page.Fullscreen.ToggleCommand.Execute(null);
+        page.Fullscreen.ExitCommand.Execute(null);
+        Assert.Equal(WindowState.FullScreen, window.WindowState);
+
+        page.Fullscreen.ToggleCommand.Execute(null);
+        host.Content = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(WindowState.FullScreen, window.WindowState);
+    }
+
+    private static void Press(Window window, PhysicalKey key, RawInputModifiers modifiers = RawInputModifiers.None)
+    {
+        window.KeyPressQwerty(key, modifiers);
+        window.KeyReleaseQwerty(key, modifiers);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    private static RawInputModifiers Command(Window window) =>
+        ShortcutRouterCommand(window) == KeyModifiers.Meta ? RawInputModifiers.Meta : RawInputModifiers.Control;
+
+    private static KeyModifiers ShortcutRouterCommand(Window window) =>
+        Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control;
+
     private static ChapterListItem Row(ContentControl host, int index) =>
         host.GetVisualDescendants().OfType<ChapterListItem>().ElementAt(index);
 

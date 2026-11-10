@@ -14,23 +14,25 @@ namespace HomeVideoLibrary.Desktop.Views.VideoPage;
 /// activity over the video, and applying fullscreen to the window.</summary>
 public sealed partial class VideoPageView : UserControl
 {
+    private const double SplitterKeyStep = 16;
     private readonly ShortcutRouter _shortcuts;
     private Window? _window;
-    private IDisposable? _windowState;
-    private WindowState _restoreState = WindowState.Normal;
+    private IDisposable? _windowShortcuts, _windowState;
+    // The window state before this page made the window fullscreen; null when the page did not change it.
+    private WindowState? _restoreState;
 
     public VideoPageView()
     {
         InitializeComponent();
         _shortcuts = MapShortcuts(new ShortcutRouter(
             Application.Current?.PlatformSettings?.HotkeyConfiguration.CommandModifiers ?? KeyModifiers.Control));
-        _shortcuts.Attach(this);
         Overlay.AttachedToVisualTree += (_, _) => { if (TopLevel.GetTopLevel(Overlay) is Window overlayWindow) ConnectOverlay(overlayWindow); };
         Overlay.PointerMoved += (_, _) => ViewModel?.Fullscreen.Wake();
         Overlay.DoubleTapped += (_, _) => ViewModel?.Fullscreen.ToggleCommand.Execute(null);
         FullscreenControls.PointerEntered += (_, _) => ViewModel?.Fullscreen.Hold(true);
         FullscreenControls.PointerExited += (_, _) => ViewModel?.Fullscreen.Hold(false);
-        InspectorSplitter.DragDelta += (_, args) => { if (ViewModel is { } page) page.InspectorWidth -= args.Vector.X; };
+        InspectorSplitter.AddHandler(PointerMovedEvent, ResizeInspector, RoutingStrategies.Bubble, handledEventsToo: true);
+        InspectorSplitter.KeyDown += ResizeInspectorWithKeys;
         AddHandler(GotFocusEvent, SelectAllOnTab, RoutingStrategies.Bubble, handledEventsToo: true);
         AddHandler(KeyDownEvent, LeaveTextEntryOnEscape, RoutingStrategies.Bubble);
         Loaded += (_, _) => Focus();
@@ -38,11 +40,14 @@ public sealed partial class VideoPageView : UserControl
 
     private VideoPageViewModel? ViewModel => DataContext as VideoPageViewModel;
 
+    /// <summary>Takes the page's shortcuts and fullscreen to the window while the page is shown. The shortcuts listen on
+    /// the window, so they work whatever has focus, including nothing (after the focused field's tab closed).</summary>
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
         _window = TopLevel.GetTopLevel(this) as Window;
         if (_window is null || ViewModel is not { } page) return;
+        _windowShortcuts = _shortcuts.Attach(_window);
         _windowState = _window.GetObservable(Window.WindowStateProperty).Subscribe(new WindowStateObserver(this));
         page.Fullscreen.PropertyChanged += FullscreenChanged;
     }
@@ -50,36 +55,73 @@ public sealed partial class VideoPageView : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
+        _windowShortcuts?.Dispose();
         _windowState?.Dispose();
-        _windowState = null;
+        _windowShortcuts = _windowState = null;
         if (ViewModel is { } page)
         {
             page.Fullscreen.PropertyChanged -= FullscreenChanged;
-            // Leaving the page leaves fullscreen with it.
-            if (page.Fullscreen.IsFullscreen && _window is { WindowState: WindowState.FullScreen }) _window.WindowState = _restoreState;
+            // Leaving the page undoes the fullscreen it made, and only that.
+            if (page.Fullscreen.IsFullscreen && _restoreState is { } restore && _window is { WindowState: WindowState.FullScreen })
+                _window.WindowState = restore;
         }
+        _restoreState = null;
         _window = null;
     }
 
-    /// <summary>Applies the page's fullscreen request to the window.</summary>
+    /// <summary>Applies the page's fullscreen request to the window, remembering what to restore. A window that was
+    /// already fullscreen (the system's control) is left as it is.</summary>
     private void FullscreenChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(FullscreenViewModel.IsFullscreen) || _window is not { } window || ViewModel is not { } page) return;
-        if (page.Fullscreen.IsFullscreen && window.WindowState != WindowState.FullScreen)
+        if (page.Fullscreen.IsFullscreen)
         {
+            if (window.WindowState == WindowState.FullScreen) return;
             _restoreState = window.WindowState;
             window.WindowState = WindowState.FullScreen;
         }
-        else if (!page.Fullscreen.IsFullscreen && window.WindowState == WindowState.FullScreen) window.WindowState = _restoreState;
+        else if (_restoreState is { } restore)
+        {
+            _restoreState = null;
+            if (window.WindowState == WindowState.FullScreen) window.WindowState = restore;
+        }
     }
 
-    /// <summary>Wires the window LibVLCSharp shows the overlay in. Over the video, input goes to that window (it may become
-    /// the key window), so its keys route through the page's shortcuts too; and each time it is shown it is tied to the
-    /// page's window so it follows it into fullscreen.</summary>
+    /// <summary>Ends the page's fullscreen when the window leaves fullscreen by itself (the system's control).</summary>
+    private sealed class WindowStateObserver(VideoPageView view) : IObserver<WindowState>
+    {
+        public void OnNext(WindowState state)
+        {
+            if (state == WindowState.FullScreen || view.ViewModel is not { Fullscreen.IsFullscreen: true } page) return;
+            view._restoreState = null;
+            page.Fullscreen.IsFullscreen = false;
+        }
+
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
+    }
+
+    /// <summary>Wires the window LibVLCSharp shows the overlay in. Over the video, keys go to that window (it may become
+    /// the key window), so the ones it does not handle are passed on to the page's window, where the page's and the
+    /// shell's shortcuts listen; and each time it is shown it is tied to the page's window so it follows it into
+    /// fullscreen.</summary>
     private void ConnectOverlay(Window overlayWindow)
     {
-        _shortcuts.Attach(overlayWindow);
+        overlayWindow.AddHandler(KeyDownEvent, ForwardKey, RoutingStrategies.Bubble);
+        overlayWindow.AddHandler(KeyUpEvent, ForwardKey, RoutingStrategies.Bubble);
         overlayWindow.GetObservable(IsVisibleProperty).Subscribe(new OverlayShownObserver(this, overlayWindow));
+    }
+
+    private void ForwardKey(object? sender, KeyEventArgs args)
+    {
+        if (args.Handled || _window is not { } window) return;
+        var forwarded = new KeyEventArgs
+        {
+            RoutedEvent = args.RoutedEvent, Key = args.Key, KeyModifiers = args.KeyModifiers, PhysicalKey = args.PhysicalKey,
+            KeySymbol = args.KeySymbol, KeyDeviceType = args.KeyDeviceType,
+        };
+        window.RaiseEvent(forwarded);
+        args.Handled = forwarded.Handled;
     }
 
     private sealed class OverlayShownObserver(VideoPageView view, Window overlayWindow) : IObserver<bool>
@@ -93,16 +135,18 @@ public sealed partial class VideoPageView : UserControl
         public void OnError(Exception error) { }
     }
 
-    /// <summary>Reports fullscreen the window enters or leaves by itself (the system's own control).</summary>
-    private sealed class WindowStateObserver(VideoPageView view) : IObserver<WindowState>
+    // The handle sits at the inspector's left edge, so the inspector's width is the body's right edge minus the pointer.
+    private void ResizeInspector(object? sender, PointerEventArgs args)
     {
-        public void OnNext(WindowState state)
-        {
-            if (view.ViewModel is { } page) page.Fullscreen.IsFullscreen = state == WindowState.FullScreen;
-        }
+        if (ViewModel is not { } page || !args.GetCurrentPoint(InspectorSplitter).Properties.IsLeftButtonPressed) return;
+        page.InspectorWidth = Body.Bounds.Width - args.GetPosition(Body).X - InspectorSplitter.Bounds.Width / 2;
+    }
 
-        public void OnCompleted() { }
-        public void OnError(Exception error) { }
+    private void ResizeInspectorWithKeys(object? sender, KeyEventArgs args)
+    {
+        if (ViewModel is not { } page || args.Key is not (Key.Left or Key.Right)) return;
+        args.Handled = true;
+        page.InspectorWidth += args.Key == Key.Left ? SplitterKeyStep : -SplitterKeyStep;
     }
 
     private ShortcutRouter MapShortcuts(ShortcutRouter router)
@@ -113,20 +157,20 @@ public sealed partial class VideoPageView : UserControl
         router
             .Map(Key.Space, KeyModifiers.None, Player(player => player.PlayPauseCommand), ClickSoundKind.Plastic)
             .Map(Key.K, KeyModifiers.None, Player(player => player.PlayPauseCommand), ClickSoundKind.Plastic)
-            .Map(Key.Left, KeyModifiers.None, skip, parameter: -PlayerViewModel.ShortStep)
-            .Map(Key.Right, KeyModifiers.None, skip, parameter: PlayerViewModel.ShortStep)
-            .Map(Key.Left, KeyModifiers.Shift, skip, parameter: -PlayerViewModel.FineStep)
-            .Map(Key.Right, KeyModifiers.Shift, skip, parameter: PlayerViewModel.FineStep)
-            .Map(Key.J, KeyModifiers.None, skip, parameter: -PlayerViewModel.LongStep)
-            .Map(Key.L, KeyModifiers.None, skip, parameter: PlayerViewModel.LongStep)
+            .Map(Key.Left, KeyModifiers.None, skip, parameter: -PlayerViewModel.ShortStep, repeats: true)
+            .Map(Key.Right, KeyModifiers.None, skip, parameter: PlayerViewModel.ShortStep, repeats: true)
+            .Map(Key.Left, KeyModifiers.Shift, skip, parameter: -PlayerViewModel.FineStep, repeats: true)
+            .Map(Key.Right, KeyModifiers.Shift, skip, parameter: PlayerViewModel.FineStep, repeats: true)
+            .Map(Key.J, KeyModifiers.None, skip, parameter: -PlayerViewModel.LongStep, repeats: true)
+            .Map(Key.L, KeyModifiers.None, skip, parameter: PlayerViewModel.LongStep, repeats: true)
             .Map(Key.Home, KeyModifiers.None, Player(player => player.SeekCommand), parameter: TimeSpan.Zero)
             .Map(Key.End, KeyModifiers.None, Player(player => player.SeekCommand), parameter: TimeSpan.MaxValue)
             .Map(Key.OemOpenBrackets, KeyModifiers.None, Page(page => page.Details.Chapters.PreviousChapterCommand))
             .Map(Key.OemCloseBrackets, KeyModifiers.None, Page(page => page.Details.Chapters.NextChapterCommand))
             .Map(Key.PageUp, KeyModifiers.None, Page(page => page.Details.Chapters.PreviousChapterCommand))
             .Map(Key.PageDown, KeyModifiers.None, Page(page => page.Details.Chapters.NextChapterCommand))
-            .Map(Key.Up, KeyModifiers.None, Player(player => player.ChangeVolumeCommand), parameter: PlayerViewModel.VolumeStep)
-            .Map(Key.Down, KeyModifiers.None, Player(player => player.ChangeVolumeCommand), parameter: -PlayerViewModel.VolumeStep)
+            .Map(Key.Up, KeyModifiers.None, Player(player => player.ChangeVolumeCommand), parameter: PlayerViewModel.VolumeStep, repeats: true)
+            .Map(Key.Down, KeyModifiers.None, Player(player => player.ChangeVolumeCommand), parameter: -PlayerViewModel.VolumeStep, repeats: true)
             .Map(Key.D0, KeyModifiers.None, Player(player => player.ToggleMuteCommand), ClickSoundKind.Plastic)
             .Map(Key.NumPad0, KeyModifiers.None, Player(player => player.ToggleMuteCommand), ClickSoundKind.Plastic)
             .Map(Key.M, KeyModifiers.None, Page(page => page.AddChapterCommand), ClickSoundKind.Rubber)

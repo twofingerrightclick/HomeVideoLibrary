@@ -31,14 +31,12 @@ public sealed record VideoPageDependencies
     /// <summary>Shows an album in the library through the shell's leave flow.</summary>
     public Func<VideoAlbum, Task> ShowAlbum { get; init; } = _ => Task.CompletedTask;
     public Func<VideoAlbum, Task> AddToAlbum { get; init; } = _ => Task.CompletedTask;
-    /// <summary>Publishes clips the page created to the library.</summary>
-    public Func<IReadOnlyList<LibraryVideo>, Task> OutputsCreated { get; init; } = _ => Task.CompletedTask;
     public Action<string> RevealFile { get; init; } = FileManager.Reveal;
     /// <summary>Whether Save closes the player first. An in-place mkvpropedit write is safe under an open reader on macOS
     /// and Linux; Windows sharing rules for that are unverified, so the player is released there.</summary>
     public bool ReleasePlaybackDuringSave { get; init; } = OperatingSystem.IsWindows();
-    /// <summary>Timed waits (preview debounce, idle controls); tests replace it.</summary>
-    public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
+    /// <summary>The clock for timed behaviour (preview debounce, idle controls, seek settling); tests replace it.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
 }
 
 /// <summary>One open video: playback, its editable details and the inspector around them. The shell creates one per
@@ -66,12 +64,13 @@ public sealed class VideoPageViewModel : PageViewModel
         _selectedTab = _session.SelectedTab;
         var record = dependencies.Record;
         Id = record.Id;
-        Player = new PlayerViewModel(dependencies.Playback, dependencies.Path, record.Duration, dependencies.Post, Report, _session.Volume, _session.IsMuted);
+        Player = new PlayerViewModel(dependencies.Playback, dependencies.Path, record.Duration, dependencies.Post, Report, _session.Volume,
+            _session.IsMuted, dependencies.Time);
         Details = new VideoDetailsViewModel(record, dependencies.Metadata, dependencies.SuggestTags, () => Player.Position, Player.Seek,
             dependencies.ReleasePlaybackDuringSave ? Player.WhileReleasedAsync : work => work(), Report, _lifetime.Token);
         Details.Tags.ShowPopularFrom(_snapshot.Tags);
-        Preview = new ScrubPreviewViewModel(record, dependencies.Path, dependencies.Previews, dependencies.Delay);
-        Fullscreen = new FullscreenViewModel(() => Player.IsPlaying, dependencies.Delay);
+        Preview = new ScrubPreviewViewModel(record, dependencies.Path, dependencies.Previews, dependencies.Time);
+        Fullscreen = new FullscreenViewModel(() => Player.IsPlaying, dependencies.Time);
         BackCommand = new AsyncCommand(_ => dependencies.Back(), onError: Report);
         ShowAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.ShowAlbum(album), onError: Report);
         AddToAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.AddToAlbum(album), onError: Report);
@@ -213,11 +212,14 @@ public sealed class VideoPageViewModel : PageViewModel
             case LeaveChoice.Save:
                 if (Details.RecordedDateError is { } error)
                 {
-                    Report("Recorded date: " + error);
+                    await interaction.ShowErrorAsync("NOT SAVED", "Recorded date: " + error);
                     return false;
                 }
                 await Details.SaveCommand.ExecuteAsync();
-                return !Details.IsDirty;
+                if (!Details.IsDirty) return true;
+                // The prompt has closed; say why the page stayed where it can be seen above the video.
+                await interaction.ShowErrorAsync("NOT SAVED", Status);
+                return false;
             case LeaveChoice.Discard:
                 return true;
             default:
@@ -231,16 +233,28 @@ public sealed class VideoPageViewModel : PageViewModel
         return Task.WhenAll(Details.SaveCommand.Completion, Details.Frames.CaptureCommand.Completion);
     }
 
+    /// <summary>Clears the video surface before anything else (the view must never show a closing player), then lets
+    /// the playback start, a save and a frame capture (cancelled) finish, and releases the player, the decoded frames and
+    /// the captures the file never received.</summary>
     public override async ValueTask DisposeAsync()
     {
         if (_lifetime.IsCancellationRequested) return;
         _lifetime.Cancel();
-        await _opening;
-        Fullscreen.Dispose();
-        Preview.Dispose();
-        await Player.DisposeAsync();
-        Details.PruneCaptures();
-        Details.Frames.Dispose();
+        var closing = Player.DisposeAsync().AsTask();
+        Details.Frames.CaptureCommand.Cancel();
+        try { await Task.WhenAll(_opening, Details.SaveCommand.Completion, Details.Frames.CaptureCommand.Completion); }
+        finally
+        {
+            try { await closing; }
+            finally
+            {
+                Fullscreen.Dispose();
+                Preview.Dispose();
+                Details.PruneCaptures();
+                Details.Frames.Dispose();
+                _lifetime.Dispose();
+            }
+        }
     }
 
     private void AddChapter()

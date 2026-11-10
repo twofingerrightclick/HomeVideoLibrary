@@ -8,7 +8,6 @@ public sealed partial class InfoTab : UserControl
     public InfoTab()
     {
         InitializeComponent();
-        // A single-line title commits as you type; Enter moves on to the description.
         TitleField.KeyDown += (_, args) =>
         {
             if (args.Key != Key.Enter || args.KeyModifiers != KeyModifiers.None) return;

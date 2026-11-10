@@ -3,7 +3,6 @@ using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
-using LibVLCSharp.Shared;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -191,8 +190,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 0;
-        // A real MediaPlayer needs the native runtime; the editor only passes it through to the view.
-        public Task<MediaPlayer> CreatePlayerAsync() => Task.FromResult<MediaPlayer>(null!);
+        public Task<VideoSurface> CreatePlayerAsync() => Task.FromResult(new VideoSurface(null));
         public Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task CloseAsync() => Task.CompletedTask;
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;

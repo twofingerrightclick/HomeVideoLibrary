@@ -200,7 +200,6 @@ public sealed class MainWindowViewModel : ViewModelBase
                     if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
                 },
                 AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
-                OutputsCreated = outputs => PublishOutputsAsync(model, outputs),
             });
         });
     }

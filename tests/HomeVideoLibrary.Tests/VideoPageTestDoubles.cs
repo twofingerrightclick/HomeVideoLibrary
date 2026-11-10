@@ -4,7 +4,6 @@ using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Logic;
-using LibVLCSharp.Shared;
 
 namespace HomeVideoLibrary.Tests;
 
@@ -35,8 +34,20 @@ internal sealed class FakeMetadata : IVideoMetadataService
         Stored = metadata;
     }
 
-    public Task<VideoThumbnail> CaptureThumbnailAsync(LibraryVideo video, TimeSpan position, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new VideoThumbnail(Guid.NewGuid(), position, Path.Combine(Path.GetTempPath(), $"hvl-capture-{Interlocked.Increment(ref _captures)}.jpg")));
+    /// <summary>When set, a capture writes its file and then waits for it, ignoring cancellation, like a capture whose
+    /// process has already finished.</summary>
+    public Task? CaptureGate { get; set; }
+
+    public List<string> Captured { get; } = [];
+
+    public async Task<VideoThumbnail> CaptureThumbnailAsync(LibraryVideo video, TimeSpan position, CancellationToken cancellationToken = default)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hvl-capture-{Guid.NewGuid():N}-{Interlocked.Increment(ref _captures)}.jpg");
+        await File.WriteAllTextAsync(path, "frame", CancellationToken.None);
+        Captured.Add(path);
+        if (CaptureGate is { } gate) await gate;
+        return new VideoThumbnail(Guid.NewGuid(), position, path);
+    }
 }
 
 /// <summary>Playback without a native player. Raise <see cref="Updated"/> with <see cref="Raise"/>.</summary>
@@ -51,25 +62,47 @@ internal sealed class FakePlayback : IVideoPlayback
     public int Opens { get; private set; }
     public bool LastPlay { get; private set; }
     public TimeSpan LastStart { get; private set; }
-    public Task OpenGate { get; init; } = Task.CompletedTask;
+    public Task OpenGate { get; set; } = Task.CompletedTask;
     /// <summary>When set, each seek waits for it, so a test can hold a seek in flight.</summary>
     public Task? SeekGate { get; set; }
-    public Exception? StartError { get; init; }
+    public Exception? StartError { get; set; }
+
+    /// <summary>What the page currently shows; read at each start and close to check the surface's order.</summary>
+    public Func<VideoSurface?>? Shown { get; set; }
+    public List<VideoSurface> Created { get; } = [];
+    public VideoSurface? ShownAtStart { get; private set; }
+    public List<VideoSurface?> ShownAtClose { get; } = [];
+    public Task? CreateGate { get; set; }
 
     public void Raise(PlaybackUpdate update) => Updated?.Invoke(this, update);
 
-    // A real MediaPlayer needs the native runtime; the page only passes it through to the view.
-    public Task<MediaPlayer> CreatePlayerAsync() { Calls.Add("create"); return Task.FromResult<MediaPlayer>(null!); }
+    // A real MediaPlayer needs the native runtime; the surface stands for it.
+    public async Task<VideoSurface> CreatePlayerAsync()
+    {
+        Calls.Add("create");
+        if (CreateGate is { } gate) await gate;
+        var surface = new VideoSurface(null);
+        Created.Add(surface);
+        return surface;
+    }
 
     public async Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken)
     {
         Calls.Add("start");
+        ShownAtStart = Shown?.Invoke();
         Opens++; Closed = false; LastStart = position; LastPlay = play;
         await OpenGate;
         if (StartError is not null) throw StartError;
     }
 
-    public Task CloseAsync() { Calls.Add("close"); Closed = true; Version++; return Task.CompletedTask; }
+    public Task CloseAsync()
+    {
+        Calls.Add("close");
+        ShownAtClose.Add(Shown?.Invoke());
+        Closed = true;
+        Version++;
+        return Task.CompletedTask;
+    }
     public Task SetPlayingAsync(bool play) { LastPlay = play; return Task.CompletedTask; }
 
     public async Task SeekAsync(TimeSpan position)
@@ -97,7 +130,7 @@ internal static class VideoPages
     /// <summary>A page whose waits complete at once unless <paramref name="delay"/> says otherwise.</summary>
     public static VideoPageViewModel Create(FakeMetadata metadata, FakePlayback playback, VideoRecord? record = null,
         bool releasePlayback = false, VideoPageSession? session = null, LibrarySnapshot? snapshot = null,
-        TagSuggestionProvider? suggest = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+        TagSuggestionProvider? suggest = null, TimeProvider? time = null)
     {
         record ??= Record(metadata.Stored);
         return new VideoPageViewModel(new VideoPageDependencies
@@ -105,7 +138,7 @@ internal static class VideoPages
             Record = record, Path = "/unused/test.mkv", Metadata = metadata, Playback = playback,
             Snapshot = snapshot ?? LibrarySnapshot.Empty, SuggestTags = suggest ?? ((_, _, _) => []),
             Session = session ?? new VideoPageSession(), Post = action => action(),
-            ReleasePlaybackDuringSave = releasePlayback, Delay = delay,
+            ReleasePlaybackDuringSave = releasePlayback, Time = time ?? TimeProvider.System,
         });
     }
 }

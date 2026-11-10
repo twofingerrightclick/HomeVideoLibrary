@@ -30,7 +30,6 @@ public sealed class VideoDetailsViewModel : ViewModelBase
         _video = record.ToLibraryVideo();
         _metadata = metadata; _whileSaving = whileSaving; _report = report; _lifetime = lifetime;
         TitleWatermark = record.DisplayName;
-        Duration = record.Duration;
         var initial = record.ToMetadata() ?? VideoMetadata.Empty;
         Chapters = new ChaptersPanelViewModel(record.Duration, initial.Chapters, suggest, seek, Changed);
         Tags = new TagListViewModel(initial.Tags, suggest, Changed);
@@ -42,9 +41,9 @@ public sealed class VideoDetailsViewModel : ViewModelBase
     }
 
     public string TitleWatermark { get; }
-    public TimeSpan Duration { get; }
-    public string DurationText => Timecode.Format(Duration);
-    public DateTimeOffset ImportedAt => _video.ImportedAt;
+    public string DurationText => Timecode.Format(_video.Duration);
+    /// <summary>When the video was imported, in local time.</summary>
+    public DateTimeOffset ImportedAt => _video.ImportedAt.ToLocalTime();
     public string FileName => Path.GetFileName(_video.RelativePath);
 
     public string Title { get => _title; set { if (SetProperty(ref _title, value)) Changed(); } }
@@ -148,12 +147,7 @@ public sealed class VideoDetailsViewModel : ViewModelBase
     {
         CommitOpenEdits();
         var draft = BuildMetadata();
-        try { await _whileSaving(() => _metadata.SaveAsync(_video, draft, cancellationToken)); }
-        catch (OperationCanceledException)
-        {
-            _report("Save cancelled; the changes are not saved yet.");
-            return;
-        }
+        await _whileSaving(() => _metadata.SaveAsync(_video, draft, cancellationToken));
         // The save verified that the file now reads back as exactly this. Edits typed while it ran stay as drafts.
         var stored = MetadataText.AsStored(draft);
         _external = null;

@@ -1,28 +1,29 @@
 namespace HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 
 /// <summary>Fullscreen playback and the controls drawn over it. They show while the video is paused, while the pointer
-/// rests on them, and for <see cref="IdleDelay"/> after the pointer last moved; otherwise they hide, with the pointer,
+/// rests on them, and until <see cref="IdleDelay"/> after the pointer last moved; otherwise they hide, with the pointer,
 /// so only the video shows.</summary>
 public sealed class FullscreenViewModel : ViewModelBase, IDisposable
 {
     public static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(2.5);
     private readonly Func<bool> _isPlaying;
-    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
-    private CancellationTokenSource? _idle;
-    private bool _isFullscreen, _isAwake, _isHeld;
+    private readonly TimeProvider _time;
+    private readonly CancellationTokenSource _lifetime = new();
+    // One deadline, pushed back by every pointer move; a single wait runs until it passes.
+    private DateTimeOffset _hideAt;
+    private Task _waiting = Task.CompletedTask;
+    private bool _isFullscreen, _isHeld;
 
     /// <param name="isPlaying">Whether the video plays; the owner calls <see cref="PlaybackChanged"/> when it changes.</param>
-    /// <param name="delay">Waits out the idle time; tests replace it.</param>
-    public FullscreenViewModel(Func<bool> isPlaying, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    public FullscreenViewModel(Func<bool> isPlaying, TimeProvider? time = null)
     {
         _isPlaying = isPlaying;
-        _delay = delay ?? Task.Delay;
+        _time = time ?? TimeProvider.System;
         ToggleCommand = new RelayCommand(() => IsFullscreen = !IsFullscreen);
         ExitCommand = new RelayCommand(() => IsFullscreen = false, () => IsFullscreen);
     }
 
-    /// <summary>Whether the page fills the screen. The view applies it to the window and reports changes the window
-    /// makes itself (the system's own fullscreen control).</summary>
+    /// <summary>Whether the page fills the screen. The view applies it to the window.</summary>
     public bool IsFullscreen
     {
         get => _isFullscreen;
@@ -30,12 +31,13 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
         {
             if (!SetProperty(ref _isFullscreen, value)) return;
             ExitCommand.RaiseCanExecuteChanged();
-            Wake();
+            if (value) Wake();
+            else ShownChanged();
         }
     }
 
     /// <summary>Whether the controls over the fullscreen video show.</summary>
-    public bool AreControlsShown => IsFullscreen && (!_isPlaying() || _isAwake || _isHeld);
+    public bool AreControlsShown => IsFullscreen && (!_isPlaying() || _isHeld || _time.GetUtcNow() < _hideAt);
 
     /// <summary>Fullscreen with the controls hidden: the pointer hides too.</summary>
     public bool IsIdle => IsFullscreen && !AreControlsShown;
@@ -43,15 +45,14 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
     public RelayCommand ToggleCommand { get; }
     public RelayCommand ExitCommand { get; }
 
-    /// <summary>The pointer moved: show the controls and restart the idle countdown.</summary>
+    /// <summary>The pointer moved: show the controls until <see cref="IdleDelay"/> from now.</summary>
     public void Wake()
     {
-        _idle?.Cancel();
-        _idle?.Dispose();
-        _idle = new CancellationTokenSource();
-        _isAwake = true;
-        ShownChanged();
-        _ = SleepAsync(_idle.Token);
+        if (_lifetime.IsCancellationRequested || !IsFullscreen) return;
+        var wasShown = AreControlsShown;
+        _hideAt = _time.GetUtcNow() + IdleDelay;
+        if (!wasShown) ShownChanged();
+        if (_waiting.IsCompleted) _waiting = HideWhenIdleAsync();
     }
 
     /// <summary>Whether the pointer is over the controls, which keeps them shown.</summary>
@@ -63,11 +64,14 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
 
     public void PlaybackChanged() => ShownChanged();
 
-    private async Task SleepAsync(CancellationToken cancellationToken)
+    private async Task HideWhenIdleAsync()
     {
-        try { await _delay(IdleDelay, cancellationToken); }
+        try
+        {
+            for (var left = _hideAt - _time.GetUtcNow(); left > TimeSpan.Zero; left = _hideAt - _time.GetUtcNow())
+                await Task.Delay(left, _time, _lifetime.Token);
+        }
         catch (OperationCanceledException) { return; }
-        _isAwake = false;
         ShownChanged();
     }
 
@@ -79,8 +83,8 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
-        _idle?.Cancel();
-        _idle?.Dispose();
-        _idle = null;
+        if (_lifetime.IsCancellationRequested) return;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
     }
 }

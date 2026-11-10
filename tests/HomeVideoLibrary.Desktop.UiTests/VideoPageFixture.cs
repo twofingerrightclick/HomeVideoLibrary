@@ -5,7 +5,6 @@ using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Desktop.Views;
 using HomeVideoLibrary.Infrastructure;
-using LibVLCSharp.Shared;
 
 namespace HomeVideoLibrary.Desktop.UiTests;
 
@@ -14,7 +13,7 @@ namespace HomeVideoLibrary.Desktop.UiTests;
 internal static class VideoPageFixture
 {
     public static VideoPageViewModel Page(VideoMetadata? stored = null, string name = "Test video", TimeSpan? duration = null,
-        PreviewCache? previews = null, string path = "/unused/test.mkv", Func<TimeSpan, CancellationToken, Task>? delay = null)
+        PreviewCache? previews = null, string path = "/unused/test.mkv", TimeProvider? time = null, Func<Task>? back = null)
     {
         var metadata = stored ?? VideoMetadata.Empty;
         var length = duration ?? TimeSpan.FromMinutes(1);
@@ -25,7 +24,8 @@ internal static class VideoPageFixture
         {
             Record = record, Path = path, Metadata = new MemoryMetadata(metadata), Playback = new SilentPlayback(),
             Snapshot = LibrarySnapshot.Empty, SuggestTags = (_, _, _) => [], Session = new VideoPageSession(),
-            Post = action => Dispatcher.UIThread.Post(action), Previews = previews, Delay = delay,
+            Post = action => Dispatcher.UIThread.Post(action), Previews = previews, Time = time ?? TimeProvider.System,
+            Back = back ?? (() => Task.CompletedTask),
         });
     }
 
@@ -64,8 +64,8 @@ internal static class VideoPageFixture
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 1;
-        // A real MediaPlayer needs the native runtime; the view binds whatever the page publishes.
-        public Task<MediaPlayer> CreatePlayerAsync() => Task.FromResult<MediaPlayer>(null!);
+        // A real MediaPlayer needs the native runtime; the surface stands for it.
+        public Task<VideoSurface> CreatePlayerAsync() => Task.FromResult(new VideoSurface(null));
         public Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task CloseAsync() => Task.CompletedTask;
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;

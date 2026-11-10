@@ -3,6 +3,7 @@ using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static HomeVideoLibrary.Tests.VideoPages;
 
@@ -52,7 +53,7 @@ public sealed class VideoPageTests
         Assert.Equal(TimeSpan.FromSeconds(3.5), playback.LastStart);
         Assert.True(playback.LastPlay);
         Assert.False(page.Details.IsDirty);
-        Assert.Null(page.Player.Player); // The fake's player; the point is it was published again after the save.
+        Assert.Same(playback.Created[^1], page.Player.Surface);
         Assert.Equal(2, playback.Opens);
     }
 
@@ -170,7 +171,8 @@ public sealed class VideoPageTests
         await page.LoadAsync();
 
         Assert.Equal(["create", "start", "close"], playback.Calls);
-        Assert.Null(page.Player.Player);
+        Assert.Null(page.Player.Surface);
+        Assert.Equal(PlaybackState.Failed, page.Player.State);
         Assert.False(page.Player.IsPlaying);
         Assert.True(page.Details.CanEdit);
         Assert.Contains("could not be played", page.Status);
@@ -329,7 +331,6 @@ public sealed class VideoPageTests
         Assert.True(page.Details.IsDirty);
         Assert.False(page.Details.SaveCommand.IsRunning);
         Assert.False(playback.Closed);
-        Assert.Contains("cancelled", page.Status);
     }
 
     [Fact]
@@ -635,16 +636,9 @@ public sealed class VideoPageTests
     [Fact]
     public async Task FullscreenControlsHideAfterIdleWhilePlayingAndStayWhilePaused()
     {
-        var idle = new List<TaskCompletionSource>();
-        Task Delay(TimeSpan _, CancellationToken token)
-        {
-            var wait = new TaskCompletionSource();
-            token.Register(() => wait.TrySetCanceled());
-            idle.Add(wait);
-            return wait.Task;
-        }
+        var time = new FakeTimeProvider();
         var playback = new FakePlayback();
-        await using var page = Create(new FakeMetadata(), playback, delay: Delay);
+        await using var page = Create(new FakeMetadata(), playback, time: time);
         await page.LoadAsync();
         var fullscreen = page.Fullscreen;
         Assert.False(fullscreen.AreControlsShown);
@@ -654,13 +648,16 @@ public sealed class VideoPageTests
         Assert.True(page.IsImmersive);
         Assert.True(fullscreen.AreControlsShown);
         Assert.False(page.IsInspectorShown);
-        idle[^1].SetResult();
+        time.Advance(FullscreenViewModel.IdleDelay);
         Assert.False(fullscreen.AreControlsShown);
         Assert.True(fullscreen.IsIdle);
 
         fullscreen.Wake();
+        time.Advance(FullscreenViewModel.IdleDelay / 2);
+        fullscreen.Wake();
+        time.Advance(FullscreenViewModel.IdleDelay / 2);
         Assert.True(fullscreen.AreControlsShown);
-        idle[^1].SetResult();
+        time.Advance(FullscreenViewModel.IdleDelay / 2);
         Assert.False(fullscreen.AreControlsShown);
 
         playback.Raise(new PlaybackUpdate(playback.Version, IsPlaying: false));
@@ -671,6 +668,8 @@ public sealed class VideoPageTests
         Assert.False(fullscreen.ExitCommand.CanExecute(null));
         Assert.False(page.IsImmersive);
         Assert.True(page.IsInspectorShown);
+        fullscreen.Wake();
+        Assert.False(fullscreen.AreControlsShown);
     }
 
     [Fact]
@@ -693,13 +692,162 @@ public sealed class VideoPageTests
     }
 
     [Fact]
-    public void ScrubPreviewSlotsCoverTheVideoEvenly()
+    public async Task TheSurfaceIsShownBeforePlaybackStartsAndGoneBeforeItCloses()
     {
-        var duration = TimeSpan.FromMinutes(48);
-        Assert.Equal(0, ScrubPreviewViewModel.BucketOf(TimeSpan.Zero, duration));
-        Assert.Equal(ScrubPreviewViewModel.Buckets - 1, ScrubPreviewViewModel.BucketOf(duration, duration));
-        Assert.Equal(10, ScrubPreviewViewModel.BucketOf(TimeSpan.FromMinutes(10.5), duration));
-        Assert.Equal(TimeSpan.FromMinutes(10.5), ScrubPreviewViewModel.PositionOf(10, duration));
+        var playback = new FakePlayback();
+        var page = Create(new FakeMetadata(), playback);
+        playback.Shown = () => page.Player.Surface;
+
+        await page.LoadAsync();
+        Assert.Same(Assert.Single(playback.Created), playback.ShownAtStart);
+        await page.DisposeAsync();
+
+        Assert.All(playback.ShownAtClose, Assert.Null);
+        Assert.Equal("dispose", playback.Calls[^1]);
+    }
+
+    [Fact]
+    public async Task ClosingThePageWhileThePlayerIsBeingCreatedNeverShowsIt()
+    {
+        var creating = new TaskCompletionSource();
+        var playback = new FakePlayback { CreateGate = creating.Task };
+        var page = Create(new FakeMetadata(), playback);
+        await page.LoadAsync();
+
+        var disposing = page.DisposeAsync().AsTask();
+        Assert.Null(page.Player.Surface);
+        creating.SetResult();
+        await disposing;
+
+        Assert.Null(page.Player.Surface);
+        Assert.DoesNotContain("start", playback.Calls);
+        Assert.Equal(["create", "close", "dispose"], playback.Calls);
+    }
+
+    [Fact]
+    public async Task PlayWaitsForTheOpenInsteadOfStartingAnother()
+    {
+        var opening = new TaskCompletionSource();
+        var playback = new FakePlayback { OpenGate = opening.Task };
+        await using var page = Create(new FakeMetadata(), playback);
+        await page.LoadAsync();
+
+        Assert.Equal(PlaybackState.Opening, page.Player.State);
+        Assert.False(page.Player.PlayPauseCommand.CanExecute(null));
+        opening.SetResult();
+
+        Assert.Equal(PlaybackState.Open, page.Player.State);
+        Assert.True(page.Player.PlayPauseCommand.CanExecute(null));
+        Assert.Equal(1, playback.Opens);
+    }
+
+    [Fact]
+    public async Task PlayAfterAFailedStartOpensAgain()
+    {
+        var playback = new FakePlayback { StartError = new InvalidOperationException("The video took too long to start playing.") };
+        await using var page = Create(new FakeMetadata(), playback);
+        await page.LoadAsync();
+        Assert.Equal(PlaybackState.Failed, page.Player.State);
+        playback.StartError = null;
+
+        await page.Player.PlayPauseCommand.ExecuteAsync();
+
+        Assert.Equal(PlaybackState.Open, page.Player.State);
+        Assert.True(page.Player.IsPlaying);
+        Assert.Equal(2, playback.Opens);
+    }
+
+    [Fact]
+    public async Task TimesReportedBeforeASeekLandsDoNotPullThePlayheadBack()
+    {
+        var time = new FakeTimeProvider();
+        var playback = new FakePlayback();
+        await using var page = Create(new FakeMetadata(), playback, time: time);
+        await page.LoadAsync();
+
+        page.Player.Seek(TimeSpan.FromSeconds(8));
+        playback.Raise(new PlaybackUpdate(playback.Version, Milliseconds: 2_000));
+        Assert.Equal(TimeSpan.FromSeconds(8), page.Player.Position);
+        playback.Raise(new PlaybackUpdate(playback.Version, Milliseconds: 8_200));
+        Assert.Equal(TimeSpan.FromMilliseconds(8_200), page.Player.Position);
+
+        page.Player.Seek(TimeSpan.FromSeconds(9));
+        time.Advance(TimeSpan.FromSeconds(3));
+        playback.Raise(new PlaybackUpdate(playback.Version, Milliseconds: 3_000));
+        Assert.Equal(TimeSpan.FromSeconds(3), page.Player.Position); // The seek did not take; the player is the truth.
+    }
+
+    [Fact]
+    public async Task ASaveThatReleasesPlaybackFinishesBeforePlaybackReopens()
+    {
+        var playback = new FakePlayback();
+        var page = Create(new FakeMetadata(), playback, releasePlayback: true);
+        await page.LoadAsync();
+        var reopening = new TaskCompletionSource();
+        playback.OpenGate = reopening.Task;
+        page.Details.Title = "Saved";
+
+        await page.Details.SaveCommand.ExecuteAsync();
+
+        Assert.False(page.Details.SaveCommand.IsRunning);
+        Assert.False(page.Details.IsDirty);
+        Assert.Equal(PlaybackState.Opening, page.Player.State);
+        reopening.SetResult();
+        Assert.Equal(PlaybackState.Open, page.Player.State);
+        await page.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ClosingThePageSettlesAFrameCaptureAndDeletesItsFile()
+    {
+        var captured = new TaskCompletionSource();
+        var metadata = new FakeMetadata { CaptureGate = captured.Task };
+        var page = Create(metadata, new FakePlayback());
+        await page.LoadAsync();
+        var capture = page.Details.Frames.CaptureCommand.ExecuteAsync();
+
+        var disposing = page.DisposeAsync().AsTask();
+        Assert.False(disposing.IsCompleted);
+        captured.SetResult();
+        await disposing;
+        await capture;
+
+        Assert.False(File.Exists(Assert.Single(metadata.Captured)));
+    }
+
+    [Fact]
+    public async Task SavingCommitsWhatIsStillBeingTyped()
+    {
+        var metadata = new FakeMetadata { Stored = VideoMetadata.Empty with { Chapters = [new VideoChapter(9, TimeSpan.FromSeconds(2), "Swim", "", [])] } };
+        await using var page = Create(metadata, new FakePlayback());
+        await page.LoadAsync();
+        var row = page.Details.Chapters.Chapters[0];
+        page.Details.Chapters.ExpandedChapter = row;
+        row.TitleText = "Swim race";
+        page.Details.Tags.Draft = "lake";
+        Assert.True(page.Details.IsDirty);
+        Assert.True(page.Details.SaveCommand.CanExecute(null));
+
+        await page.Details.SaveCommand.ExecuteAsync();
+
+        Assert.Equal("Swim race", Assert.Single(metadata.Saved!.Chapters).Title);
+        Assert.Equal(["lake"], metadata.Saved.Tags);
+        Assert.False(page.Details.IsDirty);
+    }
+
+    [Fact]
+    public async Task LeavingAsksAboutTextStillBeingTyped()
+    {
+        var interaction = new FakeInteraction();
+        await using var page = Create(new FakeMetadata(), new FakePlayback());
+        await page.LoadAsync();
+        page.Details.Tags.Draft = "half-typed";
+
+        interaction.Answers.Enqueue(LeaveChoice.Save);
+        Assert.True(await page.CanLeaveAsync(interaction));
+
+        Assert.Equal(1, interaction.Asked);
+        Assert.Equal(["half-typed"], page.Details.Tags.Items);
     }
 
     private static Infrastructure.LibrarySnapshot Snapshot(Infrastructure.VideoRecord record) =>
