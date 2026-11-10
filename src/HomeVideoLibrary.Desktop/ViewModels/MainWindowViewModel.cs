@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Audio;
@@ -87,8 +88,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         OpenSettingsCommand = new AsyncCommand(_ => dependencies.Interaction.ShowSettingsAsync(Settings), context: "Settings");
         PlaySelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record) : Task.CompletedTask,
             () => Shelf.HasSelection, context: "Open video");
-        TrimSelectedCommand = new AsyncCommand(_ => OpenClipEditorAsync(), () => Shelf.SelectedCount == 1 && CanEditClips, context: "Trim or split");
-        MergeSelectedCommand = new AsyncCommand(_ => OpenClipEditorAsync(), () => Shelf.SelectedCount >= 2 && CanEditClips, context: "Merge");
+        TrimSelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record, tab: InspectorTab.Edit) : Task.CompletedTask,
+            () => Shelf.SelectedCount == 1 && CanEditClips, context: "Trim or split");
+        MergeSelectedCommand = new AsyncCommand(_ => OpenMergeAsync(), () => Shelf.SelectedCount >= 2 && CanEditClips, context: "Merge");
         DeleteSelectedCommand = new RelayCommand(() => DeleteTarget?.Execute(null), () => DeleteTarget?.CanExecute(null) == true);
         BackCommand = new AsyncCommand(_ => NavigateAsync(() => null), () => Page is not null, context: "Back to library");
         FocusSearchCommand = new AsyncCommand(_ => FocusSearchAsync(), context: "Search");
@@ -206,9 +208,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     private TapePreviewSession? CreatePreviewSession(TapeViewModel tape) =>
         _strips is { } strips && !tape.IsMissing ? new TapePreviewSession(tape.Record, strips) : null;
 
-    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter). When it cannot (the
-    /// app is busy switching or closing, or the video or its file is gone) the status line says why.</summary>
-    public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null)
+    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter) or on inspector
+    /// <paramref name="tab"/> (EDIT for TRIM/SPLIT). When it cannot (the app is busy switching or closing, or the video or
+    /// its file is gone) the status line says why.</summary>
+    public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null, InspectorTab? tab = null)
     {
         if (WaitReason is { } reason) return Refuse($"“{video.Label}” cannot open yet. {reason}");
         if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
@@ -223,6 +226,9 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Record = record, Path = model.GetVideoPath(record), Metadata = indexed, Playback = _dependencies.CreatePlayback(),
                 Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
                 StartAt = at ?? TimeSpan.Zero,
+                StartTab = tab,
+                Edits = ToolsReady ? ClipEditsFor(model) : null,
+                Jobs = Jobs,
                 Previews = ToolsReady ? _previews : null,
                 Back = () => NavigateAsync(() => null),
                 ShowAlbum = async album =>
@@ -240,13 +246,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    public Task OpenClipEditorAsync()
+    /// <summary>Opens the merge page for the selected videos, in shelf order.</summary>
+    public Task OpenMergeAsync()
     {
-        if (!CanEditClips || _model is not { } model || !Shelf.HasSelection) return Task.CompletedTask;
+        if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
         var sources = Shelf.SelectedRecords.Select(record => record.ToLibraryVideo()).ToArray();
-        return NavigateAsync(() => new ClipEditorPage(new ClipEditorViewModel(sources, _dependencies.CreateClipEditing(model.Catalog),
-            outputs => PublishOutputsAsync(model, outputs))));
+        return NavigateAsync(() => new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null)));
     }
+
+    private ClipEdits ClipEditsFor(LibraryModel model) =>
+        new(_dependencies.CreateClipEditing(model.Catalog), Jobs, outputs => PublishOutputsAsync(model, outputs));
 
     private static async Task PublishOutputsAsync(LibraryModel model, IReadOnlyList<LibraryVideo> videos)
     {

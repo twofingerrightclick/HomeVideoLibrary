@@ -5,6 +5,7 @@
              xmlns:core="using:HomeVideoLibrary.Core"
              xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
              xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             xmlns:editing="using:HomeVideoLibrary.Desktop.Views.Editing"
              xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.VideoPageView"
              x:DataType="vp:VideoPageViewModel"
@@ -35,6 +36,8 @@
             <TextBlock Classes="legend" Text="UNSAVED" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"/>
           </StackPanel>
           <c:PlasticButton Classes="toolbar" Content="REVERT" Command="{Binding Details.RevertCommand}" ToolTip.Tip="Discard unsaved changes"/>
+          <TextBlock Classes="legend" Text="{Binding SaveBlocker}" Foreground="{DynamicResource Vcr.Brush.Amber}" VerticalAlignment="Center"
+                     TextWrapping="Wrap" MaxWidth="260" IsVisible="{Binding SaveBlocker, Converter={x:Static ObjectConverters.IsNotNull}}"/>
           <c:PlasticButton Classes="toolbar primary" Content="SAVE" Command="{Binding Details.SaveCommand}" ToolTip.Tip="Save changes into the video file (⌘S)"/>
           <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.ChevronDown}" ToolTip.Tip="More">
             <c:PlasticButton.Flyout>
@@ -95,8 +98,10 @@
           </TabItem>
           <TabItem Header="EDIT" ui:Vcr.Icon="{StaticResource Vcr.Icon.Scissors}">
             <Panel>
-              <ContentControl Content="{Binding Edit}"/>
-              <TextBlock Classes="meta" Margin="8,16" TextWrapping="Wrap" Text="Trim and split arrive in U3."
+              <ScrollViewer IsVisible="{Binding Edit, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <editing:EditTab DataContext="{Binding Edit}" Margin="4,4,8,12"/>
+              </ScrollViewer>
+              <TextBlock Classes="meta" Margin="8,16" TextWrapping="Wrap" Text="Editing tools are missing, so trim and split are unavailable."
                          IsVisible="{Binding Edit, Converter={x:Static ObjectConverters.IsNull}}"/>
             </Panel>
           </TabItem>

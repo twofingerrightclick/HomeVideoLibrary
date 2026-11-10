@@ -22,10 +22,12 @@ public sealed class VideoDetailsViewModel : ViewModelBase
     /// <param name="record">The library's view of the video; it fills the drafts before the MKV read finishes.</param>
     /// <param name="whileSaving">Runs the file write; the page closes playback around it where the platform needs that.</param>
     /// <param name="report">Shows a status message on the page.</param>
+    /// <param name="saveBlocker">Why the file must not be written now, or null; the owner raises SaveCommand's
+    /// CanExecuteChanged when it changes.</param>
     /// <param name="lifetime">Cancelled when the page closes.</param>
     public VideoDetailsViewModel(VideoRecord record, IVideoMetadataService metadata, TagSuggestionProvider suggest,
         Func<TimeSpan> playhead, Action<TimeSpan> seek, Func<Func<Task>, Task> whileSaving, Action<string> report,
-        CancellationToken lifetime)
+        Func<string?> saveBlocker, CancellationToken lifetime)
     {
         _video = record.ToLibraryVideo();
         _metadata = metadata; _whileSaving = whileSaving; _report = report; _lifetime = lifetime;
@@ -34,7 +36,8 @@ public sealed class VideoDetailsViewModel : ViewModelBase
         Chapters = new ChaptersPanelViewModel(record.Duration, initial.Chapters, suggest, seek, Changed);
         Tags = new TagListViewModel(initial.Tags, suggest, Changed);
         Frames = new FramesViewModel(_video, metadata, playhead, seek, Changed, report);
-        SaveCommand = new AsyncCommand(SaveAsync, () => CanEdit && IsDirty && IsValid, onError: exception => _report(exception.Message));
+        SaveCommand = new AsyncCommand(SaveAsync, () => CanEdit && IsDirty && IsValid && saveBlocker() is null,
+            onError: exception => _report(exception.Message));
         SaveCommand.PropertyChanged += (_, _) => UpdateCommands();
         RevertCommand = new RelayCommand(Revert, () => (IsDirty || HasExternalChange) && !SaveCommand.IsRunning);
         ApplyBaseline(initial);
