@@ -148,6 +148,60 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
+    public async Task CloseAsksJobsBeforeLeavingPage()
+    {
+        var viewModel = await OpenEditorAsync();
+        var page = viewModel.Page;
+        Editor(viewModel).Title = "unsaved";
+        var job = viewModel.Jobs.Enqueue("render", JobLane.Render, async (_, token) =>
+        {
+            await Task.Delay(Timeout.Infinite, token);
+            return JobOutcome.Done("never");
+        });
+
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.Equal(1, _interaction.CloseAsked);
+        Assert.Equal(0, _interaction.Asked);
+        Assert.Same(page, viewModel.Page);
+        Assert.Equal("unsaved", Editor(viewModel).Title);
+        Assert.Equal(0, _metadata.Saves);
+        Assert.True(job.IsRunning);
+
+        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.Same(page, viewModel.Page);
+        Assert.True(job.IsRunning);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.RequestCloseAsync());
+        Assert.Equal(JobState.Cancelled, job.State);
+        Assert.Equal(0, _metadata.Saves);
+    }
+
+    [Fact]
+    public async Task QuitWhenDoneCanBeCancelledWhileItWaits()
+    {
+        var (viewModel, _) = await OpenLibraryAsync();
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var job = viewModel.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
+        _interaction.CloseChoice = CloseChoice.WaitForJobs;
+
+        var close = viewModel.RequestCloseAsync();
+        Assert.True(viewModel.IsWaitingToQuit);
+        viewModel.CancelQuitCommand.Execute(null);
+        Assert.False(await close);
+        Assert.False(viewModel.IsWaitingToQuit);
+        Assert.True(job.IsRunning);
+
+        var quit = viewModel.RequestCloseAsync();
+        gate.SetResult(JobOutcome.Done("ok"));
+        Assert.True(await quit);
+        Assert.Equal(JobState.Succeeded, job.State);
+    }
+
+    [Fact]
     public async Task CloseAfterFailedSwitchStillCloses()
     {
         var viewModel = await OpenEditorAsync();
