@@ -50,7 +50,8 @@ public sealed class VideoPageViewModel : PageViewModel
     private readonly VideoPageSession _session;
     private readonly CancellationTokenSource _lifetime = new();
     private LibrarySnapshot _snapshot;
-    private string _status = "Loading video…";
+    private string _status = "";
+    private Task _opening = Task.CompletedTask;
     private bool _isInspectorOpen;
     private double _inspectorWidth;
     private int _selectedTab;
@@ -162,15 +163,19 @@ public sealed class VideoPageViewModel : PageViewModel
     /// <summary>Parameter: the tab index (<see cref="InspectorTab"/>).</summary>
     public RelayCommand<int> SelectTabCommand { get; }
 
-    /// <summary>Shows the library's record of this video immediately, then starts playback and reads the MKV together:
-    /// playback never waits for the read, and editing starts when the read is done.</summary>
+    /// <summary>Starts playback and reads the MKV together; the library's record is already shown. Completes when the
+    /// read is done and editing can start. Playback is not awaited: the shell navigates one page at a time, and a slow or
+    /// stuck start must not hold that up. It belongs to the page and ends with it.</summary>
     public override async Task LoadAsync()
     {
         var token = _lifetime.Token;
-        var playback = Player.OpenAsync(_dependencies.StartAt, true, token);
+        _opening = OpenPlaybackAsync(token);
         await Details.LoadAsync(token);
-        if (Details.CanEdit) Report("M adds a chapter at the playhead. Save writes your changes into the video file.");
-        try { await playback; }
+    }
+
+    private async Task OpenPlaybackAsync(CancellationToken cancellationToken)
+    {
+        try { await Player.OpenAsync(_dependencies.StartAt, true, cancellationToken); }
         catch (OperationCanceledException) { }
         catch (Exception exception) { Report(exception.Message); }
     }
@@ -219,6 +224,7 @@ public sealed class VideoPageViewModel : PageViewModel
     {
         if (_lifetime.IsCancellationRequested) return;
         _lifetime.Cancel();
+        await _opening;
         Fullscreen.Dispose();
         Preview.Dispose();
         await Player.DisposeAsync();

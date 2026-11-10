@@ -133,17 +133,20 @@ public sealed class VideoPageTests
     }
 
     [Fact]
-    public async Task EditingIsAvailableWhilePlaybackIsStillOpening()
+    public async Task LoadingFinishesAndEditingStartsWhilePlaybackIsStillOpening()
     {
         var opening = new TaskCompletionSource();
-        await using var page = Create(new FakeMetadata(), new FakePlayback { OpenGate = opening.Task });
+        var playback = new FakePlayback { OpenGate = opening.Task };
+        var page = Create(new FakeMetadata(), playback);
 
-        var loading = page.LoadAsync();
+        await page.LoadAsync();
 
         Assert.True(page.Details.CanEdit);
-        Assert.False(loading.IsCompleted);
+        Assert.False(page.Player.IsPlaying);
         opening.SetResult();
-        await loading;
+        Assert.True(page.Player.IsPlaying);
+        await page.DisposeAsync();
+        Assert.Contains("dispose", playback.Calls);
     }
 
     [Fact]
