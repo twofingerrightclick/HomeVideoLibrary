@@ -1,12 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Media.Imaging;
 using Avalonia.Animation;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.Desktop.ViewModels;
-using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
@@ -25,10 +23,8 @@ public sealed partial class TapeView : UserControl
     };
     private readonly List<IDisposable> _visibilitySubscriptions = [];
     private TapePreviewSession? _session;
-    private CancellationTokenSource? _request;
+    private CancellationTokenSource? _fade;
     private int _bucket = -1;
-    private long _version;
-    private Bitmap? _current, _previous;
 
     public TapeView()
     {
@@ -73,49 +69,51 @@ public sealed partial class TapeView : UserControl
         var bucket = Math.Clamp((int)(x / Math.Max(1, width) * TapePreviewSession.Buckets), 0, TapePreviewSession.Buckets - 1);
         if (bucket == _bucket) return;
         _bucket = bucket;
-        _request?.Cancel();
-        var cancellation = new CancellationTokenSource(); _request = cancellation;
-        _ = ShowFrameAsync(tape, bucket, ++_version, cancellation);
+        if (_session is null)
+        {
+            if (tape.CreatePreviewSession() is not { } session) return;
+            _session = session;
+            _ = ShowWhenReadyAsync(session);
+        }
+        ShowBucket(_session);
     }
 
-    /// <summary>Loads, decodes and fades in one preview frame; never throws (failures hide the popup).</summary>
-    private async Task ShowFrameAsync(TapeViewModel tape, int bucket, long version, CancellationTokenSource cancellation)
+    /// <summary>Shows the hovered bucket's frame, or its time over a placeholder while the strip is built. Decoding a
+    /// built strip is quick, so meanwhile the popup is left as it is rather than flashing the placeholder.</summary>
+    private void ShowBucket(TapePreviewSession session)
     {
-        try
+        if (session.Strip is { IsCompleted: true, Result: null })
         {
-            if (_session is null)
-            {
-                _session = tape.CreatePreviewSession();
-                if (_session is null) return;
-            }
-            var frame = await _session.GetAsync(bucket, cancellation.Token);
-            var bitmap = await Task.Run(() =>
-            {
-                using var stream = File.OpenRead(frame.ImagePath);
-                return Bitmap.DecodeToWidth(stream, PreviewCache.FrameWidth);
-            }, cancellation.Token);
-            if (version != _version || cancellation.IsCancellationRequested) { bitmap.Dispose(); return; }
-            _previous?.Dispose(); _previous = _current; _current = bitmap;
-            PreviousPreview.Source = _previous; CurrentPreview.Source = _current;
-            PreviewTime.Text = HomeVideoLibrary.UI.Logic.ScrubTimeline.FormatTimestamp(frame.Position);
-            PreviewPopup.IsOpen = true;
-            await FadeIn.RunAsync(CurrentPreview, cancellation.Token);
+            // Preview is decoration: a tape without a strip shows no popup.
+            PreviewPopup.IsOpen = false;
+            return;
         }
-        catch (OperationCanceledException) { }
-        catch (Exception exception)
-        {
-            // Preview is decoration: a failed frame just hides the popup (PreviewCache stops retrying the video).
-            System.Diagnostics.Trace.TraceWarning($"Hover preview failed: {exception.Message}");
-            if (version == _version) PreviewPopup.IsOpen = false;
-        }
-        finally { if (_request == cancellation) _request = null; cancellation.Dispose(); }
+        var frame = session.FrameOf(_bucket);
+        if (frame is null && !session.IsBuilding) return;
+        PreviewTime.Text = HomeVideoLibrary.UI.Logic.ScrubTimeline.FormatTimestamp(session.PositionOf(_bucket));
+        PreviewPopup.IsOpen = true;
+        PreparingPlate.IsVisible = frame is null;
+        if (frame is null) return;
+        PreviousPreview.Source = CurrentPreview.Source;
+        CurrentPreview.Source = frame;
+        _fade?.Cancel();
+        _fade = new CancellationTokenSource();
+        _ = FadeIn.RunAsync(CurrentPreview, _fade.Token);
+    }
+
+    private async Task ShowWhenReadyAsync(TapePreviewSession session)
+    {
+        await session.Strip;
+        if (session == _session) ShowBucket(session);
     }
 
     private void StopPreview()
     {
-        ++_version; _bucket = -1; _request?.Cancel(); _request = null;
-        _session?.Dispose(); _session = null; PreviewPopup.IsOpen = false;
+        _bucket = -1;
+        _fade?.Cancel(); _fade = null;
+        PreviewPopup.IsOpen = false; PreparingPlate.IsVisible = false;
+        // The crops show the session's strip, so they go before it is disposed.
         CurrentPreview.Source = null; PreviousPreview.Source = null;
-        _current?.Dispose(); _previous?.Dispose(); _current = null; _previous = null;
+        _session?.Dispose(); _session = null;
     }
 }
