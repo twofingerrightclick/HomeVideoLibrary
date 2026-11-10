@@ -75,7 +75,9 @@ public sealed class VideoPageViewModel : PageViewModel
         Player.PropertyChanged += PlayerChanged;
         Fullscreen.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(FullscreenViewModel.IsFullscreen)) OnPropertyChanged(nameof(IsInspectorShown));
+            if (args.PropertyName != nameof(FullscreenViewModel.IsFullscreen)) return;
+            IsImmersive = Fullscreen.IsFullscreen;
+            OnPropertyChanged(nameof(IsInspectorShown));
         };
         Details.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(VideoDetailsViewModel.Title)) OnPropertyChanged(nameof(DisplayTitle)); };
         Details.Chapters.PropertyChanged += (_, args) =>

@@ -648,6 +648,7 @@ public sealed class VideoPageTests
 
         fullscreen.ToggleCommand.Execute(null);
         Assert.True(fullscreen.IsFullscreen);
+        Assert.True(page.IsImmersive);
         Assert.True(fullscreen.AreControlsShown);
         Assert.False(page.IsInspectorShown);
         idle[^1].SetResult();
@@ -665,6 +666,7 @@ public sealed class VideoPageTests
         fullscreen.ExitCommand.Execute(null);
         Assert.False(fullscreen.IsFullscreen);
         Assert.False(fullscreen.ExitCommand.CanExecute(null));
+        Assert.False(page.IsImmersive);
         Assert.True(page.IsInspectorShown);
     }
 
