@@ -57,6 +57,9 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - A search that matched a chapter adds a "▸ 12:34 · title" line that opens the tape at that chapter.
 - **Spine:** VhsSpine.
   - Its printed sticker art runs vertically, as on a real spine label; the handwritten label reads horizontally.
+  - A title too long for one line shrinks, down to 24 px on screen; then it wraps to two lines at the largest size
+    (24 px or more) that fits; then it ends in an ellipsis on two lines at 24 px. A spine under about 86 px tall has no
+    room for two 24 px lines, so there it trims on one line.
   - Sticker stock, accent and brand mark are a stable pick per video.
   - The shell shows the running time, or MISSING / UNREADABLE (details in the tooltip).
   - A selection checkbox sits on the leading edge and is the only sign of selection; a ring shows keyboard focus only.
