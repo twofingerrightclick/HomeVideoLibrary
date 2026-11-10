@@ -55,6 +55,33 @@ public sealed class PreviewCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task ACaptureRunningWhenItsVideoIsForgottenLeavesNothingBehind()
+    {
+        var previews = new PreviewCache(Paths, _files);
+        var finishing = Guid.NewGuid();
+        var cancelled = Guid.NewGuid();
+        var started = new CountdownEvent(2);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _files.BeforeCapture = async token => { started.Signal(); await release.Task.WaitAsync(token); };
+        using var cancellation = new CancellationTokenSource();
+        var finished = previews.GetAsync(finishing, null, "a.mkv", TimeSpan.Zero, 0, default);
+        var stopped = previews.GetAsync(cancelled, null, "b.mkv", TimeSpan.Zero, 0, cancellation.Token);
+        Assert.True(started.Wait(TimeSpan.FromSeconds(5)));
+
+        previews.Forget(finishing);
+        previews.Forget(cancelled);
+        cancellation.Cancel();
+        release.SetResult();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => finished);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stopped);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => previews.GetAsync(finishing, null, "a.mkv", TimeSpan.Zero, 1, default));
+        Assert.Equal(0, previews.Count);
+        Assert.False(Directory.Exists(Path.Combine(Paths.PreviewDirectory, finishing.ToString("N"))));
+        Assert.False(Directory.Exists(Path.Combine(Paths.PreviewDirectory, cancelled.ToString("N"))));
+    }
+
+    [Fact]
     public async Task RealCaptureWritesASquarePixelJpeg()
     {
         var catalog = await CreateCatalogAsync(_root);
