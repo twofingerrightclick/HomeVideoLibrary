@@ -68,6 +68,44 @@ public sealed class FirstRunTests : IDisposable
     }
 
     [Fact]
+    public async Task WithoutASavedLibraryTheShelfOffersToCreateOrOpenOne()
+    {
+        var viewModel = await LaunchAsync();
+
+        AssertNoLibraryOpen(viewModel);
+        Assert.Equal("A home for your home videos", viewModel.EmptyTitle);
+        Assert.Contains("Create a library folder", viewModel.EmptyMessage);
+    }
+
+    [Fact]
+    public async Task AnUnavailableSavedLibraryIsNamedAndNotRecreated()
+    {
+        var missing = Path.Combine(_root, "Unplugged", "HomeVideoLibrary");
+
+        var viewModel = await LaunchAsync(missing);
+
+        AssertNoLibraryOpen(viewModel);
+        Assert.Equal("Library not found", viewModel.EmptyTitle);
+        Assert.Contains($"“{missing}” could not be found", viewModel.EmptyMessage);
+        Assert.False(Directory.Exists(missing));
+    }
+
+    [Fact]
+    public async Task ASavedLibraryThatFailsToOpenIsNamedAndTheStatusSaysWhy()
+    {
+        var root = Path.Combine(_root, "Held");
+        await CreateCatalogAsync(root);
+        using var held = LibraryLock.TryAcquire(new LibraryPaths(root));
+
+        var viewModel = await LaunchAsync(root);
+
+        AssertNoLibraryOpen(viewModel);
+        Assert.Equal("Library could not be opened", viewModel.EmptyTitle);
+        Assert.Contains($"“{root}” could not be opened", viewModel.EmptyMessage);
+        Assert.Contains("open in another", viewModel.Status);
+    }
+
+    [Fact]
     public async Task CreateMakesAHomeVideoLibraryFolderInTheChosenOneAndOpensIt()
     {
         var parent = Folder("Movies");

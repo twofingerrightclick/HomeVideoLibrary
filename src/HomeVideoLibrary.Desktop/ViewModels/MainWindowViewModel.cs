@@ -66,6 +66,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private string _status = "Your original files stay untouched.";
     private string _toolWarning = "", _recoveryNotice = "", _toast = "";
     private bool _isDrawerOpen = true, _isDraggingTapes;
+    /// <summary>The saved library that did not reopen at launch, and whether its folder was missing.</summary>
+    private (string Root, bool Missing)? _unopened;
     private PageViewModel? _page;
     private readonly VideoPageSession _videoPageSession = new();
 
@@ -162,12 +164,24 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool IsDrawerOpen { get => _isDrawerOpen; set => SetProperty(ref _isDrawerOpen, value); }
     public bool IsDraggingTapes { get => _isDraggingTapes; set => SetProperty(ref _isDraggingTapes, value); }
     public bool HasLibrary => _model is not null;
-    public string EmptyTitle => !HasLibrary ? "A home for your home videos" : Shelf.SearchText.Trim().Length > 0 ? "No matching videos"
+    public string EmptyTitle => !HasLibrary ? NoLibraryTitle : Shelf.SearchText.Trim().Length > 0 ? "No matching videos"
         : !Albums.IsAllVideos ? "No videos in this view" : "Your collection starts here";
-    public string EmptyMessage => !HasLibrary ? "Choose a library folder, then import your videos. Your originals stay untouched."
+    public string EmptyMessage => !HasLibrary ? NoLibraryMessage
         : Shelf.SearchText.Trim().Length > 0 ? "Try another description, tag or chapter, or clear your search to see the collection."
         : !Albums.IsAllVideos ? "Use Add videos to find videos outside this album, or return to All videos."
         : "Import your first videos to start your chronological collection. Your originals stay untouched.";
+    private string NoLibraryTitle => _unopened switch
+    {
+        null => "A home for your home videos",
+        { Missing: true } => "Library not found",
+        _ => "Library could not be opened",
+    };
+    private string NoLibraryMessage => _unopened switch
+    {
+        null => "Create a library folder for your videos, or open one you already have. Your originals stay untouched.",
+        (var root, true) => $"“{root}” could not be found. Reconnect its drive, or create or open another library.",
+        (var root, false) => $"“{root}” could not be opened; the status line below says why.",
+    };
     public int TotalCount => _shown.Videos.Count;
 
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
@@ -445,19 +459,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Applies the saved settings and reopens the saved library.</summary>
+    /// <summary>Applies the saved settings and reopens the saved library. When it does not reopen, the empty shelf says
+    /// which folder was missing or could not be opened.</summary>
     public async Task RestoreLibraryAsync()
     {
         try
         {
             await Settings.LoadAsync();
-            var root = await _dependencies.Settings.LoadRootAsync();
-            if (root is not null)
-            {
-                if (!Directory.Exists(root))
-                    throw new DirectoryNotFoundException("The saved library folder is unavailable. Reconnect its drive or choose another folder.");
-                await OpenLibraryAsync(root);
-            }
+            if (await _dependencies.Settings.LoadRootAsync() is not { } root) return;
+            var missing = !Directory.Exists(root);
+            if (!missing) await OpenLibraryAsync(root);
+            if (HasLibrary) return;
+            _unopened = (root, missing);
+            NotifyViewState();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { Status = exception.Message; }
     }
