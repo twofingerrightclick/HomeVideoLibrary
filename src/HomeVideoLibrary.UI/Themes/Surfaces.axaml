@@ -1,0 +1,76 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:HomeVideoLibrary.UI.Controls">
+  <!-- Molded surfaces as Border classes, and the printed type scale as TextBlock classes. -->
+
+  <!-- Raised faceplate panel: inspector sections, cards, popovers. -->
+  <Style Selector="Border.bezel">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Faceplate}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Panel}"/>
+    <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Bezel}"/>
+    <Setter Property="Padding" Value="{DynamicResource Vcr.Padding.Panel}"/>
+  </Style>
+
+  <!-- Recessed slot in the chassis: groups of keys, the tab strip track, sunken lists. -->
+  <Style Selector="Border.well">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Well}"/>
+    <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Well}"/>
+    <Setter Property="Padding" Value="{DynamicResource Vcr.Padding.Well}"/>
+  </Style>
+
+  <!-- Smoked display window, e.g. behind a counter or status readout. -->
+  <Style Selector="Border.glass">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Glass}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Glass.Edge}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="3"/>
+    <Setter Property="BoxShadow" Value="0 2 6 0 #CC000000 inset, 0 1 0 0 #1AFFFFFF"/>
+    <Setter Property="Padding" Value="10,6"/>
+  </Style>
+
+  <!-- Whole-window chassis background for shells and drawers. -->
+  <Style Selector="Border.chassis">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis}"/>
+  </Style>
+
+  <!-- Silkscreen caps for small labels printed on the body (field captions, units). -->
+  <Style Selector="TextBlock.legend">
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Legend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="LetterSpacing" Value="{DynamicResource Vcr.LetterSpacing.Legend}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+  </Style>
+
+  <!-- Panel and page titles in the legend face. -->
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="LetterSpacing" Value="0.5"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+  </Style>
+
+  <!-- Every preview or tooltip that follows the pointer opens above its target (the pointer is on the target), and
+       flips below only when the screen has no room above. Hosts set only HorizontalOffset to track the pointer. -->
+  <Style Selector="Popup.pointer-preview">
+    <Setter Property="Placement" Value="Top"/>
+    <Setter Property="VerticalOffset" Value="-6"/>
+    <Setter Property="PlacementConstraintAdjustment" Value="FlipY, SlideX"/>
+    <Setter Property="IsLightDismissEnabled" Value="False"/>
+  </Style>
+
+  <!-- Reduced motion: a host adds this class to its window when the user asks for less motion; tapes then stay
+       still on hover. -->
+  <Style Selector="Window.reduced-motion c|VhsSpine /template/ Border#PART_Shell">
+    <Setter Property="Transitions" Value="{x:Null}"/>
+    <Setter Property="RenderTransform" Value="{x:Null}"/>
+  </Style>
+
+  <!-- Readable secondary metadata (dates, durations, counts). -->
+  <Style Selector="TextBlock.meta">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+  </Style>
+</Styles>

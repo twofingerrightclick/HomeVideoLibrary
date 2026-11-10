@@ -1,0 +1,132 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace HomeVideoLibrary.Infrastructure.Editing;
+
+/// <summary>Renames that are on disk when they return, following PostgreSQL's <c>durable_rename</c>: rename, flush the
+/// file under its new name, flush the directories involved. On POSIX systems a rename lives in directory data, which
+/// flushing the file does not write (F_FULLFSYNC on macOS also empties the drive's cache). Windows cannot flush a
+/// directory handle; the move uses MOVEFILE_WRITE_THROUGH and the file is flushed with FlushFileBuffers. As in
+/// PostgreSQL, a file system that refuses to flush directories at all (EINVAL, EBADF, EACCES) is accepted; any other
+/// flush failure throws, so a caller can stop before depending on the rename.</summary>
+internal static class DurableFile
+{
+    private const int ReadOnly = 0;
+    private const int CloseOnExecMac = 0x1000000, CloseOnExecLinux = 0x80000;
+    private const int FullFileSync = 51;
+    private const int MoveFileWriteThrough = 0x8;
+    private static readonly int[] DirectoryFlushUnsupported = [9, 13, 22]; // EBADF, EACCES, EINVAL
+    private static bool _unavailable;
+
+    /// <summary>Moves <paramref name="source"/> to <paramref name="destination"/> (never replacing it) and makes the
+    /// change durable.</summary>
+    public static void Move(string source, string destination)
+    {
+        if (OperatingSystem.IsWindows() && !_unavailable)
+        {
+            try
+            {
+                if (!Windows.MoveFileEx(source, destination, MoveFileWriteThrough))
+                    throw new IOException($"Could not move {source} to {destination}.", Marshal.GetHRForLastWin32Error());
+                FlushFile(destination);
+                return;
+            }
+            catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+            {
+                Unavailable(exception);
+            }
+        }
+        File.Move(source, destination, overwrite: false);
+        FlushFile(destination);
+        FlushDirectory(Path.GetDirectoryName(Path.GetFullPath(destination))!);
+        var sourceDirectory = Path.GetDirectoryName(Path.GetFullPath(source))!;
+        if (!string.Equals(sourceDirectory, Path.GetDirectoryName(Path.GetFullPath(destination)), StringComparison.Ordinal))
+            FlushDirectory(sourceDirectory);
+    }
+
+    private static void FlushFile(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        stream.Flush(flushToDisk: true);
+    }
+
+    /// <summary>Flushes <paramref name="directory"/>'s entries on POSIX systems.</summary>
+    /// <exception cref="IOException">The file system failed the flush.</exception>
+    public static void FlushDirectory(string directory)
+    {
+        if (OperatingSystem.IsWindows() || _unavailable) return;
+        try
+        {
+            var path = Encoding.UTF8.GetBytes(directory + "\0");
+            var macOS = OperatingSystem.IsMacOS();
+            var descriptor = macOS ? Mac.Open(path, ReadOnly | CloseOnExecMac) : Linux.Open(path, ReadOnly | CloseOnExecLinux);
+            if (descriptor < 0)
+            {
+                Refused(directory, Marshal.GetLastPInvokeError());
+                return;
+            }
+            try
+            {
+                var result = macOS ? Mac.Control(descriptor, FullFileSync, 0) : Linux.Sync(descriptor);
+                if (result != 0 && macOS) result = Mac.Sync(descriptor); // F_FULLFSYNC is refused by some file systems.
+                if (result != 0) Refused(directory, Marshal.GetLastPInvokeError());
+            }
+            finally
+            {
+                if (macOS) Mac.Close(descriptor); else Linux.Close(descriptor);
+            }
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+            Unavailable(exception);
+        }
+    }
+
+    private static void Refused(string directory, int errno)
+    {
+        if (!DirectoryFlushUnsupported.Contains(errno))
+            throw new IOException($"Could not flush {directory} to disk (errno {errno}).");
+        Trace.TraceWarning($"{directory} cannot be flushed on this file system (errno {errno}).");
+    }
+
+    private static void Unavailable(Exception exception)
+    {
+        _unavailable = true;
+        Trace.TraceWarning($"Durable renames are unavailable on this system; renames are not flushed. {exception.Message}");
+    }
+
+    private static class Mac
+    {
+        [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+        public static extern int Open(byte[] path, int flags);
+
+        [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+        public static extern int Sync(int descriptor);
+
+        [DllImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+        public static extern int Control(int descriptor, int command, int argument);
+
+        [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+        public static extern int Close(int descriptor);
+    }
+
+    private static class Linux
+    {
+        [DllImport("libc.so.6", EntryPoint = "open", SetLastError = true)]
+        public static extern int Open(byte[] path, int flags);
+
+        [DllImport("libc.so.6", EntryPoint = "fsync", SetLastError = true)]
+        public static extern int Sync(int descriptor);
+
+        [DllImport("libc.so.6", EntryPoint = "close", SetLastError = true)]
+        public static extern int Close(int descriptor);
+    }
+
+    private static class Windows
+    {
+        [DllImport("kernel32.dll", EntryPoint = "MoveFileExW", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);
+    }
+}

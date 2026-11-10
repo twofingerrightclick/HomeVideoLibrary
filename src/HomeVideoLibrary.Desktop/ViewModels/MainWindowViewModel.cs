@@ -1,336 +1,734 @@
-using System.Collections.ObjectModel;
-using HomeVideoLibrary.Core;
-using HomeVideoLibrary.Infrastructure;
-using HomeVideoLibrary.Desktop.Playback;
+using System.Diagnostics;
 using Avalonia.Threading;
+using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
+using HomeVideoLibrary.Infrastructure;
+using HomeVideoLibrary.UI.Audio;
+using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
+/// <summary>The per-library MKV services. All are the same <see cref="MatroskaMetadataService"/> in the app.</summary>
+/// <param name="Identity">Writes missing titles and dates into older videos (the one-time <see cref="IdentityBackfill"/>);
+/// null skips the backfill.</param>
+public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataService Metadata, IIdentityWriter? Identity = null);
+
+/// <summary>External services of <see cref="MainWindowViewModel"/>; the defaults are the real ones.</summary>
+public sealed record MainWindowDependencies
+{
+    /// <summary>Modal UI (questions, pickers, settings). Required: every caller decides how they are answered.</summary>
+    public required IInteraction Interaction { get; init; }
+    public LibrarySettings Settings { get; init; } = new();
+    public IClickSoundService Sounds { get; init; } = ClickSounds.Service;
+    public Func<LibraryCatalog, LibraryServices> CreateServices { get; init; } = catalog =>
+    {
+        var service = new MatroskaMetadataService(catalog, MediaTools.Discover());
+        return new LibraryServices(service, service, service);
+    };
+    public Func<LibraryCatalog, IVideoImporter> CreateImporter { get; init; } = catalog => new VideoImporter(catalog, MediaTools.Discover());
+    public Func<LibraryCatalog, IClipEditingService> CreateClipEditing { get; init; } = catalog => new ClipEditingService(catalog, MediaTools.Discover());
+    public Func<CancellationToken, Task<IReadOnlyList<string>>> FindUnavailableTools { get; init; } =
+        cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
+    public Func<LibraryLock, CancellationToken, Task> SweepScratch { get; init; } = ScratchSweeper.SweepAsync;
+    public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
+    public IFileTrash Trash { get; init; } = FileTrash.ForCurrentPlatform();
+    /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
+    public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
+    /// <summary>The clock for toasts and job estimates.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+}
+
+/// <summary>The window shell and the only adapter from <see cref="LibraryModel"/> to the UI: it opens and releases the
+/// library, marshals model changes onto the UI thread once, and composes the shelf, albums, import and settings view
+/// models plus the current page.</summary>
 public sealed class MainWindowViewModel : ViewModelBase
 {
-    public string Title => "Home Video Library";
-    public string WelcomeMessage => "A home for the moments you want to keep.";
-    private readonly LibrarySettings _settings = new();
-    private LibraryCatalog? _catalog;
-    private CancellationTokenSource? _importCancellation;
-    private string _libraryRoot = "Choose a library folder to begin";
+    private static readonly TimeSpan ActivationStatInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ToastDuration = TimeSpan.FromSeconds(3);
+    private readonly MainWindowDependencies _dependencies;
+    private LibraryLock? _lock;
+    private LibraryModel? _model;
+    private LibraryServices? _services;
+    private IdentityBackfill? _backfill;
+    private PreviewCache? _previews;
+    /// <summary>Builds the open library's hover strips; null without a library or without the media tools.</summary>
+    private HoverStripScheduler? _strips;
+    private LibrarySnapshot _shown = LibrarySnapshot.Empty;
+    private readonly SemaphoreSlim _navigation = new(1, 1);
+    private Task<bool>? _closing;
+    private CancellationTokenSource? _quitWait;
+    private Task? _opening;
+    private object? _shownToast;
+    private DateTime _lastActivationStat;
+    private IReadOnlyList<string> _unavailableTools = [];
     private string _status = "Your original files stay untouched.";
-    private bool _isBusy;
-    private double _progress;
-    private VideoEditorViewModel? _editor;
-    private bool _closeWarning;
-    private bool _editorClosing;
-    private readonly EditorExitState _exitState = new();
-    private LibraryVideo? _selectedVideo;
-    private AlbumRepository? _albumRepository;
-    private LibrarySearchIndex? _searchIndex;
-    private CancellationTokenSource? _indexCancellation, _searchCancellation;
-    private long _libraryGeneration, _queryVersion;
-    private bool _isIndexing, _isChoosingAlbumVideos;
-    private string _searchText = "", _albumName = "", _indexStatus = "";
-    private VideoAlbum? _currentAlbum, _targetAlbum;
-    private IReadOnlyList<LibraryVideo> _selectedVideos = [];
-    private ClipEditorViewModel? _clipEditor;
+    private string _toolWarning = "", _recoveryNotice = "", _toast = "";
+    private bool _isDrawerOpen = true, _isDraggingTapes;
+    /// <summary>The saved library that did not reopen at launch, and whether its folder was missing.</summary>
+    private (string Root, bool Missing)? _unopened;
+    private PageViewModel? _page;
+    private readonly VideoPageSession _videoPageSession = new();
 
-    private bool _isDrawerOpen = true;
-    private bool _isDraggingTapes;
-    public bool IsDraggingTapes { get => _isDraggingTapes; set => SetProperty(ref _isDraggingTapes, value); }
-    private int _tapeColumns = 1;
-    public bool IsDrawerOpen { get => _isDrawerOpen; set => SetProperty(ref _isDrawerOpen, value); }
-    public ObservableCollection<TapeRow> TapeRows { get; } = [];
-    public IReadOnlyList<TapeViewModel> Tapes { get; private set; } = [];
-    public bool IsEmpty => Videos.Count == 0 && !HasEditor;
-    public bool HasLibrary => _catalog is not null;
-    public string EmptyTitle => !HasLibrary ? "A home for your home videos" : !string.IsNullOrWhiteSpace(SearchText) ? "No matching videos" : HasAlbum ? "No videos in this view" : "Your collection starts here";
-    public string EmptyMessage => !HasLibrary ? "Choose a library folder, then import your videos. Your originals stay untouched." : !string.IsNullOrWhiteSpace(SearchText) ? "Try another description, tag or chapter, or clear your search to see the collection." : HasAlbum ? "Use Add videos to find videos outside this album, or return to All videos." : "Import your first videos to start your chronological collection. Your originals stay untouched.";
-    public string LibraryCount => $"{Videos.Count} {(Videos.Count == 1 ? "video" : "videos")} · newest first";
-    public string SelectionLabel => $"{SelectedVideos.Count} selected";
-    public void SetTapeColumns(int columns)
+    public MainWindowViewModel(MainWindowDependencies dependencies)
     {
-        if (_tapeColumns == columns) return;
-        _tapeColumns = columns; RebuildRows();
+        _dependencies = dependencies;
+        Jobs = new JobQueue(OpenJobOutputAsync, dependencies.Time);
+        Jobs.Finished += JobFinished;
+        Jobs.Drained += LaneDrained;
+        Jobs.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(JobQueue.ActiveCount)) return;
+            UpdateCommands();
+            _strips?.BusyChanged();
+        };
+        Shelf = new ShelfViewModel(CreatePreviewSession, (record, at) => OpenVideoAsync(record, at));
+        Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
+        Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
+            message => Status = message);
+        var holders = new ShellVideoHolders(() => _strips, () => _previews, dependencies.Post);
+        Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash, holders), Shelf, Jobs, dependencies.Interaction,
+            LeavePagesShowingAsync, () => IsSettled && _lock is not null, message => Status = message, RefreshView);
+        Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
+        Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
+            OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
+        Settings.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(SettingsViewModel.IsIndexing)) _strips?.BusyChanged(); };
+        Shelf.SelectionChanged += UpdateCommands;
+        Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
+        Albums.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(AlbumsViewModel.Current) or nameof(AlbumsViewModel.IsAddingVideos)) UpdateCommands();
+        };
+
+        OpenSettingsCommand = new AsyncCommand(_ => dependencies.Interaction.ShowSettingsAsync(Settings), context: "Settings");
+        PlaySelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record) : Task.CompletedTask,
+            () => Shelf.HasSelection, context: "Open video");
+        TrimSelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record, tab: InspectorTab.Edit) : Task.CompletedTask,
+            () => Shelf.SelectedCount == 1 && CanEditClips, context: "Trim or split");
+        MergeSelectedCommand = new AsyncCommand(_ => OpenMergeAsync(), () => Shelf.SelectedCount >= 2 && CanEditClips, context: "Merge");
+        DeleteSelectedCommand = new RelayCommand(() => DeleteTarget?.Execute(null), () => DeleteTarget?.CanExecute(null) == true);
+        BackCommand = new AsyncCommand(_ => NavigateAsync(() => null), () => Page is not null, context: "Back to library");
+        FocusSearchCommand = new AsyncCommand(_ => FocusSearchAsync(), context: "Search");
+        CancelQuitCommand = new RelayCommand(() => _quitWait?.Cancel(), () => IsWaitingToQuit);
     }
-    private void RebuildTapes()
+
+    public string Title => "Home Video Library";
+
+    /// <summary>The open library's model; null until a library is open.</summary>
+    public LibraryModel? Model => _model;
+    public TagIndex Tags => _model?.Snapshot.Tags ?? TagIndex.Empty;
+
+    /// <summary>Tag autocomplete over the current snapshot's index: a pure read on the UI thread, so a tag saved on one
+    /// video is suggested on the next as soon as its delta lands.</summary>
+    public TagSuggestionProvider SuggestTags => (query, exclude, max) =>
+        Tags.Suggest(query, max, exclude).Select(suggestion => new TagFrequency(suggestion.Tag, suggestion.Uses)).ToArray();
+
+    public ShelfViewModel Shelf { get; }
+    public AlbumsViewModel Albums { get; }
+    public ImportViewModel Import { get; }
+    public SettingsViewModel Settings { get; }
+    public TrashViewModel Trash { get; }
+    /// <summary>Background imports and edits, shown in the activity drawer.</summary>
+    public JobQueue Jobs { get; }
+
+    public AsyncCommand OpenSettingsCommand { get; }
+    public AsyncCommand PlaySelectedCommand { get; }
+    public AsyncCommand TrimSelectedCommand { get; }
+    public AsyncCommand MergeSelectedCommand { get; }
+    /// <summary>Delete: removes the selection from the shown album, or moves it to the trash when a trash is available.</summary>
+    public RelayCommand DeleteSelectedCommand { get; }
+    public AsyncCommand BackCommand { get; }
+    /// <summary>Returns to the shelf (through the leave prompt) and asks the view to focus the search field.</summary>
+    public AsyncCommand FocusSearchCommand { get; }
+
+    /// <summary>Keeps the app open while a close waits for jobs to finish ("quit when done").</summary>
+    public RelayCommand CancelQuitCommand { get; }
+    public bool IsWaitingToQuit => QuitWait is not null;
+
+    /// <summary>The wait of a close for jobs to finish; cancelling it keeps the app open.</summary>
+    private CancellationTokenSource? QuitWait
     {
-        var selectedIds = SelectedVideos.Select(video => video.Id).ToHashSet();
-        var focusedId = SelectedVideo?.Id;
-        Tapes = Videos.OrderByDescending(video => video.RecordedAt).ThenBy(video => video.Id)
-            .Select(video => new TapeViewModel(video, UpdateTapeSelection, selectedIds.Contains(video.Id))).ToArray();
-        SetSelectedVideos(Tapes.Where(tape => tape.IsSelected).Select(tape => tape.Video));
-        SelectedVideo = Videos.FirstOrDefault(video => video.Id == focusedId) ?? SelectedVideos.FirstOrDefault();
-        RebuildRows(); OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(LibraryCount));
-        OnPropertyChanged(nameof(HasLibrary)); OnPropertyChanged(nameof(EmptyTitle)); OnPropertyChanged(nameof(EmptyMessage));
-    }
-    private void RebuildRows()
-    {
-        TapeRows.Clear();
-        for (var i = 0; i < Tapes.Count; i += _tapeColumns)
-            TapeRows.Add(new TapeRow(Tapes[i], _tapeColumns == 2 && i + 1 < Tapes.Count ? Tapes[i + 1] : null));
-    }
-    private void UpdateTapeSelection()
-    {
-        SetSelectedVideos(Tapes.Where(tape => tape.IsSelected).Select(tape => tape.Video));
-        SelectedVideo = SelectedVideos.FirstOrDefault(); OnPropertyChanged(nameof(SelectionLabel));
-    }
-    public void ToggleTapeSelection(TapeViewModel tape) => tape.IsSelected = !tape.IsSelected;
-    public IVideoMetadataService? CreatePreviewService() => _catalog is null ? null : new MatroskaMetadataService(_catalog, MediaTools.Discover());
-    public ObservableCollection<LibraryVideo> Videos { get; } = [];
-    public ObservableCollection<VideoAlbum> Albums { get; } = [];
-    public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) _ = RefreshVideosAsync(debounce: true); } }
-    public string AlbumName { get => _albumName; set => SetProperty(ref _albumName, value); }
-    public string IndexStatus { get => _indexStatus; private set => SetProperty(ref _indexStatus, value); }
-    public bool IsIndexing { get => _isIndexing; private set => SetProperty(ref _isIndexing, value); }
-    public VideoAlbum? CurrentAlbum
-    {
-        get => _currentAlbum;
+        get => _quitWait;
         set
         {
-            if (!SetProperty(ref _currentAlbum, value)) return;
-            AlbumName = value?.Name ?? ""; IsChoosingAlbumVideos = false;
-            OnPropertyChanged(nameof(HasAlbum)); OnPropertyChanged(nameof(CurrentViewTitle));
-            _ = RefreshVideosAsync();
+            _quitWait = value;
+            OnPropertyChanged(nameof(IsWaitingToQuit));
+            CancelQuitCommand.RaiseCanExecuteChanged();
         }
     }
-    public VideoAlbum? TargetAlbum { get => _targetAlbum; set { SetProperty(ref _targetAlbum, value); OnPropertyChanged(nameof(CanAddSelected)); } }
-    public bool HasAlbum => CurrentAlbum is not null;
-    public bool IsChoosingAlbumVideos { get => _isChoosingAlbumVideos; private set { SetProperty(ref _isChoosingAlbumVideos, value); OnPropertyChanged(nameof(CurrentViewTitle)); } }
-    public string CurrentViewTitle => IsChoosingAlbumVideos ? $"Add videos to {CurrentAlbum?.Name}" : CurrentAlbum?.Name ?? "All videos";
-    public IReadOnlyList<LibraryVideo> SelectedVideos => _selectedVideos;
-    public bool CanAddSelected => TargetAlbum is not null && SelectedVideos.Count > 0 && !IsBusy;
-    public void SetSelectedVideos(IEnumerable<LibraryVideo> videos) { _selectedVideos = videos.ToArray(); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); OnPropertyChanged(nameof(SelectionLabel)); }
-    public string LibraryRoot { get => _libraryRoot; private set => SetProperty(ref _libraryRoot, value); }
+
+    /// <summary>Raised when the view should move keyboard focus to the search field.</summary>
+    public event Action? SearchFocusRequested;
+
+    public bool IsDrawerOpen { get => _isDrawerOpen; set => SetProperty(ref _isDrawerOpen, value); }
+    public bool IsDraggingTapes { get => _isDraggingTapes; set => SetProperty(ref _isDraggingTapes, value); }
+    public bool HasLibrary => _model is not null;
+    public string EmptyTitle => !HasLibrary ? NoLibraryTitle : Shelf.SearchText.Trim().Length > 0 ? "No matching videos"
+        : !Albums.IsAllVideos ? "No videos in this view" : "Your collection starts here";
+    public string EmptyMessage => !HasLibrary ? NoLibraryMessage
+        : Shelf.SearchText.Trim().Length > 0 ? "Try another description, tag or chapter, or clear your search to see the collection."
+        : !Albums.IsAllVideos ? "Use Add videos to find videos outside this album, or return to All videos."
+        : "Import your first videos to start your chronological collection. Your originals stay untouched.";
+    private string NoLibraryTitle => _unopened switch
+    {
+        null => "A home for your home videos",
+        { Missing: true } => "Library not found",
+        _ => "Library could not be opened",
+    };
+    private string NoLibraryMessage => _unopened switch
+    {
+        null => "Create a library folder for your videos, or open one you already have. Your originals stay untouched.",
+        (var root, true) => $"“{root}” could not be found. Reconnect its drive, or create or open another library.",
+        (var root, false) => $"“{root}” could not be opened; the status line below says why.",
+    };
+    public int TotalCount => _shown.Videos.Count;
+
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
-    public bool IsBusy { get => _isBusy; private set { SetProperty(ref _isBusy, value); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanAddSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
-    public bool CanImport => _catalog is not null && !IsBusy;
-    public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
-    public VideoEditorViewModel? Editor { get => _editor; private set { SetProperty(ref _editor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(HasVideoEditor)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
-    public ClipEditorViewModel? ClipEditor { get => _clipEditor; private set { SetProperty(ref _clipEditor, value); OnPropertyChanged(nameof(HasEditor)); OnPropertyChanged(nameof(HasClipEditor)); OnPropertyChanged(nameof(CanOpenSelected)); OnPropertyChanged(nameof(CanEditClips)); } }
-    public bool HasVideoEditor => Editor is not null;
-    public bool HasClipEditor => ClipEditor is not null;
-    public bool CanEditClips => SelectedVideos.Count > 0 && !HasEditor && !IsBusy;
-    public LibraryVideo? SelectedVideo { get => _selectedVideo; set { SetProperty(ref _selectedVideo, value); OnPropertyChanged(nameof(CanOpenSelected)); } }
-    public bool CanOpenSelected => SelectedVideo is not null && !IsBusy && !HasEditor;
-    public bool HasEditor => Editor is not null || ClipEditor is not null;
-    public bool CloseWarning { get => _closeWarning; private set => SetProperty(ref _closeWarning, value); }
+    /// <summary>Names the missing media tools and what they disable; empty when every tool answered.</summary>
+    public string ToolWarning { get => _toolWarning; private set { if (SetProperty(ref _toolWarning, value)) OnPropertyChanged(nameof(HasToolWarning)); } }
+    public bool HasToolWarning => ToolWarning.Length > 0;
+    private bool ToolsReady => _unavailableTools.Count == 0;
+    private bool CanEditClips => _model is not null && ToolsReady && IsSettled;
+    private System.Windows.Input.ICommand? DeleteTarget => Albums.IsAllVideos ? Shelf.MoveToTrashCommand : Albums.RemoveSelectedCommand;
 
-    public async Task OpenVideoAsync(LibraryVideo video)
+    /// <summary>Why new work must wait (the library is being switched or the window is closing), or null when it need not.</summary>
+    private string? WaitReason => _closing is { IsCompleted: false } ? "The app is closing." : _opening is { IsCompleted: false } ? "A library is still opening." : null;
+    private bool IsSettled => WaitReason is null;
+    /// <summary>Set when <c>.cache/recovery</c> holds snapshots from a save that could not be rolled back; they are
+    /// never deleted automatically.</summary>
+    public string RecoveryNotice { get => _recoveryNotice; private set { if (SetProperty(ref _recoveryNotice, value)) OnPropertyChanged(nameof(HasRecoveryNotice)); } }
+    public bool HasRecoveryNotice => RecoveryNotice.Length > 0;
+    /// <summary>A short confirmation, such as an album drop; clears itself.</summary>
+    public string Toast { get => _toast; private set { if (SetProperty(ref _toast, value)) OnPropertyChanged(nameof(HasToast)); } }
+    public bool HasToast => Toast.Length > 0;
+
+    /// <summary>The page shown instead of the shelf, or null for the shelf. Change it with <see cref="NavigateAsync"/>.</summary>
+    public PageViewModel? Page
     {
-        if (_catalog is null || IsBusy || HasEditor) return;
-        var metadata = new MatroskaMetadataService(_catalog, MediaTools.Discover());
-        IVideoMetadataService service = metadata;
-        if (_searchIndex is { } index)
+        get => _page;
+        private set
         {
-            var indexed = new IndexedMetadataService(metadata, index);
-            indexed.IndexingFailed += warning => Dispatcher.UIThread.Post(() => Status = warning);
-            service = indexed;
+            var previous = _page;
+            if (!SetProperty(ref _page, value)) return;
+            if (previous is not null) previous.PropertyChanged -= PagePropertyChanged;
+            if (value is not null) value.PropertyChanged += PagePropertyChanged;
+            OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown)); OnPropertyChanged(nameof(IsChromeShown));
+            OnPropertyChanged(nameof(ShowsShellBackKey));
+            UpdateCommands();
         }
-        Editor = new VideoEditorViewModel(video, _catalog.GetVideoPath(video.RelativePath), service, new LibVlcPlayback());
-        await Editor.LoadAsync();
     }
 
-    public Task OpenSelectedAsync() => SelectedVideo is { } video ? OpenVideoAsync(video) : Task.CompletedTask;
-    public async Task OpenClipEditorAsync()
+    /// <summary>Whether the shell's own status bar shows; hidden while a page is immersive (fullscreen video).</summary>
+    public bool IsChromeShown => Page is not { IsImmersive: true };
+
+    /// <summary>Whether the shell shows its own ◀ LIBRARY key: for pages without one.</summary>
+    public bool ShowsShellBackKey => Page is { HasBackKey: false };
+
+    private void PagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
-        if (!CanEditClips || _catalog is null) return;
-        ClipEditor = new ClipEditorViewModel(SelectedVideos.ToArray(), new ClipEditingService(_catalog, MediaTools.Discover()), _searchIndex);
-        await ClipEditor.LoadFormatAsync();
+        if (args.PropertyName == nameof(PageViewModel.IsImmersive)) OnPropertyChanged(nameof(IsChromeShown));
     }
+    public bool HasPage => Page is not null;
+    public bool IsShelfShown => Page is null;
 
-    public Task<EditorExitDestination> RequestCloseEditorAsync(bool closeWindow = false)
+    private VideoRecord? FirstSelected() => Shelf.SelectedRecords.FirstOrDefault();
+
+    private TapePreviewSession? CreatePreviewSession(TapeViewModel tape) =>
+        _strips is { } strips && !tape.IsMissing ? new TapePreviewSession(tape.Record, strips) : null;
+
+    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter) or on inspector
+    /// <paramref name="tab"/> (EDIT for TRIM/SPLIT). When it cannot (the app is busy switching or closing, or the video or
+    /// its file is gone) the status line says why.</summary>
+    public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null, InspectorTab? tab = null)
     {
-        _exitState.Request(closeWindow ? EditorExitDestination.Window : EditorExitDestination.Library);
-        return CloseEditorAsync(discard: false);
-    }
-
-    public Task<EditorExitDestination> ConfirmCloseEditorAsync(bool discard) => CloseEditorAsync(discard);
-
-    private async Task<EditorExitDestination> CloseEditorAsync(bool discard)
-    {
-        if (ClipEditor is { } clips)
+        if (_model is not { } model || _services is not { } services) return Refuse($"“{video.Label}” is no longer in the library.");
+        if (CannotOpen(model, video) is { } reason) return Refuse(reason);
+        return NavigateAsync(() =>
         {
-            if (clips.IsBusy) return EditorExitDestination.Stay;
-            clips.Dispose(); ClipEditor = null; await RefreshVideosAsync();
-            return _exitState.Complete();
-        }
-        if (Editor is not { } editor) return _exitState.Complete();
-        if (editor.IsBusy || _editorClosing) return EditorExitDestination.Stay;
-        if (editor.IsDirty && !discard) { CloseWarning = true; return EditorExitDestination.Stay; }
-        CloseWarning = false;
-        _editorClosing = true;
-        try { await editor.DisposeAsync(); Editor = null; await RefreshVideosAsync(); }
-        finally { _editorClosing = false; }
-        return _exitState.Complete();
+            // Checked again: while this waited for another navigation, the video may have gone to a trash or left the library.
+            if (CannotOpen(model, video) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var record = model.Snapshot.Find(video.Id)!;
+            var indexed = new IndexedMetadataService(services.Metadata, model, _backfill);
+            indexed.IndexingFailed += warning => Status = warning;
+            return new VideoPageViewModel(new VideoPageDependencies
+            {
+                Record = record, Path = model.GetVideoPath(record), Metadata = indexed, Playback = _dependencies.CreatePlayback(),
+                Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
+                StartAt = at ?? TimeSpan.Zero,
+                StartTab = tab,
+                Edits = ToolsReady ? ClipEditsFor(model) : null,
+                Jobs = Jobs,
+                Previews = ToolsReady ? _previews : null,
+                Back = () => NavigateAsync(() => null),
+                ShowAlbum = async album =>
+                {
+                    if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
+                },
+                AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
+                MoveToTrash = () => Trash.MoveToTrashAsync([record.Id]),
+            });
+        });
     }
 
-    public void KeepEditing() { CloseWarning = false; _exitState.Cancel(); }
+    /// <summary>Why <paramref name="video"/> of <paramref name="model"/> cannot open now, or null when it can.</summary>
+    private string? CannotOpen(LibraryModel model, VideoRecord video) =>
+        WaitReason is { } reason ? $"“{video.Label}” cannot open yet. {reason}"
+        : !ReferenceEquals(_model, model) || model.Snapshot.Find(video.Id) is not { } record ? $"“{video.Label}” is no longer in the library."
+        : record.IsMissing ? $"The file for “{record.Label}” is missing, so it cannot open."
+        : Trash.Holds(record.Id) ? $"“{record.Label}” is being moved to the Trash."
+        : null;
 
+    private Task<bool> LeavePagesShowingAsync(IReadOnlyCollection<Guid> videoIds) =>
+        Page is { } page && videoIds.Any(page.Shows) ? NavigateAsync(() => null) : Task.FromResult(true);
+
+    private Task Refuse(string reason)
+    {
+        Status = reason;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Opens the merge page for the selected videos, in shelf order. Refused, like <see cref="OpenVideoAsync"/>,
+    /// while one of them cannot open.</summary>
+    public Task OpenMergeAsync()
+    {
+        if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
+        var selected = Shelf.SelectedRecords.ToArray();
+        if (CannotOpen(model, selected) is { } reason) return Refuse(reason);
+        return NavigateAsync(() =>
+        {
+            if (CannotOpen(model, selected) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var sources = selected.Select(record => model.Snapshot.Find(record.Id)!.ToLibraryVideo()).ToArray();
+            return new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null));
+        });
+    }
+
+    private string? CannotOpen(LibraryModel model, IEnumerable<VideoRecord> videos) =>
+        videos.Select(video => CannotOpen(model, video)).FirstOrDefault(reason => reason is not null);
+
+    private ClipEdits ClipEditsFor(LibraryModel model) =>
+        new(_dependencies.CreateClipEditing(model.Catalog), Jobs, outputs => PublishOutputsAsync(model, outputs));
+
+    private static async Task PublishOutputsAsync(LibraryModel model, IReadOnlyList<LibraryVideo> videos)
+    {
+        var errors = new List<string>();
+        foreach (var video in videos)
+        {
+            var record = await model.UpsertFromFileAsync(video, CancellationToken.None);
+            if (record.State != VideoRecordState.Ok) errors.Add($"{record.Label}: {record.Error}");
+        }
+        if (errors.Count > 0) throw new InvalidOperationException(string.Join(" ", errors));
+    }
+
+    private async Task FocusSearchAsync()
+    {
+        if (!await NavigateAsync(() => null)) return;
+        IsDrawerOpen = true;
+        SearchFocusRequested?.Invoke();
+    }
+
+    /// <summary>Leaves the current page (asking about unsaved changes) and shows <paramref name="next"/>'s page, or the
+    /// shelf when it returns null. Returns false when the current page stays. Navigations run one at a time, so two
+    /// prompts never stack; a page must not navigate from its own <see cref="PageViewModel.LoadAsync"/>.</summary>
+    public Task<bool> NavigateAsync(Func<PageViewModel?> next) => NavigateAsync(next, cancelJobs: null);
+
+    /// <param name="cancelJobs">See <see cref="PageViewModel.CanLeaveAsync"/>.</param>
+    private async Task<bool> NavigateAsync(Func<PageViewModel?> next, Func<Task>? cancelJobs)
+    {
+        await _navigation.WaitAsync();
+        try
+        {
+            if (Page is { } current)
+            {
+                if (!await current.CanLeaveAsync(_dependencies.Interaction, cancelJobs)) return false;
+                Page = null;
+                await current.DisposeAsync();
+            }
+            if (next() is not { } page) return true;
+            Page = page;
+            try { await page.LoadAsync(); }
+            catch
+            {
+                Page = null;
+                await page.DisposeAsync();
+                throw;
+            }
+            return true;
+        }
+        finally { _navigation.Release(); }
+    }
+
+    /// <summary>Everything that must happen before the window closes, in order: waits for a library switch; asks whether
+    /// to wait for or cancel background jobs (only a question, so keeping the app open there changes nothing); settles
+    /// the page (finishing a save) and leaves it, asking about unsaved changes (when the jobs are to be cancelled, saving
+    /// there cancels them first if they block the save); cancels or waits for the jobs; then stops the library refresh and
+    /// releases the library. Returns false when the user keeps the app open, including by
+    /// <see cref="CancelQuitCommand"/> while waiting for jobs. Repeated calls while one is running share it; new work is
+    /// refused meanwhile.</summary>
+    public Task<bool> RequestCloseAsync()
+    {
+        if (_closing is not { IsCompleted: false })
+        {
+            _closing = CloseAsync();
+            UpdateCommands();
+        }
+        return UpdateCommandsAfterAsync(_closing);
+    }
+
+    private async Task<bool> CloseAsync()
+    {
+        var status = Status;
+        try
+        {
+            if (_opening is { } opening) await opening;
+            var jobs = Jobs.HasActive ? await _dependencies.Interaction.AskCloseWithJobsAsync(Jobs.ActiveCount) : CloseChoice.WaitForJobs;
+            if (jobs == CloseChoice.KeepOpen) return false;
+            if (Page is { } page)
+            {
+                Status = "Finishing the current operation, then closing…";
+                await page.SettleForCloseAsync();
+            }
+            if (!await NavigateAsync(() => null, jobs == CloseChoice.CancelJobs ? CancelJobsAsync : null)) return false;
+            if (jobs == CloseChoice.CancelJobs) await CancelJobsAsync();
+            else if (!await WaitForJobsAsync()) return false;
+            status = Status;
+            await ReleaseLibraryAsync();
+            return true;
+        }
+        finally { Status = status; }
+    }
+
+    private Task CancelJobsAsync()
+    {
+        Status = "Cancelling imports and edits, then closing…";
+        return Jobs.CancelAllAndWaitAsync();
+    }
+
+    /// <summary>Waits for the active jobs to end; false when the user cancels the quit meanwhile.</summary>
+    private async Task<bool> WaitForJobsAsync()
+    {
+        if (!Jobs.HasActive) return true;
+        Status = "Closing when the remaining imports and edits finish…";
+        using var quit = new CancellationTokenSource();
+        QuitWait = quit;
+        try
+        {
+            await Jobs.WhenIdleAsync().WaitAsync(quit.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (quit.IsCancellationRequested) { return false; }
+        finally { QuitWait = null; }
+    }
+
+    /// <summary>Awaits a library switch or close and then re-checks the commands it held off: only once it has
+    /// completed does <see cref="IsSettled"/> read true.</summary>
+    private async Task<T> UpdateCommandsAfterAsync<T>(Task<T> flow)
+    {
+        try { return await flow; }
+        finally { UpdateCommands(); }
+    }
+
+    private async Task UpdateCommandsAfterAsync(Task flow)
+    {
+        try { await flow; }
+        finally { UpdateCommands(); }
+    }
+
+    /// <summary>Stops work on the open library and gives up its lock. The lock is released even if stopping fails.</summary>
+    private async Task ReleaseLibraryAsync()
+    {
+        try { await Settings.StopIndexAsync(); }
+        finally
+        {
+            if (_model is { } model) model.Changed -= OnModelChanged;
+            // Strip builds write into the library, so they stop before its lock is released.
+            if (_strips is { } strips)
+            {
+                _strips = null;
+                await strips.DisposeAsync();
+            }
+            _lock?.Dispose(); _lock = null;
+        }
+    }
+
+    /// <summary>Applies the saved settings and reopens the saved library. When it does not reopen, the empty shelf says
+    /// which folder was missing or could not be opened.</summary>
     public async Task RestoreLibraryAsync()
     {
         try
         {
-            var root = await _settings.LoadRootAsync();
-            if (root is not null)
-            {
-                if (!Directory.Exists(root))
-                    throw new DirectoryNotFoundException("The saved library folder is unavailable. Reconnect its drive or choose another folder.");
-                await OpenLibraryAsync(root);
-            }
+            await Settings.LoadAsync();
+            if (await _dependencies.Settings.LoadRootAsync() is not { } root) return;
+            var missing = !Directory.Exists(root);
+            if (!missing) await OpenLibraryAsync(root);
+            if (HasLibrary) return;
+            _unopened = (root, missing);
+            NotifyViewState();
         }
-        catch (Exception exception) { Status = exception.Message; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { Status = exception.Message; }
     }
 
-    public async Task OpenLibraryAsync(string root)
+    /// <summary>Opens (and if needed migrates) a library. The new library is locked (refused if another instance has
+    /// it), initialized and loaded first; a failure there leaves the current library as it was. Then the open page is
+    /// left through the leave prompt (keeping it releases the new lock), and only then is the old library released and
+    /// the background refresh started. Reopening the open library just refreshes it. Background jobs must have
+    /// finished, and new work waits until the switch completes. The returned task never faults: failures go to the
+    /// status line.</summary>
+    public Task OpenLibraryAsync(string root)
     {
-        if (IsBusy || HasEditor) return;
-        CancelIndex(); _indexCancellation = null; IsIndexing = false; _searchCancellation?.Cancel();
-        var generation = ++_libraryGeneration;
-        IsBusy = true;
+        if (!IsSettled) return Task.CompletedTask;
+        if (Jobs.HasActive)
+        {
+            Status = "Wait for the running imports and edits to finish (see Activity), then switch libraries.";
+            return Task.CompletedTask;
+        }
+        _opening = SwitchLibraryAsync(root);
+        UpdateCommands();
+        return UpdateCommandsAfterAsync(_opening);
+    }
+
+    private async Task SwitchLibraryAsync(string root)
+    {
+        try { await SwitchLibraryCoreAsync(root); }
+        catch (Exception exception)
+        {
+            Status = "The library could not be opened: " + exception.Message;
+            AppErrors.Report(exception, "Open library");
+        }
+    }
+
+    private async Task SwitchLibraryCoreAsync(string root)
+    {
+        var paths = new LibraryPaths(root);
+        if (_lock is { } held && string.Equals(held.Paths.RootDirectory, paths.RootDirectory,
+                OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase))
+        {
+            await Settings.RefreshIndexAsync();
+            return;
+        }
+        LibraryLock? owner = null;
+        LibraryModel model;
+        LibraryServices services;
+        LibraryLoadResult load;
+        IReadOnlyList<string> unavailable;
+        int recoverySnapshots;
+        var publications = PublishRecovery.None;
         try
         {
-            var catalog = new LibraryCatalog(new LibraryPaths(root));
+            owner = await Task.Run(() => LibraryLock.TryAcquire(paths));
+            if (owner is null)
+            {
+                Status = "This library is open in another Home Video Library window. Close it there, then open it here.";
+                return;
+            }
+            var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
-            await _settings.SaveRootAsync(root);
-            _catalog = catalog;
-            _albumRepository = new AlbumRepository(catalog);
-            _searchIndex = new LibrarySearchIndex(catalog, new MatroskaMetadataService(catalog, MediaTools.Discover()));
-            LibraryRoot = catalog.Paths.RootDirectory;
-            _currentAlbum = null; _isChoosingAlbumVideos = false; _searchText = "";
-            OnPropertyChanged(nameof(CurrentAlbum)); OnPropertyChanged(nameof(HasAlbum)); OnPropertyChanged(nameof(CurrentViewTitle)); OnPropertyChanged(nameof(SearchText));
-            Videos.Clear();
-            SelectedVideo = null; SetSelectedVideos([]);
-            await ReloadAlbumsAsync();
-            await RefreshVideosAsync();
-            if (generation == _libraryGeneration) Status = $"{Videos.Count} videos in your library";
-        }
-        catch (Exception exception) { Status = exception.Message; }
-        finally { IsBusy = false; }
-        _ = RefreshIndexAsync();
-    }
-
-    public async Task ImportAsync(IReadOnlyList<string> sources)
-    {
-        if (!CanImport || _catalog is null) return;
-        IsBusy = true;
-        Progress = 0;
-        using var cancellation = new CancellationTokenSource();
-        _importCancellation = cancellation;
-        var imported = 0;
-        var errors = new List<string>();
-        try
-        {
-            var importer = new VideoImporter(_catalog, MediaTools.Discover());
-            foreach (var source in sources)
+            var tools = FindUnavailableToolsAsync();
+            // Recovery may move committed videos out of scratch, so scratch is swept only after it succeeded.
+            var recovered = false;
+            try { publications = await LibraryPublisher.RecoverAsync(catalog, owner); recovered = true; }
+            catch (Exception exception) { Trace.TraceWarning($"Could not finish interrupted publications: {exception}"); }
+            if (recovered)
             {
-                cancellation.Token.ThrowIfCancellationRequested();
-                var progress = new Progress<ImportProgress>(update =>
-                {
-                    Status = $"{Path.GetFileName(source)} — {update.Stage}";
-                    Progress = update.Fraction is { } fraction ? fraction * 100 : 0;
-                });
-                try
-                {
-                    var video = await Task.Run(() => importer.ImportAsync(source, progress, cancellation.Token));
-                    imported++;
-                    if (_searchIndex is { } index)
-                    {
-                        try { await Task.Run(() => index.UpdateVideoAsync(video, cancellationToken: cancellation.Token)); }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception exception) { errors.Add($"{video.DisplayName} imported; search refresh needed: {exception.Message}"); }
-                    }
-                    await RefreshVideosAsync();
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception exception) { errors.Add($"{Path.GetFileName(source)}: {exception.Message}"); }
+                try { await _dependencies.SweepScratch(owner, CancellationToken.None); }
+                catch (Exception exception) { Trace.TraceWarning($"Could not sweep temporary files: {exception}"); }
             }
-            Status = errors.Count == 0 ? $"Imported {imported} video(s)." : $"Imported {imported}; {errors.Count} issue(s). {string.Join(Environment.NewLine, errors)}";
+            services = _dependencies.CreateServices(catalog);
+            model = new LibraryModel(catalog, services.Files);
+            load = await Task.Run(() => model.LoadAsync());
+            recoverySnapshots = CountRecoverySnapshots(paths);
+            unavailable = await tools;
+            await _dependencies.Settings.SaveRootAsync(root);
         }
-        catch (OperationCanceledException) { Status = $"Import cancelled. {imported} completed video(s) kept; originals unchanged."; }
-        finally { _importCancellation = null; IsBusy = false; await RefreshVideosAsync(); }
-    }
+        catch (Exception exception)
+        {
+            owner?.Dispose();
+            Status = exception.Message;
+            return;
+        }
 
-    public void CancelImport() => _importCancellation?.Cancel();
-
-    public async Task RefreshVideosAsync(bool debounce = false)
-    {
-        var index = _searchIndex;
-        if (index is null) return;
-        _searchCancellation?.Cancel();
-        using var cancellation = new CancellationTokenSource(); _searchCancellation = cancellation;
-        var version = ++_queryVersion; var generation = _libraryGeneration;
-        var query = SearchText; var album = CurrentAlbum?.Id; var exclude = IsChoosingAlbumVideos;
         try
         {
-            if (debounce) await Task.Delay(160, cancellation.Token);
-            var videos = await Task.Run(() => index.SearchAsync(query, album, exclude, cancellation.Token));
-            if (version != _queryVersion || generation != _libraryGeneration) return;
-            Videos.Clear();
-            foreach (var video in videos) Videos.Add(video);
-            RebuildTapes();
+            if (!await NavigateAsync(() => null))
+            {
+                owner.Dispose();
+                Status = "The library was not switched; the open page has work to finish or save first.";
+                return;
+            }
+            await ReleaseLibraryAsync();
         }
-        catch (OperationCanceledException) { }
-        catch (Exception exception) { if (version == _queryVersion && generation == _libraryGeneration) Status = exception.Message; }
-        finally { if (_searchCancellation == cancellation) _searchCancellation = null; }
+        catch
+        {
+            owner.Dispose();
+            throw;
+        }
+        _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
+        _backfill = services.Identity is { } identity ? new IdentityBackfill(model, identity) : null;
+        if (unavailable.Count == 0)
+        {
+            var store = new HoverStripStore(paths, services.Files);
+            _ = store.LoadAsync(model.Snapshot.Videos.Keys.ToHashSet());
+            _strips = new HoverStripScheduler(store, model.GetVideoPath, () => Jobs.HasActive || Settings.IsIndexing);
+        }
+        _unavailableTools = unavailable;
+        ToolWarning = DescribeUnavailable(unavailable);
+        Settings.ToolHealth = unavailable.Count == 0 ? "FFmpeg and MKVToolNix are installed." : ToolWarning;
+        RecoveryNotice = recoverySnapshots == 0 ? "" :
+            $"{recoverySnapshots} metadata recovery snapshot(s) are in {MatroskaMetadataService.RecoveryDirectory(paths)}. " +
+            "A save could not restore its video's previous metadata; the README explains how to restore it by hand.";
+        if (publications.Quarantined > 0)
+            RecoveryNotice += $" {publications.Quarantined} video(s) from an interrupted import or edit are in " +
+                $"{LibraryPublisher.OrphanedDirectory(paths)}; import them again to add them to the library.";
+        if (publications.Stuck > 0)
+            RecoveryNotice += $" {publications.Stuck} video(s) in {paths.VideosDirectory} still have temporary names; see the log.";
+        if (publications.Unregistered.Count > 0)
+            RecoveryNotice += $" {publications.Unregistered.Count} video file(s) in {paths.VideosDirectory} are not in the library " +
+                $"({string.Join(", ", publications.Unregistered.Take(3))}{(publications.Unregistered.Count > 3 ? ", …" : "")}); import them to add them.";
+        RecoveryNotice = RecoveryNotice.Trim();
+        Settings.LibraryRoot = paths.RootDirectory;
+        _shown = LibrarySnapshot.Empty;
+        Shelf.ClearSelection();
+        Shelf.SearchText = "";
+        Albums.Current = null;
+        OnPropertyChanged(nameof(HasLibrary)); OnPropertyChanged(nameof(Model));
+        model.Changed += OnModelChanged;
+        RefreshView();
+        _strips?.Enqueue(model.Snapshot.Chronological);
+        Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
+            + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
+        _ = Settings.RefreshIndexAsync();
+        if (_backfill is { } backfill && ToolsReady)
+            _ = BackfillJob.RunAsync(Jobs, backfill, id => Volatile.Read(ref _page)?.Shows(id) == true,
+                () => ReferenceEquals(_model, model) && IsSettled);
     }
 
-    public async Task RefreshIndexAsync(bool force = false)
+    private static int CountRecoverySnapshots(LibraryPaths paths)
     {
-        if (_searchIndex is not { } index || IsIndexing) return;
-        var generation = _libraryGeneration;
-        using var cancellation = new CancellationTokenSource(); _indexCancellation = cancellation;
-        IsIndexing = true;
-        var errors = 0;
-        var progress = new Progress<IndexProgress>(update =>
+        var directory = MatroskaMetadataService.RecoveryDirectory(paths);
+        try { return Directory.Exists(directory) ? Directory.EnumerateFileSystemEntries(directory).Count() : 0; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return 0; }
+    }
+
+    private async Task<IReadOnlyList<string>> FindUnavailableToolsAsync()
+    {
+        try { return await _dependencies.FindUnavailableTools(CancellationToken.None); }
+        catch (Exception exception)
         {
-            if (generation != _libraryGeneration) return;
-            if (update.Error is not null) { errors++; Status = $"Could not index {update.VideoName}: {update.Error}"; }
-            IndexStatus = $"Indexed {update.Completed}/{update.Total} · {update.VideoName}";
-        });
+            Trace.TraceWarning($"Could not check media tools: {exception}");
+            return [];
+        }
+    }
+
+    private static string DescribeUnavailable(IReadOnlyList<string> tools) => tools.Count == 0 ? "" :
+        $"Missing or too old: {string.Join(", ", tools)}. Install FFmpeg and MKVToolNix (see README), then reopen the library. " +
+        "Until then importing, clip editing, library refresh and hover previews are off.";
+
+    /// <summary>Checks file stamps when the window regains focus (at most every 10 s) and reads what changed.</summary>
+    public async Task WindowActivatedAsync()
+    {
+        if (_model is not { } model || Settings.IsIndexing || !IsSettled || !ToolsReady
+            || DateTime.UtcNow - _lastActivationStat < ActivationStatInterval) return;
+        _lastActivationStat = DateTime.UtcNow;
         try
         {
-            await Task.Run(() => index.RefreshAsync(force, progress, cancellation.Token));
-            if (generation == _libraryGeneration) { IndexStatus = errors == 0 ? "Search index is current" : $"Refresh finished with {errors} file errors"; await RefreshVideosAsync(); }
+            if (await Task.Run(() => model.StatPassAsync()) > 0 && model == _model) await Settings.RefreshIndexAsync();
         }
-        catch (OperationCanceledException) { if (generation == _libraryGeneration) IndexStatus = "Refresh cancelled; completed entries kept. Refresh again to continue."; }
-        catch (Exception exception) { if (generation == _libraryGeneration) IndexStatus = exception.Message; }
-        finally { if (_indexCancellation == cancellation) { _indexCancellation = null; IsIndexing = false; } }
+        catch (Exception exception) { Trace.TraceWarning($"Activation refresh failed: {exception}"); }
     }
 
-    public void CancelIndex() => _indexCancellation?.Cancel();
-    private async Task ReloadAlbumsAsync()
+    /// <summary>Shows an unexpected error reported by <see cref="AppErrors"/>.</summary>
+    public void ShowError(string message) => _dependencies.Post(() => Status = message);
+
+    // The model publishes snapshots on its writer thread; this is the single hop onto the UI thread.
+    private void OnModelChanged(LibraryDelta delta) => _dependencies.Post(() =>
     {
-        if (_albumRepository is not { } albums) return;
-        var generation = _libraryGeneration;
-        var list = await Task.Run(() => albums.ListAsync());
-        if (generation != _libraryGeneration) return;
-        var current = CurrentAlbum?.Id; var target = TargetAlbum?.Id;
-        Albums.Clear(); foreach (var album in list) Albums.Add(album);
-        CurrentAlbum = list.FirstOrDefault(album => album.Id == current);
-        TargetAlbum = list.FirstOrDefault(album => album.Id == target) ?? list.FirstOrDefault();
+        if (_model is not { } model) return;
+        // Deltas queue up while the UI is busy; the first posted refresh shows the latest snapshot and the rest find
+        // nothing new.
+        if (!ReferenceEquals(model.Snapshot, _shown)) RefreshView();
+        // A delta from a library that has since been closed names no video of this one.
+        _strips?.Enqueue(delta.Added.Concat(delta.Updated).Select(model.Snapshot.Find).OfType<VideoRecord>());
+    });
+
+    /// <summary>Shows the model's current snapshot in every part of the window.</summary>
+    private void RefreshView()
+    {
+        var snapshot = _model?.Snapshot ?? LibrarySnapshot.Empty;
+        _shown = snapshot;
+        Albums.Apply(snapshot);
+        Shelf.Apply(snapshot, Albums.Filter);
+        Trash.UpdateCommands();
+        (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
+        OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
 
-    public Task CreateAlbumAsync()
+    private void NotifyViewState()
     {
-        var selectedIds = SelectedVideos.Select(video => video.Id).ToArray();
-        return AlbumActionAsync(async albums => { var album = await albums.CreateAsync(AlbumName, selectedIds); await ReloadAlbumsAsync(); CurrentAlbum = Albums.First(item => item.Id == album.Id); });
+        foreach (var name in new[] { nameof(EmptyTitle), nameof(EmptyMessage) })
+            OnPropertyChanged(name);
     }
-    public Task RenameAlbumAsync() => CurrentAlbum is { } album ? AlbumActionAsync(async albums => { await albums.RenameAsync(album.Id, AlbumName); await ReloadAlbumsAsync(); }) : Task.CompletedTask;
-    public Task DeleteAlbumAsync() => CurrentAlbum is { } album ? AlbumActionAsync(async albums => { await albums.DeleteAsync(album.Id); await ReloadAlbumsAsync(); await RefreshVideosAsync(); Status = "Album removed. All video files remain in the library."; }) : Task.CompletedTask;
-    public Task AddSelectedToAlbumAsync() => TargetAlbum is { } album ? AddToAlbumAsync(album.Id, SelectedVideos.Select(video => video.Id)) : Task.CompletedTask;
-    public Task AddSelectedToCurrentAsync() => CurrentAlbum is { } album ? AddToAlbumAsync(album.Id, SelectedVideos.Select(video => video.Id)) : Task.CompletedTask;
-    public Task RemoveSelectedFromCurrentAsync() => CurrentAlbum is { } album ? AlbumActionAsync(async albums => { await albums.RemoveVideosAsync(album.Id, SelectedVideos.Select(video => video.Id).ToArray()); await RefreshVideosAsync(); }) : Task.CompletedTask;
-    public Task AddToAlbumAsync(Guid albumId, IEnumerable<Guid> videoIds)
+
+    private void UpdateCommands()
     {
-        var ids = videoIds.ToArray();
-        return AlbumActionAsync(async albums => { await albums.AddVideosAsync(albumId, ids); await RefreshVideosAsync(); Status = "Videos added to album."; });
+        Import.UpdateCommands();
+        Settings.UpdateCommands();
+        Trash.UpdateCommands();
+        foreach (var command in new[] { PlaySelectedCommand, TrimSelectedCommand, MergeSelectedCommand, BackCommand })
+            command.RaiseCanExecuteChanged();
+        DeleteSelectedCommand.RaiseCanExecuteChanged();
     }
-    public void ShowLibrary() { IsChoosingAlbumVideos = false; CurrentAlbum = null; _ = RefreshVideosAsync(); }
-    public void ToggleAlbumAddMode() { if (!HasAlbum) return; IsChoosingAlbumVideos = !IsChoosingAlbumVideos; _ = RefreshVideosAsync(); }
-    private async Task AlbumActionAsync(Func<AlbumRepository, Task> action)
+
+    private async Task OpenJobOutputAsync(JobViewModel job)
     {
-        if (_albumRepository is not { } albums || IsBusy || HasEditor) return;
-        IsBusy = true;
-        try { await action(albums); }
-        catch (Exception exception) { Status = exception.Message; }
-        finally { IsBusy = false; }
+        if (job.Outcome?.Outputs.FirstOrDefault() is not { } id) return;
+        if (_model?.Snapshot.Find(id) is { } record) await OpenVideoAsync(record);
+        else Status = $"The video from “{job.Title}” is no longer in the library.";
+    }
+
+    /// <summary>A failure is announced at once; successes wait for the lane's summary.</summary>
+    private void JobFinished(JobViewModel job)
+    {
+        if (!job.HasFailed) return;
+        ShowToast($"{job.Title}: {job.StatusText}");
+        Play(ClickSoundKind.Rubber);
+    }
+
+    /// <summary>One toast and one chime per batch of jobs, for example "Imported 48 · 2 failed". The render lane also
+    /// runs trash and metadata jobs, so its batches are counted as finished jobs, not renders.</summary>
+    private void LaneDrained(JobBatch batch)
+    {
+        if (batch.Succeeded + batch.Failed == 0) return;
+        var done = (batch.Lane == JobLane.Import ? "Imported " : "Finished ") + batch.Succeeded;
+        ShowToast(batch.Failed == 0 ? done : $"{done} · {batch.Failed} failed");
+        if (batch.Succeeded > 0) Play(ClickSoundKind.Chime);
+    }
+
+    private void Play(ClickSoundKind sound)
+    {
+        if (_dependencies.Sounds.IsEnabled) _dependencies.Sounds.Play(sound);
+    }
+
+    /// <summary>Shows <paramref name="message"/> as a toast (and on the status line) for a few seconds; a newer toast
+    /// replaces it and restarts the time.</summary>
+    private void ShowToast(string message)
+    {
+        var shown = _shownToast = new object();
+        Toast = message; Status = message;
+        _ = HideToastAsync(shown);
+    }
+
+    private async Task HideToastAsync(object shown)
+    {
+        await Task.Delay(ToastDuration, _dependencies.Time);
+        // An older toast's delay can end after a newer toast is shown; only the newest one's clears it.
+        if (ReferenceEquals(_shownToast, shown)) Toast = "";
     }
 }

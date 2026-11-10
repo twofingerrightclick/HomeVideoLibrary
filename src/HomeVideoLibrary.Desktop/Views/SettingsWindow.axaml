@@ -1,0 +1,43 @@
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:c="using:HomeVideoLibrary.UI.Controls"
+ x:Class="HomeVideoLibrary.Desktop.Views.SettingsWindow" x:DataType="vm:SettingsViewModel"
+ Title="Settings" Width="560" SizeToContent="Height" CanResize="False" SystemDecorations="BorderOnly" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+ <c:VcrDialog Title="SETTINGS">
+  <c:VcrDialog.Footer>
+   <c:PlasticButton x:Name="CloseButton" Content="CLOSE" Classes="primary" IsDefault="True" IsCancel="True"/>
+  </c:VcrDialog.Footer>
+  <StackPanel Spacing="18">
+   <StackPanel Spacing="8">
+    <c:SectionHeader Title="LIBRARY FOLDER">
+     <c:PlasticButton Classes="toolbar" Content="CHOOSE…" Command="{Binding ChooseFolderCommand}"/>
+    </c:SectionHeader>
+    <SelectableTextBlock Classes="meta" Text="{Binding LibraryRoot}" TextWrapping="Wrap"/>
+   </StackPanel>
+   <StackPanel Spacing="8">
+    <c:SectionHeader Title="READ FROM VIDEO FILES"/>
+    <TextBlock Classes="meta" TextWrapping="Wrap" Text="Titles, descriptions, tags and chapters live inside each MKV. Refresh reads changed files; rebuild re-reads every file."/>
+    <StackPanel Orientation="Horizontal" Spacing="10">
+     <c:PlasticButton Classes="toolbar" Content="REFRESH" Command="{Binding RefreshCommand}"/>
+     <c:PlasticButton Classes="toolbar" Content="REBUILD FROM MKVS" Command="{Binding RebuildCommand}"/>
+     <c:PlasticButton Classes="toolbar" Content="CANCEL" Command="{Binding CancelIndexCommand}" IsVisible="{Binding IsIndexing}"/>
+    </StackPanel>
+    <TextBlock Classes="meta" Text="{Binding IndexStatus}" TextWrapping="Wrap"/>
+    <Border Classes="well" IsVisible="{Binding HasIndexErrors}" MaxHeight="160" Padding="10,6">
+     <ScrollViewer>
+      <ItemsControl ItemsSource="{Binding IndexErrors}">
+       <ItemsControl.ItemTemplate><DataTemplate><SelectableTextBlock Classes="meta" Text="{Binding}" TextWrapping="Wrap" Margin="0,2"/></DataTemplate></ItemsControl.ItemTemplate>
+      </ItemsControl>
+     </ScrollViewer>
+    </Border>
+   </StackPanel>
+   <StackPanel Spacing="8">
+    <c:SectionHeader Title="MEDIA TOOLS"/>
+    <TextBlock Classes="meta" Text="{Binding ToolHealth}" TextWrapping="Wrap"/>
+   </StackPanel>
+   <StackPanel Spacing="8">
+    <c:SectionHeader Title="BUTTON SOUNDS"/>
+    <ToggleSwitch IsChecked="{Binding SoundEffects, Mode=TwoWay}" OnContent="Click when keys are pressed" OffContent="Silent"/>
+   </StackPanel>
+  </StackPanel>
+ </c:VcrDialog>
+</Window>

@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Media.Imaging;
+using Avalonia.Animation;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.Desktop.ViewModels;
 
@@ -8,58 +10,110 @@ namespace HomeVideoLibrary.Desktop.Views;
 
 public sealed partial class TapeView : UserControl
 {
+    private const double PreviewHalfWidth = 104;
+    private static readonly Animation FadeIn = new()
+    {
+        Duration = TimeSpan.FromMilliseconds(160),
+        FillMode = FillMode.Forward,
+        Children =
+        {
+            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 0d) } },
+            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 1d) } },
+        },
+    };
+    private readonly List<IDisposable> _visibilitySubscriptions = [];
     private TapePreviewSession? _session;
-    private CancellationTokenSource? _request;
+    private CancellationTokenSource? _fade;
     private int _bucket = -1;
-    private long _version;
-    private Bitmap? _current, _previous;
+
     public TapeView()
     {
         InitializeComponent();
         PointerExited += (_, _) => StopPreview();
-        LabelSurface.PointerExited += (_, _) => StopPreview();
-        LabelSurface.PointerMoved += PreviewMoved;
-        DetachedFromVisualTree += (_, _) => StopPreview();
+        Spine.PointerMoved += PreviewMoved;
+        AddHandler(PointerPressedEvent, (_, _) => StopPreview(), Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        AttachedToVisualTree += (_, _) => WatchAncestorVisibility();
+        DetachedFromVisualTree += (_, _) => { StopPreview(); UnwatchAncestorVisibility(); };
         DataContextChanged += (_, _) => StopPreview();
     }
-    private async void PreviewMoved(object? sender, PointerEventArgs args)
+
+    /// <summary>The popup outlives a hidden ancestor (for example, when an editor replaces the library), so close it then.</summary>
+    private void WatchAncestorVisibility()
+    {
+        UnwatchAncestorVisibility();
+        foreach (var ancestor in this.GetVisualAncestors().OfType<Visual>())
+            _visibilitySubscriptions.Add(ancestor.GetObservable(IsVisibleProperty).Subscribe(new VisibilityObserver(this)));
+    }
+
+    private void UnwatchAncestorVisibility()
+    {
+        foreach (var subscription in _visibilitySubscriptions) subscription.Dispose();
+        _visibilitySubscriptions.Clear();
+    }
+
+    private sealed class VisibilityObserver(TapeView view) : IObserver<bool>
+    {
+        public void OnNext(bool visible) { if (!visible) view.StopPreview(); }
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
+    }
+
+    private void PreviewMoved(object? sender, PointerEventArgs args)
     {
         if (DataContext is not TapeViewModel tape || args.GetCurrentPoint(this).Properties.IsLeftButtonPressed) { StopPreview(); return; }
-        var x = args.GetPosition(LabelSurface).X;
-        PreviewPopup.HorizontalOffset = Math.Clamp(x - LabelSurface.Bounds.Width / 2, -LabelSurface.Bounds.Width / 2 + 104, LabelSurface.Bounds.Width / 2 - 104);
-        var bucket = Math.Clamp((int)(x / Math.Max(1, LabelSurface.Bounds.Width) * 10), 0, 9);
+        var width = Spine.Bounds.Width;
+        var x = args.GetPosition(Spine).X;
+        // Center the popup on the pointer but keep it within the spine; a spine narrower than the popup centers it.
+        var limit = Math.Max(0, width / 2 - PreviewHalfWidth);
+        PreviewPopup.HorizontalOffset = Math.Clamp(x - width / 2, -limit, limit);
+        var bucket = Math.Clamp((int)(x / Math.Max(1, width) * TapePreviewSession.Buckets), 0, TapePreviewSession.Buckets - 1);
         if (bucket == _bucket) return;
         _bucket = bucket;
-        _request?.Cancel();
-        var cancellation = new CancellationTokenSource(); _request = cancellation;
-        var version = ++_version;
-        try
+        if (_session is null)
         {
-            if (_session is null)
-            {
-                var service = (this.FindAncestorOfType<MainWindow>()?.DataContext as MainWindowViewModel)?.CreatePreviewService();
-                if (service is null) return;
-                _session = new TapePreviewSession(service, tape.Video);
-            }
-            var frame = await _session.GetAsync(bucket, cancellation.Token);
-            if (version != _version || cancellation.IsCancellationRequested) return;
-            using var stream = File.OpenRead(frame.ImagePath);
-            var bitmap = Bitmap.DecodeToWidth(stream, 416);
-            _previous?.Dispose(); _previous = _current; _current = bitmap;
-            PreviousPreview.Source = _previous; CurrentPreview.Opacity = 0; CurrentPreview.Source = _current;
-            PreviewTime.Text = frame.Position.ToString(@"hh\:mm\:ss");
-            PreviewPopup.IsOpen = true;
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => { if (version == _version) CurrentPreview.Opacity = 1; }, Avalonia.Threading.DispatcherPriority.Render);
+            if (tape.CreatePreviewSession() is not { } session) return;
+            _session = session;
+            _ = ShowWhenReadyAsync(session);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception) { if (version == _version) PreviewPopup.IsOpen = false; }
-        finally { if (_request == cancellation) _request = null; cancellation.Dispose(); }
+        ShowBucket(_session);
     }
+
+    /// <summary>Shows the hovered bucket's frame, or its time over a placeholder while the strip is built. Decoding a
+    /// built strip is quick, so meanwhile the popup is left as it is rather than flashing the placeholder.</summary>
+    private void ShowBucket(TapePreviewSession session)
+    {
+        if (session.Strip is { IsCompleted: true, Result: null })
+        {
+            // Preview is decoration: a tape without a strip shows no popup.
+            PreviewPopup.IsOpen = false; PreparingPlate.IsVisible = false;
+            return;
+        }
+        var frame = session.FrameOf(_bucket);
+        if (frame is null && !session.IsBuilding) return;
+        PreviewTime.Text = HomeVideoLibrary.UI.Logic.ScrubTimeline.FormatTimestamp(session.PositionOf(_bucket));
+        PreviewPopup.IsOpen = true;
+        PreparingPlate.IsVisible = frame is null;
+        if (frame is null) return;
+        PreviousPreview.Source = CurrentPreview.Source;
+        CurrentPreview.Source = frame;
+        _fade?.Cancel();
+        _fade = new CancellationTokenSource();
+        _ = FadeIn.RunAsync(CurrentPreview, _fade.Token);
+    }
+
+    private async Task ShowWhenReadyAsync(TapePreviewSession session)
+    {
+        await session.Strip;
+        if (session == _session) ShowBucket(session);
+    }
+
     private void StopPreview()
     {
-        ++_version; _bucket = -1; _request?.Cancel(); _request = null;
-        _session?.Dispose(); _session = null; PreviewPopup.IsOpen = false;
+        _bucket = -1;
+        _fade?.Cancel(); _fade = null;
+        PreviewPopup.IsOpen = false; PreparingPlate.IsVisible = false;
+        // The crops show the session's strip, so they go before it is disposed.
         CurrentPreview.Source = null; PreviousPreview.Source = null;
-        _current?.Dispose(); _previous?.Dispose(); _current = null; _previous = null;
+        _session?.Dispose(); _session = null;
     }
 }

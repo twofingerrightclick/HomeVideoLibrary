@@ -1,0 +1,308 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="using:HomeVideoLibrary.UI"
+                    xmlns:c="using:HomeVideoLibrary.UI.Controls">
+
+  <!-- A chip is a key cap at half height: a 1px molded wall and a short cast shadow. -->
+  <BoxShadows x:Key="Vcr.Shadow.Chip">0 1 0 0 #3DFFFFFF inset, 0 -1 0 0 #66000000 inset, 0 1 0 0 #050606, 0 2 4 0 #B3000000</BoxShadows>
+  <BoxShadows x:Key="Vcr.Shadow.Chip.Duplicate">0 1 0 0 #3DFFFFFF inset, 0 -1 0 0 #66000000 inset, 0 0 0 2 #F2C521</BoxShadows>
+  <BoxShadows x:Key="Vcr.Shadow.ChipRemove.Pressed">0 1 2 0 #8C000000 inset</BoxShadows>
+
+  <!-- Borderless entry living inside the field; the field draws the well and focus ring. -->
+  <ControlTheme x:Key="Vcr.Theme.TagChipEntry" TargetType="TextBox">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="SelectionBrush" Value="{DynamicResource Vcr.Brush.Selection}"/>
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="Padding" Value="4,0"/>
+    <Setter Property="MinHeight" Value="22"/>
+    <Setter Property="MinWidth" Value="80"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Cursor" Value="Ibeam"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Hidden"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+          <Panel VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+            <TextBlock Name="PART_Watermark"
+                       Text="{TemplateBinding Watermark}"
+                       Foreground="{DynamicResource Vcr.Brush.Field.Placeholder}"
+                       IsHitTestVisible="False"
+                       IsVisible="{TemplateBinding Text, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+            <ScrollViewer Name="PART_ScrollViewer"
+                          HorizontalScrollBarVisibility="{TemplateBinding (ScrollViewer.HorizontalScrollBarVisibility)}"
+                          VerticalScrollBarVisibility="{TemplateBinding (ScrollViewer.VerticalScrollBarVisibility)}">
+              <TextPresenter Name="PART_TextPresenter"
+                             Text="{TemplateBinding Text, Mode=TwoWay}"
+                             CaretBlinkInterval="{TemplateBinding CaretBlinkInterval}"
+                             CaretIndex="{TemplateBinding CaretIndex}"
+                             SelectionStart="{TemplateBinding SelectionStart}"
+                             SelectionEnd="{TemplateBinding SelectionEnd}"
+                             TextAlignment="{TemplateBinding TextAlignment}"
+                             TextWrapping="NoWrap"
+                             LineHeight="{TemplateBinding LineHeight}"
+                             LetterSpacing="{TemplateBinding LetterSpacing}"
+                             PasswordChar="{TemplateBinding PasswordChar}"
+                             RevealPassword="{TemplateBinding RevealPassword}"
+                             SelectionBrush="{TemplateBinding SelectionBrush}"
+                             SelectionForegroundBrush="{TemplateBinding SelectionForegroundBrush}"
+                             CaretBrush="{TemplateBinding CaretBrush}"/>
+            </ScrollViewer>
+          </Panel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <ControlTheme x:Key="Vcr.Theme.TagChipRemove" TargetType="Button">
+    <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    <Setter Property="Width" Value="16"/>
+    <Setter Property="Height" Value="16"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Pill}"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Disc"
+                Background="{TemplateBinding Background}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                BoxShadow="{DynamicResource Vcr.Shadow.None}"
+                RenderTransform="{DynamicResource Vcr.Travel.Rest}">
+          <Border.Transitions>
+            <Transitions>
+              <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
+            </Transitions>
+          </Border.Transitions>
+          <PathIcon Data="{DynamicResource Vcr.Icon.Close}"
+                    Foreground="{TemplateBinding Foreground}"
+                    Width="8"
+                    Height="8"/>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Highlight}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+    </Style>
+    <Style Selector="^:pressed">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
+      <Style Selector="^ /template/ Border#PART_Disc">
+        <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.ChipRemove.Pressed}"/>
+        <Setter Property="RenderTransform" Value="translate(0px, 1px)"/>
+      </Style>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:TagChip}" TargetType="c:TagChip">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Chip}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.CapLegend}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Height" Value="22"/>
+    <Setter Property="Padding" Value="9,0,2,0"/>
+    <Setter Property="Margin" Value="0,1,5,1"/>
+    <Setter Property="Cursor" Value="Arrow"/>
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Cap"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                BoxShadow="{DynamicResource Vcr.Shadow.Chip}"
+                Padding="{TemplateBinding Padding}">
+          <Border.Transitions>
+            <Transitions>
+              <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.14"/>
+            </Transitions>
+          </Border.Transitions>
+          <DockPanel>
+            <Button Name="PART_Remove"
+                    DockPanel.Dock="Right"
+                    Theme="{StaticResource Vcr.Theme.TagChipRemove}"
+                    Command="{TemplateBinding RemoveCommand}"
+                    CommandParameter="{TemplateBinding Text}"
+                    Margin="4,0,0,0"
+                    VerticalAlignment="Center"/>
+            <TextBlock Name="PART_Text"
+                       Text="{TemplateBinding Text}"
+                       VerticalAlignment="Center"
+                       LetterSpacing="0.2"/>
+          </DockPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:duplicate /template/ Border#PART_Cap">
+      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Chip.Duplicate}"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:TagSuggestionItem}" TargetType="c:TagSuggestionItem">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="CornerRadius" Value="2"/>
+    <Setter Property="Height" Value="26"/>
+    <Setter Property="Padding" Value="9,0"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{TemplateBinding Background}"
+                CornerRadius="{TemplateBinding CornerRadius}"
+                Padding="{TemplateBinding Padding}">
+          <DockPanel>
+            <TextBlock Name="PART_Count"
+                       DockPanel.Dock="Right"
+                       Margin="12,0,0,0"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource Vcr.FontSize.Legend}"
+                       FontFeatures="+tnum"
+                       Foreground="{DynamicResource Vcr.Brush.Legend.Dim}"
+                       Text="{TemplateBinding Count}"/>
+            <TextBlock Name="PART_Text"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+          </DockPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+    </Style>
+    <Style Selector="^:highlighted">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+      <Style Selector="^ /template/ TextBlock#PART_Count">
+        <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+
+  <!-- Suggestion rows draw their own highlight; the container only hosts them and never takes focus,
+       so the entry keeps typing focus while the list is open. -->
+  <ControlTheme x:Key="Vcr.Theme.TagSuggestionContainer" TargetType="ListBoxItem">
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="0"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ContentPresenter Name="PART_Row"
+                          Content="{TemplateBinding Content}"
+                          ContentTemplate="{TemplateBinding ContentTemplate}"/>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type c:TagChipInput}" TargetType="c:TagChipInput">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Field}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Field}"/>
+    <Setter Property="MinHeight" Value="{DynamicResource Vcr.Size.Control}"/>
+    <Setter Property="Padding" Value="6,5"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Legend}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Cursor" Value="Ibeam"/>
+    <!-- TemplatedControl clips by default, which would cut off the focus ring drawn outside the field. -->
+    <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Panel>
+          <Border Name="PART_Field"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  BoxShadow="{DynamicResource Vcr.Shadow.Field}"
+                  Padding="{TemplateBinding Padding}">
+            <WrapPanel VerticalAlignment="Center">
+              <ItemsControl Name="PART_Chips" ItemsSource="{TemplateBinding Tags}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <c:TagChip Text="{Binding}"
+                               RemoveCommand="{Binding $parent[c:TagChipInput].RemoveTagCommand}"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBox Name="PART_Entry"
+                       Theme="{StaticResource Vcr.Theme.TagChipEntry}"
+                       Text="{TemplateBinding Text, Mode=TwoWay}"
+                       Watermark="{TemplateBinding Watermark}"
+                       VerticalAlignment="Center"/>
+            </WrapPanel>
+          </Border>
+          <Popup Name="PART_Popup"
+                 IsOpen="{TemplateBinding IsDropDownOpen}"
+                 PlacementTarget="{Binding #PART_Field}"
+                 Placement="BottomEdgeAlignedLeft"
+                 VerticalOffset="4"
+                 ShouldUseOverlayLayer="True">
+            <Border Name="PART_DropDown"
+                    Width="{Binding #PART_Field.Bounds.Width}"
+                    MinWidth="160"
+                    Background="{DynamicResource Vcr.Brush.Chassis.Raised}"
+                    BorderBrush="{DynamicResource Vcr.Brush.Plastic.Rim}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    BoxShadow="{DynamicResource Vcr.Shadow.Popup}"
+                    Padding="3">
+              <ListBox Name="PART_Suggestions"
+                       MaxHeight="268"
+                       Focusable="False"
+                       Background="Transparent"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                       ItemsSource="{TemplateBinding Suggestions}"
+                       SelectedItem="{TemplateBinding HighlightedSuggestion}"
+                       ItemContainerTheme="{StaticResource Vcr.Theme.TagSuggestionContainer}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="c:TagSuggestionRow">
+                    <c:TagSuggestionItem Text="{Binding Tag}"
+                                         Count="{Binding Count}"
+                                         MatchStart="{Binding MatchStart}"
+                                         MatchLength="{Binding MatchLength}"
+                                         IsHighlighted="{Binding $parent[ListBoxItem].IsSelected}"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Border>
+          </Popup>
+        </Panel>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:focus-within /template/ Border#PART_Field">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Field.Focused}"/>
+      <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Field.Focused}"/>
+    </Style>
+    <Style Selector="^:disabled">
+      <Setter Property="Cursor" Value="Arrow"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Style Selector="^ /template/ TextBox#PART_Entry">
+        <Setter Property="IsVisible" Value="False"/>
+      </Style>
+      <Style Selector="^ /template/ Border#PART_Field">
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
+      </Style>
+    </Style>
+  </ControlTheme>
+</ResourceDictionary>

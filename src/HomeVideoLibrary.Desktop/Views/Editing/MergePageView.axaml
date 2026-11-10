@@ -1,0 +1,91 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:views="using:HomeVideoLibrary.Desktop.Views"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             xmlns:jobs="using:HomeVideoLibrary.Desktop.ViewModels"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.Editing"
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.MergePageView" x:DataType="vm:MergePageViewModel" Focusable="True">
+ <UserControl.Styles>
+  <Style Selector="TextBlock.pending">
+   <Setter Property="Opacity" Value="0.55"/>
+  </Style>
+ </UserControl.Styles>
+ <Grid RowDefinitions="Auto,*">
+  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16" Margin="20,16,20,0">
+   <c:PlasticButton Classes="toolbar" Content="◀ LIBRARY" Command="{Binding BackCommand}" VerticalAlignment="Center"
+    ToolTip.Tip="Back to the library (Esc)"/>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+    <TextBlock Classes="title" Text="Merge videos" VerticalAlignment="Center"/>
+    <TextBlock Classes="meta" VerticalAlignment="Center">
+     <Run Text="{Binding Sources.Count}"/><Run Text=" clips · "/><Run Text="{Binding TotalDurationText}"/>
+    </TextBlock>
+   </StackPanel>
+  </Grid>
+
+  <ScrollViewer Grid.Row="1" Margin="0,12,0,0">
+   <StackPanel MaxWidth="720" Margin="20,4,20,20" Spacing="14">
+    <StackPanel Spacing="14" IsVisible="{Binding IsEditing}">
+     <c:SectionHeader Title="PLAY ORDER">
+      <StackPanel Orientation="Horizontal" Spacing="6">
+       <c:PlasticButton Classes="toolbar" Content="MOVE UP" Command="{Binding MoveUpCommand}" ToolTip.Tip="Move the selected clip earlier (Alt+↑)"/>
+       <c:PlasticButton Classes="toolbar" Content="MOVE DOWN" Command="{Binding MoveDownCommand}" ToolTip.Tip="Move the selected clip later (Alt+↓)"/>
+      </StackPanel>
+     </c:SectionHeader>
+     <Border Classes="well">
+      <ListBox x:Name="SourceList" Classes="vcr" ItemsSource="{Binding Sources}" SelectedIndex="{Binding SelectedIndex, Mode=OneWay}" SelectionChanged="SourceSelectionChanged"
+       AutomationProperties.Name="Clips in play order">
+       <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:MergeSource">
+         <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+          <Border Width="6" Height="22" CornerRadius="2" VerticalAlignment="Center"
+           Background="{Binding AccentKey, Converter={x:Static views:ResourceConverter.Instance}}"/>
+          <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Classes="meta" Text="{Binding DurationText}" VerticalAlignment="Center"/>
+         </Grid>
+        </DataTemplate>
+       </ListBox.ItemTemplate>
+      </ListBox>
+     </Border>
+
+     <c:SectionHeader Title="PLAN"/>
+     <TextBlock Text="{Binding Plan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding Plan.IsPlanning}"/>
+
+     <TextBlock Classes="legend" Text="NEW VIDEO TITLE"/>
+     <TextBox Text="{Binding OutputTitle}" Watermark="Merged home video"
+      AutomationProperties.Name="New video title"/>
+
+     <StackPanel Orientation="Horizontal" Spacing="10">
+      <c:PlasticButton Classes="primary" Content="{Binding Plan.ActionLabel}" MinWidth="110" Command="{Binding SaveCommand}"
+       ToolTip.Tip="Save the merged video as a new video"/>
+      <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Info}" VerticalAlignment="Center"
+       ToolTip.Tip="What the merge will do" AutomationProperties.Name="What the merge will do">
+       <c:PlasticButton.Flyout>
+        <Flyout Placement="BottomEdgeAlignedLeft">
+         <TextBlock Text="{Binding Plan.Details}" TextWrapping="Wrap" MaxWidth="420"/>
+        </Flyout>
+       </c:PlasticButton.Flyout>
+      </c:PlasticButton>
+     </StackPanel>
+     <TextBlock Classes="meta" Text="Arrange the clips in the order they should play. The merge runs in the background; the originals stay as they are." TextWrapping="Wrap"
+      IsVisible="{Binding Job, Converter={x:Static ObjectConverters.IsNull}}"/>
+    </StackPanel>
+
+    <!-- Queued or running: progress and CANCEL. Failed or cancelled: why, under the form given back for a retry. -->
+    <ContentControl Content="{Binding Job}" IsVisible="{Binding !IsMerged}">
+     <ContentControl.DataTemplates>
+      <DataTemplate DataType="jobs:JobViewModel"><local:EditJobView/></DataTemplate>
+     </ContentControl.DataTemplates>
+    </ContentControl>
+
+    <StackPanel x:Name="MergedPanel" Spacing="8" IsVisible="{Binding IsMerged}">
+     <TextBlock Classes="title" Text="Merged"/>
+     <TextBlock Classes="meta" Text="{Binding Job.StatusText}" TextWrapping="Wrap"/>
+     <Button x:Name="ViewMergedLink" Classes="link" HorizontalAlignment="Left" Command="{Binding Job.OpenCommand}" IsVisible="{Binding Job.CanOpen}"
+      ToolTip.Tip="Open the merged video">
+      <TextBlock Text="{Binding MergedTitle, StringFormat='View video: {0}'}" TextWrapping="Wrap"/>
+     </Button>
+    </StackPanel>
+   </StackPanel>
+  </ScrollViewer>
+ </Grid>
+</UserControl>

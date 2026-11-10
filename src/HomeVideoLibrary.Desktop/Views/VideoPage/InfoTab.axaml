@@ -1,0 +1,66 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:core="using:HomeVideoLibrary.Core"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.InfoTab"
+             x:DataType="vp:VideoPageViewModel">
+  <StackPanel Spacing="8">
+    <StackPanel Spacing="8" IsEnabled="{Binding Details.CanEdit}">
+      <TextBlock Classes="legend" Text="TITLE"/>
+      <TextBox x:Name="TitleField" Text="{Binding Details.Title, Mode=TwoWay}" Watermark="{Binding Details.TitleWatermark}"
+               AutomationProperties.Name="Title"/>
+      <TextBlock Classes="legend" Text="DESCRIPTION" Margin="0,6,0,0"/>
+      <TextBox x:Name="DescriptionField" Classes="area" Text="{Binding Details.Description, Mode=TwoWay}" AcceptsReturn="True"
+               TextWrapping="Wrap" MinHeight="72" MaxHeight="168" Watermark="What happened on this tape?"
+               AutomationProperties.Name="Description"/>
+      <TextBlock Classes="legend" Text="RECORDED" Margin="0,6,0,0"/>
+      <TextBox Text="{Binding Details.RecordedAtText, Mode=TwoWay}" Watermark="1997, 1997-07 or 1997-07-03"
+               AutomationProperties.Name="Recorded date"/>
+      <TextBlock Classes="legend" Foreground="{DynamicResource Vcr.Brush.Red.Led}" TextWrapping="Wrap"
+                 Text="{Binding Details.RecordedDateError}" IsVisible="{Binding !Details.IsValid}"/>
+    </StackPanel>
+
+    <c:SectionHeader Title="FILE" Margin="0,14,0,0"/>
+    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="4">
+      <TextBlock Classes="meta" Text="Duration"/>
+      <TextBlock Classes="meta" Grid.Column="1" Text="{Binding Details.DurationText}"/>
+      <TextBlock Classes="meta" Grid.Row="1" Text="Imported"/>
+      <TextBlock Classes="meta" Grid.Row="1" Grid.Column="1" Text="{Binding Details.ImportedAt, StringFormat='{}{0:d MMM yyyy, HH:mm}'}"/>
+      <TextBlock Classes="meta" Grid.Row="2" Text="File"/>
+      <TextBlock Classes="meta" Grid.Row="2" Grid.Column="1" Text="{Binding Details.FileName}" TextTrimming="CharacterEllipsis"
+                 ToolTip.Tip="{Binding Details.FileName}"/>
+    </Grid>
+
+    <c:SectionHeader Title="IN ALBUMS" Margin="0,14,0,0">
+      <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Album}" Content="ADD" IsEnabled="{Binding !!OtherAlbums.Count}"
+                       ToolTip.Tip="Add this video to an album">
+        <c:PlasticButton.Flyout>
+          <MenuFlyout ItemsSource="{Binding OtherAlbums}">
+            <MenuFlyout.ItemContainerTheme>
+              <ControlTheme TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}" x:DataType="core:VideoAlbum">
+                <Setter Property="Header" Value="{Binding Name}"/>
+                <Setter Property="Command" Value="{Binding $parent[local:InfoTab].((vp:VideoPageViewModel)DataContext).AddToAlbumCommand}"/>
+                <Setter Property="CommandParameter" Value="{Binding}"/>
+              </ControlTheme>
+            </MenuFlyout.ItemContainerTheme>
+          </MenuFlyout>
+        </c:PlasticButton.Flyout>
+      </c:PlasticButton>
+    </c:SectionHeader>
+    <TextBlock Classes="meta" Text="Not in an album yet." IsVisible="{Binding !Albums.Count}"/>
+    <ItemsControl ItemsSource="{Binding Albums}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6"/></ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="core:VideoAlbum">
+          <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Album}" Content="{Binding Name}"
+                           Command="{Binding $parent[local:InfoTab].((vp:VideoPageViewModel)DataContext).ShowAlbumCommand}"
+                           CommandParameter="{Binding}" ToolTip.Tip="Show this album in the library"/>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>

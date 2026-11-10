@@ -1,4 +1,5 @@
 using HomeVideoLibrary.Core;
+using Microsoft.Data.Sqlite;
 
 namespace HomeVideoLibrary.Infrastructure;
 
@@ -8,7 +9,7 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
     {
         await using var connection = await catalog.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,name FROM albums ORDER BY name COLLATE NOCASE,id";
+        command.CommandText = "SELECT id,name FROM albums ORDER BY name_key,name,id";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var result = new List<VideoAlbum>();
         while (await reader.ReadAsync(cancellationToken)) result.Add(new VideoAlbum(Guid.Parse(reader.GetString(0)), reader.GetString(1)));
@@ -20,12 +21,20 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
     public async Task<VideoAlbum> CreateAsync(string name, IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default)
     {
         var album = new VideoAlbum(Guid.NewGuid(), NormalizeName(name));
+        try { await InsertAsync(album, videoIds, cancellationToken); }
+        catch (SqliteException exception) { throw Friendly(exception, album.Name); }
+        return album;
+    }
+
+    private async Task InsertAsync(VideoAlbum album, IEnumerable<Guid> videoIds, CancellationToken cancellationToken)
+    {
         await using var connection = await catalog.OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "INSERT INTO albums(id,name) VALUES ($id,$name)";
+        command.CommandText = "INSERT INTO albums(id,name,name_key) VALUES ($id,$name,$key)";
         command.Parameters.AddWithValue("$id", album.Id.ToString()); command.Parameters.AddWithValue("$name", album.Name);
+        command.Parameters.AddWithValue("$key", AlbumNames.Key(album.Name));
         await command.ExecuteNonQueryAsync(cancellationToken);
         foreach (var videoId in videoIds.Distinct())
         {
@@ -36,16 +45,20 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         }
         cancellationToken.ThrowIfCancellationRequested();
         await transaction.CommitAsync(cancellationToken);
-        return album;
     }
 
     public async Task RenameAsync(Guid albumId, string name, CancellationToken cancellationToken = default)
     {
+        name = NormalizeName(name);
         await using var connection = await catalog.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE albums SET name=$name WHERE id=$id";
-        command.Parameters.AddWithValue("$id", albumId.ToString()); command.Parameters.AddWithValue("$name", NormalizeName(name));
-        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) throw new InvalidOperationException("This album no longer exists.");
+        command.CommandText = "UPDATE albums SET name=$name, name_key=$key WHERE id=$id";
+        command.Parameters.AddWithValue("$id", albumId.ToString()); command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$key", AlbumNames.Key(name));
+        int changed;
+        try { changed = await command.ExecuteNonQueryAsync(cancellationToken); }
+        catch (SqliteException exception) { throw Friendly(exception, name); }
+        if (changed == 0) throw new InvalidOperationException("This album no longer exists.");
     }
 
     public async Task DeleteAsync(Guid albumId, CancellationToken cancellationToken = default)
@@ -63,6 +76,12 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         ChangeMembershipAsync(albumId, videoIds, false, cancellationToken);
 
     private async Task ChangeMembershipAsync(Guid albumId, IEnumerable<Guid> videoIds, bool add, CancellationToken cancellationToken)
+    {
+        try { await ChangeMembershipCoreAsync(albumId, videoIds, add, cancellationToken); }
+        catch (SqliteException exception) { throw Friendly(exception, null); }
+    }
+
+    private async Task ChangeMembershipCoreAsync(Guid albumId, IEnumerable<Guid> videoIds, bool add, CancellationToken cancellationToken)
     {
         var ids = videoIds.Distinct().ToArray();
         await using var connection = await catalog.OpenAsync(cancellationToken);
@@ -92,9 +111,16 @@ public sealed class AlbumRepository(LibraryCatalog catalog)
         return (await catalog.ListAsync(cancellationToken)).Where(video => !existing.Contains(video.Id)).ToArray();
     }
 
-    private static string NormalizeName(string name)
+    private const int ConstraintUnique = 2067, ConstraintForeignKey = 787;
+
+    private static Exception Friendly(SqliteException exception, string? name) => exception.SqliteExtendedErrorCode switch
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return name.Trim();
-    }
+        ConstraintUnique when name is not null => new InvalidOperationException($"An album named \u201c{name}\u201d already exists.", exception),
+        ConstraintForeignKey => new InvalidOperationException("That album or one of these videos is no longer in the library.", exception),
+        _ => exception,
+    };
+
+    /// <exception cref="InvalidOperationException">The name is empty.</exception>
+    private static string NormalizeName(string name) =>
+        AlbumNames.Normalize(name) ?? throw new InvalidOperationException("Give the album a name.");
 }

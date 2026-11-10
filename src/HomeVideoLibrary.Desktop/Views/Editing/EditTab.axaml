@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:sys="using:System"
+             xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             xmlns:jobs="using:HomeVideoLibrary.Desktop.ViewModels"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.Editing"
+             x:Class="HomeVideoLibrary.Desktop.Views.Editing.EditTab" x:DataType="vm:TrimPanelViewModel">
+ <UserControl.Styles>
+  <Style Selector="TextBlock.pending">
+   <Setter Property="Opacity" Value="0.55"/>
+  </Style>
+  <Style Selector="TextBlock.error">
+   <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Red}"/>
+  </Style>
+  <!-- An unset point shows dashes, like a counter with no tape loaded. -->
+  <Style Selector="c|LcdCounter.unset">
+   <Setter Property="Text" Value="-:--:--"/>
+  </Style>
+ </UserControl.Styles>
+ <StackPanel Spacing="12">
+  <c:SectionHeader Title="TRIM">
+   <c:PlasticButton Classes="toolbar" Content="CLEAR" Command="{Binding ClearCommand}" ToolTip.Tip="Clear the in and out points"/>
+  </c:SectionHeader>
+  <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+   <c:LegendFrame Legend="IN">
+    <c:LcdCounter Classes="small" Hours="Always" HorizontalAlignment="Stretch"
+     Value="{Binding In, TargetNullValue={x:Static sys:TimeSpan.Zero}}"
+     Classes.unset="{Binding In, Converter={x:Static ObjectConverters.IsNull}}"/>
+   </c:LegendFrame>
+   <c:LegendFrame Grid.Column="1" Legend="OUT">
+    <c:LcdCounter Classes="small" Hours="Always" HorizontalAlignment="Stretch"
+     Value="{Binding Out, TargetNullValue={x:Static sys:TimeSpan.Zero}}"
+     Classes.unset="{Binding Out, Converter={x:Static ObjectConverters.IsNull}}"/>
+   </c:LegendFrame>
+   <c:PlasticButton Grid.Row="1" Content="SET IN" HorizontalAlignment="Stretch" Command="{Binding SetInCommand}"
+    ToolTip.Tip="Start the kept range at the playhead (I)"/>
+   <c:PlasticButton Grid.Row="1" Grid.Column="1" Content="SET OUT" HorizontalAlignment="Stretch" Command="{Binding SetOutCommand}"
+    ToolTip.Tip="End the kept range at the playhead (O)"/>
+   <TextBox Grid.Row="2" x:Name="InField" Text="{Binding InText, UpdateSourceTrigger=LostFocus}" Watermark="h:mm:ss.fff"
+    AutomationProperties.Name="In point"/>
+   <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutField" Text="{Binding OutText, UpdateSourceTrigger=LostFocus}" Watermark="h:mm:ss.fff"
+    AutomationProperties.Name="Out point"/>
+   <TextBlock Grid.Row="3" Classes="legend error" Text="{Binding InTextError}" TextWrapping="Wrap"
+    IsVisible="{Binding InTextError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+   <TextBlock Grid.Row="3" Grid.Column="1" Classes="legend error" Text="{Binding OutTextError}" TextWrapping="Wrap"
+    IsVisible="{Binding OutTextError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  </Grid>
+  <TextBlock Classes="legend error" Text="{Binding RangeError}" TextWrapping="Wrap"
+   IsVisible="{Binding RangeError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  <StackPanel Orientation="Horizontal" Spacing="10">
+   <c:LatchButton Classes="toolbar" Content="PRECISE" IsChecked="{Binding IsPrecise}" VerticalAlignment="Center"
+    ToolTip.Tip="Cut at the exact frames, re-encoding a fraction of a second at each cut. Off: cuts snap to keyframes."/>
+   <TextBlock Classes="meta" Text="Frame-accurate cuts" VerticalAlignment="Center"/>
+  </StackPanel>
+  <TextBlock Text="{Binding TrimPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding TrimPlan.IsPlanning}"/>
+  <StackPanel Orientation="Horizontal" Spacing="6">
+   <c:PlasticButton Classes="primary" Content="{Binding TrimPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Scissors}" MinWidth="110"
+    Command="{Binding TrimCommand}" ToolTip.Tip="Save the kept range as a new video"/>
+   <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Info}" VerticalAlignment="Center"
+    ToolTip.Tip="What the trim will do" AutomationProperties.Name="What the trim will do">
+    <c:PlasticButton.Flyout>
+     <Flyout Placement="BottomEdgeAlignedLeft">
+      <TextBlock Text="{Binding TrimPlan.Details}" TextWrapping="Wrap" MaxWidth="300"/>
+     </Flyout>
+    </c:PlasticButton.Flyout>
+   </c:PlasticButton>
+  </StackPanel>
+
+  <c:SectionHeader Title="SPLIT AT PLAYHEAD" Margin="0,8,0,0"/>
+  <StackPanel Orientation="Horizontal" Spacing="10">
+   <c:LcdCounter Classes="small" Hours="Always" Value="{Binding SplitAt}" Caption="SPLIT"/>
+  </StackPanel>
+  <TextBlock Text="{Binding SplitPlan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding SplitPlan.IsPlanning}"/>
+  <StackPanel Orientation="Horizontal" Spacing="6">
+   <c:PlasticButton Content="{Binding SplitPlan.ActionLabel}" Icon="{StaticResource Vcr.Icon.Slice}" MinWidth="110"
+    Command="{Binding SplitCommand}" ToolTip.Tip="Save both parts as new videos"/>
+   <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Info}" VerticalAlignment="Center"
+    ToolTip.Tip="What the split will do" AutomationProperties.Name="What the split will do">
+    <c:PlasticButton.Flyout>
+     <Flyout Placement="BottomEdgeAlignedLeft">
+      <TextBlock Text="{Binding SplitPlan.Details}" TextWrapping="Wrap" MaxWidth="300"/>
+     </Flyout>
+    </c:PlasticButton.Flyout>
+   </c:PlasticButton>
+  </StackPanel>
+
+  <c:SectionHeader Title="NEW VIDEO" Margin="0,8,0,0"/>
+  <TextBox Text="{Binding OutputTitle}" Watermark="{Binding TitleWatermark}" AutomationProperties.Name="New video title"/>
+  <TextBlock Classes="legend error" Text="{Binding EditBlocker}"
+   IsVisible="{Binding EditBlocker, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+  <TextBlock Classes="meta" Text="Every save makes new videos in the background; the original stays as it is." TextWrapping="Wrap"
+   IsVisible="{Binding Job, Converter={x:Static ObjectConverters.IsNull}}"/>
+  <ContentControl Content="{Binding Job}">
+   <ContentControl.DataTemplates>
+    <DataTemplate DataType="jobs:JobViewModel"><local:EditJobView/></DataTemplate>
+   </ContentControl.DataTemplates>
+  </ContentControl>
+ </StackPanel>
+</UserControl>

@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:demo="using:HomeVideoLibrary.Gallery.Demo"
+             x:Class="HomeVideoLibrary.Gallery.Demo.VideoPageView"
+             x:DataType="demo:VideoPageViewModel">
+  <!--
+    Reference wiring for the overhaul's video page:
+    - Position, Duration and chapters flow one way into the scrub bar; seeks come back through one command.
+    - Rows are an ItemsControl over view models with typed templates; nothing is rebuilt on playhead ticks.
+    - Drafts (chapter title, tag entry) and the editing row are view-model properties bound two-way.
+  -->
+  <StackPanel Spacing="10">
+    <TextBlock Classes="title" Text="{Binding Name}"/>
+    <c:ScrubBar Margin="6,8"
+                Duration="{Binding Chapters.Duration}"
+                Position="{Binding Chapters.Position}"
+                ChapterSegments="{Binding Chapters.Marks}"
+                SeekCommand="{Binding Chapters.Seek}"/>
+    <c:PlasticButton Content="ADD CHAPTER"
+                     HorizontalAlignment="Left"
+                     Icon="{StaticResource Vcr.Icon.Chapter}"
+                     Command="{Binding Chapters.AddChapter}"
+                     IsEnabled="{Binding Chapters.CanAddChapter}"/>
+    <Border Classes="bezel" Padding="8">
+      <ItemsControl ItemsSource="{Binding Chapters.Rows}">
+        <ItemsControl.DataTemplates>
+          <!-- A click expands the row in place into its editor (one at a time); a click on the time or the play key seeks. -->
+          <DataTemplate DataType="demo:ChapterRowViewModel">
+            <c:ChapterListItem Start="{Binding Start}"
+                               Title="{Binding Title}"
+                               IsCurrent="{Binding IsCurrent}"
+                               IsEditing="{Binding IsEditing, Mode=TwoWay}"
+                               DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
+                               ActivateCommand="{Binding ToggleExpanded}"
+                               SeekCommand="{Binding Jump}"
+                               CommitTitleCommand="{Binding CommitTitle}"
+                               IsExpanded="{Binding IsExpanded}"
+                               ExpandedContent="{Binding Editor}"
+                               ExpandedContentTemplate="{x:Static demo:VideoPageViewModel.RowEditorTemplate}">
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}" Command="{Binding Jump}" ToolTip.Tip="Play from here"/>
+            </c:ChapterListItem>
+          </DataTemplate>
+          <DataTemplate DataType="demo:PlaceholderRowViewModel">
+            <c:ChapterPlaceholderRow Start="{Binding Start}"/>
+          </DataTemplate>
+        </ItemsControl.DataTemplates>
+      </ItemsControl>
+    </Border>
+    <c:TagChipInput Watermark="Add tags…"
+                    Tags="{Binding Tags.Tags}"
+                    Text="{Binding Tags.Draft, Mode=TwoWay}"
+                    AddTagCommand="{Binding Tags.AddTag}"
+                    RemoveTagCommand="{Binding Tags.RemoveTag}"
+                    SuggestionProvider="{Binding Tags.Suggest}"/>
+  </StackPanel>
+</UserControl>

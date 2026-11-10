@@ -8,10 +8,12 @@
       { "name": "preview", "value": "0 8 20 0 #90000000", "purpose": "Floating native frame preview" }
     ],
     "motion": [
-      { "name": "tape-lift", "value": "140ms translateY(-2px)", "purpose": "Subtle hover protrusion" },
+      { "name": "tape-forward", "value": "120ms scale(1.025) with a deeper shadow, no translation", "purpose": "Hover brings the tape toward the viewer; reduced motion keeps it still" },
+      { "name": "tape-open", "value": "180ms scale(1.025 to 1.12) and fade", "purpose": "A clicked tape comes out toward the viewer before its page opens" },
       { "name": "preview-crossfade", "value": "160ms opacity", "purpose": "Frame changes" }
     ],
-    "breakpoints": [{ "name": "two-tapes", "value": "1000px available list width" }],
+    "breakpoints": [],
+    "layout": [{ "name": "shelf-stack", "value": "one spine per row in a centered stack of at most 760px; spine proportions 187:25", "purpose": "True VHS spine proportions at every window size" }],
     "nativeSource": "src/HomeVideoLibrary.Desktop/Views/TapeView.axaml",
     "nativeNote": "Avalonia controls are authoritative; web component snippets and synthesized color ramps are intentionally omitted."
   },

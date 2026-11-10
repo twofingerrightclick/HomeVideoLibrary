@@ -1,42 +1,31 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" x:Class="HomeVideoLibrary.Desktop.Views.TapeView" x:DataType="vm:TapeViewModel"
- Focusable="True" AutomationProperties.Name="{Binding Label}">
- <UserControl.Styles>
-  <Style Selector="Border.shell"><Setter Property="RenderTransform" Value="translate(0px, 0px)"/><Setter Property="Transitions"><Transitions><TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.14"/></Transitions></Setter></Style>
-  <Style Selector="UserControl:pointerover Border.shell"><Setter Property="RenderTransform" Value="translate(0px, -2px)"/></Style>
-  <Style Selector="UserControl:focus-visible Border.shell"><Setter Property="BorderBrush" Value="#B9D9E8"/></Style>
- </UserControl.Styles>
- <Grid Height="72" Margin="3,0,3,0">
-  <Border Classes="shell" Height="60" Background="#292C2D" BorderBrush="#515554" BorderThickness="1" CornerRadius="5" BoxShadow="0 3 5 0 #70000000">
-   <Grid ColumnDefinitions="7,45,*,48,7" Margin="3">
-    <Border Background="#3B3E3E" CornerRadius="2"/>
-    <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="0">
-     <CheckBox x:Name="SelectBox" IsChecked="{Binding IsSelected, Mode=TwoWay}" Width="24" MinWidth="0" Height="28" MinHeight="0" Padding="0" AutomationProperties.Name="Select video" ToolTip.Tip="Select for albums or clip editing"/>
-     <TextBlock Text="VHS" FontSize="8" Foreground="#ADB5B1" HorizontalAlignment="Center"/>
-    </StackPanel>
-    <Border x:Name="LabelSurface" Grid.Column="2" Background="#EAE5D5" Margin="0,3" CornerRadius="2" ClipToBounds="True">
-     <Grid ColumnDefinitions="5,*">
-      <Border Background="{Binding Accent}"/>
-      <Grid Grid.Column="1" Margin="12,0,10,0">
-       <Border BorderBrush="#C4C6BA" BorderThickness="0,0,0,1" Height="1" VerticalAlignment="Top" Margin="0,32,0,0"/>
-       <TextBlock Text="{Binding Label}" Foreground="#252D30" FontFamily="avares://HomeVideoLibrary/Assets/Caveat.ttf#Caveat" FontSize="27" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,-4,0,0"/>
-      </Grid>
-     </Grid>
-    </Border>
-    <Border Grid.Column="3" Background="{Binding Accent}" Margin="3,3,2,3">
-     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="3"><TextBlock Text="{Binding DurationLabel}" FontSize="10" Foreground="White" HorizontalAlignment="Center"/><TextBlock Text="VIDEO" FontSize="8" Foreground="#F5F0E6" HorizontalAlignment="Center"/></StackPanel>
-    </Border>
-    <Border Grid.Column="4" Background="#3B3E3E" CornerRadius="2"/>
-   </Grid>
-  </Border>
-  <Popup x:Name="PreviewPopup" PlacementTarget="{Binding #LabelSurface}" Placement="Bottom" IsLightDismissEnabled="False" IsHitTestVisible="False">
-   <Border Background="#101416" Padding="5" CornerRadius="5" BoxShadow="0 8 20 0 #90000000" IsHitTestVisible="False">
+ xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels" xmlns:c="using:HomeVideoLibrary.UI.Controls" xmlns:views="using:HomeVideoLibrary.Desktop.Views"
+ x:Class="HomeVideoLibrary.Desktop.Views.TapeView" x:DataType="vm:TapeViewModel" ClipToBounds="False">
+ <!-- A spine on the shelf plus its hover preview. The list item, not the spine, takes keyboard focus. -->
+ <Panel>
+  <c:VhsSpine x:Name="Spine" Focusable="False" IsTabStop="False"
+   Label="{Binding Label}" Sticker="{Binding Spine.Sticker}" BrandText="{Binding Spine.BrandText}"
+   Accent="{Binding Spine.AccentKey, Converter={x:Static views:ResourceConverter.Instance}}"
+   ShellText="{Binding ShellText}" Command="{Binding OpenCommand}"
+   Classes.problem="{Binding HasProblem}" ToolTip.Tip="{Binding ProblemDetail}"
+   AutomationProperties.Name="{Binding Label}">
+   <c:VhsSpine.LeadingContent>
+    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Focusable="False" AutomationProperties.Name="Select video"
+     ToolTip.Tip="Select for albums or clip editing"/>
+   </c:VhsSpine.LeadingContent>
+  </c:VhsSpine>
+  <Popup x:Name="PreviewPopup" Classes="pointer-preview" PlacementTarget="{Binding #Spine}" IsHitTestVisible="False">
+   <Border Classes="bezel" Padding="5" IsHitTestVisible="False">
     <Grid Width="208" Height="132" RowDefinitions="112,20">
      <Image x:Name="PreviousPreview" Stretch="UniformToFill"/>
-     <Image x:Name="CurrentPreview" Stretch="UniformToFill"><Image.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.16"/></Transitions></Image.Transitions></Image>
-     <TextBlock x:Name="PreviewTime" Grid.Row="1" HorizontalAlignment="Center" FontSize="11" Foreground="#D6DEDF"/>
+     <Image x:Name="CurrentPreview" Stretch="UniformToFill"/>
+     <!-- Shown while the tape's strip is still being built. -->
+     <Border x:Name="PreparingPlate" Background="{DynamicResource Vcr.Brush.Chassis.Deep}" CornerRadius="2" IsVisible="False">
+      <TextBlock Classes="meta" Text="Preparing preview" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+     </Border>
+     <TextBlock x:Name="PreviewTime" Grid.Row="1" Classes="meta" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Grid>
    </Border>
   </Popup>
- </Grid>
+ </Panel>
 </UserControl>

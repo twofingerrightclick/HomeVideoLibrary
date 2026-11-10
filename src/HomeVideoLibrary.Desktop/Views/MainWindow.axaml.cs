@@ -1,179 +1,246 @@
-using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.Platform.Storage;
-using Avalonia.Input;
-using Avalonia.VisualTree;
-using HomeVideoLibrary.Core;
-using HomeVideoLibrary.Desktop.ViewModels;
-using Avalonia;
 using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
+using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.UI.Audio;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
+/// <summary>The main window. Code here is limited to what views own: keyboard routing, focus, the sticky month's
+/// viewport measurement, and tape drag-and-drop onto albums.</summary>
 public sealed partial class MainWindow : Window
 {
-    private bool _allowClose;
+    private const double DragThreshold = 8;
     private static readonly DataFormat<string> VideoIdsFormat = DataFormat.CreateStringApplicationFormat("HomeVideoLibrary.VideoIds");
-    private Point? _dragStart;
-    private bool _dragging;
     private TapeViewModel? _pressedTape;
-    private Guid[] _dragVideoIds = [];
+    private Point _pressPoint;
+    private bool _dragging;
+    private ListBoxItem? _dropTarget;
+
     public MainWindow()
     {
         InitializeComponent();
-        Opened += async (_, _) => await ViewModel.RestoreLibraryAsync();
-        AddHandler(KeyDownEvent, MarkerKeyDown, RoutingStrategies.Bubble);
-        VideoList.SizeChanged += (_, _) => { ViewModel.SetTapeColumns(VideoList.Bounds.Width >= 1000 ? 2 : 1); UpdateScrollDate(); };
-        VideoList.AddHandler(ScrollViewer.ScrollChangedEvent, (_, _) => UpdateScrollDate());
-        VideoList.AddHandler(PointerPressedEvent, (_, args) =>
-        {
-            var source = args.Source as Control;
-            var tapeView = source as TapeView ?? source?.FindAncestorOfType<TapeView>();
-            if (source is CheckBox || source?.FindAncestorOfType<CheckBox>() is not null) return;
-            if (!args.GetCurrentPoint(VideoList).Properties.IsLeftButtonPressed || tapeView?.DataContext is not TapeViewModel tape) return;
-            _dragStart = args.GetPosition(VideoList);
-            _pressedTape = tape;
-            args.Pointer.Capture(this);
-            _dragVideoIds = tape.IsSelected ? ViewModel.SelectedVideos.Select(selected => selected.Id).ToArray() : [tape.Video.Id];
-        }, RoutingStrategies.Tunnel);
-        AddHandler(PointerMovedEvent, VideoPointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
-        AddHandler(PointerReleasedEvent, async (_, args) =>
-        {
-            var pressed = _pressedTape; _pressedTape = null;
-            var start = _dragStart; _dragStart = null;
-            var wasDragging = _dragging;
-            _dragging = false; ViewModel.IsDraggingTapes = false;
-            args.Pointer.Capture(null);
-            if (pressed is null || start is null) return;
-            var delta = args.GetPosition(VideoList) - start.Value;
-            if (wasDragging || Math.Abs(delta.X) + Math.Abs(delta.Y) >= 8)
-            {
-                var target = this.InputHitTest(args.GetPosition(this)) as Control;
-                var album = target?.DataContext as VideoAlbum
-                    ?? target?.GetVisualAncestors().OfType<Control>().Select(control => control.DataContext).OfType<VideoAlbum>().FirstOrDefault();
-                if (album is null && (target == LibraryDrawer || target?.GetVisualAncestors().Contains(LibraryDrawer) == true))
-                    album = ViewModel.CurrentAlbum ?? ViewModel.TargetAlbum;
-                if (album is not null) await ViewModel.AddToAlbumAsync(album.Id, _dragVideoIds);
-                return;
-            }
-            if (args.KeyModifiers != KeyModifiers.None) ViewModel.ToggleTapeSelection(pressed);
-            else await ViewModel.OpenVideoAsync(pressed.Video);
-        }, RoutingStrategies.Bubble, handledEventsToo: true);
-        Closing += async (_, args) =>
-        {
-            if (_allowClose) return;
-            if (ViewModel.IsBusy) { ViewModel.CancelImport(); args.Cancel = true; return; }
-            if (!ViewModel.HasEditor) return;
-            args.Cancel = true;
-            if (ViewModel.Editor?.IsBusy == true || ViewModel.ClipEditor?.IsBusy == true) return;
-            CloseWindowIfRequested(await ViewModel.RequestCloseEditorAsync(closeWindow: true));
-        };
-        Closed += (_, _) => ViewModel.CancelIndex();
-        DataContextChanged += (_, _) => { if (DataContext is MainWindowViewModel vm) vm.TapeRows.CollectionChanged += (_, _) => UpdateScrollDate(); };
+        Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
+        Opened += (_, _) => AppErrors.Run(async () => Classes.Set("reduced-motion", await ReducedMotion.IsRequestedAsync()), "Reduced motion");
+        Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
+        Closing += WindowClosing;
+        DataContextChanged += (_, _) => Subscribe(DataContext as MainWindowViewModel);
+
+        var router = new ShortcutRouter(ShortcutRouter.CommandModifierOf(this));
+        SearchHint.Text = router.CommandModifier == KeyModifiers.Meta ? "⌘F" : "Ctrl+F";
+        MapShortcuts(router);
+        router.Attach(this);
+
+        TapeList.AddHandler(ScrollViewer.ScrollChangedEvent, (_, _) => UpdateTopVisible());
+        TapeList.AddHandler(PointerPressedEvent, TapePressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        TapeList.AddHandler(PointerMovedEvent, TapePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
+        TapeList.AddHandler(PointerReleasedEvent, TapeReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        TapeList.AddHandler(PointerCaptureLostEvent, (_, _) => { if (!_dragging) _pressedTape = null; }, RoutingStrategies.Bubble, handledEventsToo: true);
+        AlbumList.AddHandler(DragDrop.DragOverEvent, AlbumDragOver);
+        AlbumList.AddHandler(DragDrop.DragLeaveEvent, (_, _) => SetDropTarget(null));
+        AlbumList.AddHandler(DragDrop.DropEvent, AlbumDrop);
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
-    private async void ChooseLibraryClicked(object? sender, RoutedEventArgs args)
+    private MainWindowViewModel? _subscribed;
+
+    private void Subscribe(MainWindowViewModel? viewModel)
     {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Choose your video library folder", AllowMultiple = false });
-        if (folders.FirstOrDefault()?.TryGetLocalPath() is { } path)
-            await ViewModel.OpenLibraryAsync(path);
+        if (_subscribed is { } old)
+        {
+            old.SearchFocusRequested -= FocusSearch;
+            old.Shelf.FocusRequested -= FocusTape;
+        }
+        _subscribed = viewModel;
+        if (viewModel is null) return;
+        viewModel.SearchFocusRequested += FocusSearch;
+        viewModel.Shelf.FocusRequested += FocusTape;
     }
 
-    private async void ImportClicked(object? sender, RoutedEventArgs args)
+    private void MapShortcuts(ShortcutRouter router)
     {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "Import videos into your library", AllowMultiple = true });
-        var paths = files.Select(file => file.TryGetLocalPath()).OfType<string>().ToArray();
-        if (paths.Length > 0)
-            await ViewModel.ImportAsync(paths);
+        Func<System.Windows.Input.ICommand?> OnShelf(Func<System.Windows.Input.ICommand?> command) => () => ViewModel.IsShelfShown ? command() : null;
+        router
+            .MapCommand(Key.F, () => ViewModel.FocusSearchCommand)
+            .MapCommand(Key.I, () => ViewModel.Import.ImportCommand, ClickSoundKind.Plastic)
+            .MapCommand(Key.OemComma, () => ViewModel.OpenSettingsCommand, ClickSoundKind.Plastic)
+            .Map(Key.Enter, KeyModifiers.None, OnShelf(() => FocusedTape() is { } tape ? tape.HasMatchedChapter ? tape.OpenAtMatchCommand : tape.OpenCommand : null))
+            .Map(Key.F2, KeyModifiers.None, OnShelf(() => FocusedAlbum()?.RenameCommand))
+            .Map(Key.Space, KeyModifiers.None, OnShelf(() => FocusedTape()?.ToggleSelectionCommand))
+            .Map(Key.Space, KeyModifiers.Shift, OnShelf(() => FocusedTape()?.SelectRangeCommand))
+            .Map(Key.Escape, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.ClearCommand))
+            .Map(Key.Escape, KeyModifiers.None, () => ViewModel.ShowsShellBackKey ? ViewModel.BackCommand : null)
+            .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
+            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
+            // Finder's ⌘⌫ and Ctrl+Delete elsewhere always mean the Trash, also in an album. Not command chords: in a text
+            // box they edit text.
+            .Map(Key.Back, router.CommandModifier, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand))
+            .Map(Key.Delete, router.CommandModifier, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand));
+        router
+            .MapCommand(Key.A, OnShelf(() => ViewModel.Shelf.SelectAllCommand))
+            .MapCommand(Key.N, OnShelf(() => ViewModel.Albums.CreateFromSelectionCommand), ClickSoundKind.Plastic)
+            .MapCommand(Key.M, OnShelf(() => ViewModel.MergeSelectedCommand), ClickSoundKind.Plastic, extra: KeyModifiers.Shift);
     }
 
-    private void CancelClicked(object? sender, RoutedEventArgs args) => ViewModel.CancelImport();
-    private void ShowLibraryClicked(object? sender, RoutedEventArgs args) => ViewModel.ShowLibrary();
-    private async void CreateAlbumClicked(object? sender, RoutedEventArgs args) => await ViewModel.CreateAlbumAsync();
-    private async void RenameAlbumClicked(object? sender, RoutedEventArgs args) => await ViewModel.RenameAlbumAsync();
-    private async void DeleteAlbumClicked(object? sender, RoutedEventArgs args) => await ViewModel.DeleteAlbumAsync();
-    private async void RefreshIndexClicked(object? sender, RoutedEventArgs args) => await ViewModel.RefreshIndexAsync();
-    private async void RebuildIndexClicked(object? sender, RoutedEventArgs args) => await ViewModel.RefreshIndexAsync(force: true);
-    private void CancelIndexClicked(object? sender, RoutedEventArgs args) => ViewModel.CancelIndex();
-    private async void AddSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.AddSelectedToAlbumAsync();
-    private async void AddSelectedHereClicked(object? sender, RoutedEventArgs args) => await ViewModel.AddSelectedToCurrentAsync();
-    private async void RemoveSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.RemoveSelectedFromCurrentAsync();
-    private void ToggleAlbumAddClicked(object? sender, RoutedEventArgs args) => ViewModel.ToggleAlbumAddMode();
-    private void UpdateScrollDate()
+    /// <summary>The album whose row has keyboard focus.</summary>
+    private AlbumRowViewModel? FocusedAlbum() =>
+        (FocusManager?.GetFocusedElement() as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as AlbumRowViewModel;
+
+    /// <summary>The tape whose row has keyboard focus.</summary>
+    private TapeViewModel? FocusedTape() =>
+        (FocusManager?.GetFocusedElement() as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as TapeViewModel;
+
+    /// <summary>Focuses a tape the shelf asks for (the next one after a trash), unless the user is typing or has left the shelf.</summary>
+    private void FocusTape(TapeViewModel tape)
     {
-        var scroll = VideoList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
-        var index = (int)((scroll?.Offset.Y ?? 0) / 72);
-        ScrollDate.Text = ViewModel.TapeRows.Count > 0 ? ViewModel.TapeRows[Math.Clamp(index, 0, ViewModel.TapeRows.Count - 1)].Left.Video.RecordedAt.ToString("MMMM yyyy") : "Your collection";
+        if (!ViewModel.IsShelfShown || ShortcutRouter.IsTextEntry(FocusManager?.GetFocusedElement())) return;
+        var index = ViewModel.Shelf.Tapes.IndexOf(tape);
+        if (index < 0) return;
+        TapeList.ScrollIntoView(index);
+        TapeList.ContainerFromIndex(index)?.Focus(NavigationMethod.Directional);
     }
 
-    private void VideoPointerMoved(object? sender, PointerEventArgs args)
+    private void FocusSearch()
     {
-        if (_dragging || _dragStart is not { } start || _dragVideoIds.Length == 0) return;
-        var delta = args.GetPosition(VideoList) - start;
-        if (Math.Abs(delta.X) + Math.Abs(delta.Y) < 8) return;
+        SearchBox.Focus(NavigationMethod.Tab);
+        SearchBox.SelectAll();
+    }
+
+    /// <summary>Every close goes through the view model's awaited close flow (import, unsaved changes, running edits);
+    /// once it agrees, this handler steps aside and the window closes for real.</summary>
+    private void WindowClosing(object? sender, WindowClosingEventArgs args)
+    {
+        args.Cancel = true;
+        AppErrors.Run(async () =>
+        {
+            if (!await ViewModel.RequestCloseAsync()) return;
+            Closing -= WindowClosing;
+            Close();
+        }, "Close window");
+    }
+
+    /// <summary>OPEN on a finished job runs its command and closes the activity flyout, so the opened page (or the
+    /// status line saying why it could not open) is in view.</summary>
+    private void CloseActivity(object? sender, RoutedEventArgs args) => ActivityButton.Flyout?.Hide();
+
+    /// <summary>Tells the shelf which tape is at the top of the viewport (for the sticky month pill).</summary>
+    private void UpdateTopVisible()
+    {
+        TapeViewModel? top = null;
+        var topIndex = int.MaxValue;
+        foreach (var container in TapeList.GetRealizedContainers())
+        {
+            if (container.TranslatePoint(new Point(0, container.Bounds.Height), TapeList) is not { Y: > 0 }) continue;
+            var index = TapeList.IndexFromContainer(container);
+            if (index >= 0 && index < topIndex) { topIndex = index; top = container.DataContext as TapeViewModel; }
+        }
+        ViewModel.Shelf.SetTopVisible(top);
+    }
+
+    private static TapeViewModel? TapeAt(object? source)
+    {
+        var control = source as Control;
+        if (control is CheckBox || control?.FindAncestorOfType<CheckBox>() is not null) return null;
+        return control?.FindAncestorOfType<TapeView>(includeSelf: true)?.DataContext as TapeViewModel;
+    }
+
+    // Selection gestures: Shift extends from the anchor, the command key toggles, and a right-click on an unselected
+    // tape selects only it so the context menu acts on what was clicked. A plain click opens (the spine's command).
+    private void TapePressed(object? sender, PointerPressedEventArgs args)
+    {
+        _pressedTape = null;
+        if (TapeAt(args.Source) is not { } tape) return;
+        var point = args.GetCurrentPoint(TapeList);
+        if (point.Properties.IsRightButtonPressed)
+        {
+            if (!tape.IsSelected) { ViewModel.Shelf.ClearSelection(); tape.IsSelected = true; }
+            return;
+        }
+        if (!point.Properties.IsLeftButtonPressed) return;
+        _pressedTape = tape;
+        _pressPoint = args.GetPosition(TapeList);
+    }
+
+    private void TapePointerMoved(object? sender, PointerEventArgs args)
+    {
+        if (_dragging || _pressedTape is not { } tape || !args.GetCurrentPoint(TapeList).Properties.IsLeftButtonPressed) return;
+        var delta = args.GetPosition(TapeList) - _pressPoint;
+        if (Math.Abs(delta.X) + Math.Abs(delta.Y) < DragThreshold) return;
+        // The drag must start inside this pointer event; the returned task ends when the drop does.
+        _ = DragTapesAsync(args, tape);
+    }
+
+    private async Task DragTapesAsync(PointerEventArgs args, TapeViewModel tape)
+    {
         _dragging = true;
         ViewModel.IsDraggingTapes = true;
+        try
+        {
+            var payload = JsonSerializer.Serialize(new VideoDragPayload(ViewModel.Settings.LibraryRoot, [.. ViewModel.Shelf.DragVideoIds(tape)]));
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(VideoIdsFormat, payload));
+            await DragDrop.DoDragDropAsync(args, data, DragDropEffects.Copy);
+        }
+        catch (Exception exception) { AppErrors.Report(exception, "Drag tapes"); }
+        finally
+        {
+            _dragging = false; _pressedTape = null;
+            ViewModel.IsDraggingTapes = false;
+            SetDropTarget(null);
+        }
+    }
+
+    private void TapeReleased(object? sender, PointerReleasedEventArgs args)
+    {
+        var pressed = _pressedTape;
+        _pressedTape = null;
+        if (_dragging || pressed is null || args.InitialPressMouseButton != MouseButton.Left || TapeAt(args.Source) != pressed) return;
+        var command = ShortcutRouter.CommandModifierOf(this);
+        if (args.KeyModifiers.HasFlag(KeyModifiers.Shift)) pressed.SelectRangeCommand.Execute(null);
+        else if (args.KeyModifiers.HasFlag(command) || args.KeyModifiers.HasFlag(KeyModifiers.Control)) pressed.ToggleSelectionCommand.Execute(null);
+        else return;
+        args.Handled = true;
     }
 
     private void AlbumDragOver(object? sender, DragEventArgs args)
     {
-        args.DragEffects = args.DataTransfer.Contains(VideoIdsFormat) && !ViewModel.HasEditor ? DragDropEffects.Copy : DragDropEffects.None;
+        var target = AlbumItemAt(args.Source);
+        var accepted = target is not null && args.DataTransfer.Contains(VideoIdsFormat);
+        args.DragEffects = accepted ? DragDropEffects.Copy : DragDropEffects.None;
+        SetDropTarget(accepted ? target : null);
         args.Handled = true;
     }
 
-    private async void AlbumDrop(object? sender, DragEventArgs args)
+    private void AlbumDrop(object? sender, DragEventArgs args)
     {
-        var target = (args.Source as Control)?.DataContext as VideoAlbum ?? ViewModel.CurrentAlbum ?? ViewModel.TargetAlbum;
-        var value = args.DataTransfer.TryGetValue(VideoIdsFormat);
-        if (target is null || value is null) return;
-        try
-        {
-            var payload = JsonSerializer.Deserialize<VideoDragPayload>(value);
-            if (payload is null || payload.Ids is null || payload.LibraryRoot != ViewModel.LibraryRoot) return;
-            args.Handled = true;
-            await ViewModel.AddToAlbumAsync(target.Id, payload.Ids);
-        }
-        catch (JsonException) { }
+        SetDropTarget(null);
+        args.Handled = true;
+        if (AlbumItemAt(args.Source)?.DataContext is not AlbumRowViewModel album || args.DataTransfer.TryGetValue(VideoIdsFormat) is not { } value) return;
+        VideoDragPayload? payload;
+        try { payload = JsonSerializer.Deserialize<VideoDragPayload>(value); }
+        catch (JsonException) { return; }
+        if (payload?.Ids is not { Length: > 0 } ids || payload.LibraryRoot != ViewModel.Settings.LibraryRoot) return;
+        args.DragEffects = DragDropEffects.Copy;
+        AppErrors.Run(() => ViewModel.Albums.AddToAlbumAsync(album.Id, ids), "Add to album");
+    }
+
+    private static ListBoxItem? AlbumItemAt(object? source)
+    {
+        var item = (source as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true);
+        return item?.DataContext is AlbumRowViewModel ? item : null;
+    }
+
+    private void SetDropTarget(ListBoxItem? item)
+    {
+        if (ReferenceEquals(item, _dropTarget)) return;
+        _dropTarget?.Classes.Remove("dropTarget");
+        _dropTarget = item;
+        _dropTarget?.Classes.Add("dropTarget");
     }
 
     private sealed record VideoDragPayload(string LibraryRoot, Guid[] Ids);
-    private async void VideoListKeyDown(object? sender, KeyEventArgs args)
-    {
-        var focused = FocusManager?.GetFocusedElement() as Control;
-        var tape = (focused as TapeView ?? focused?.FindAncestorOfType<TapeView>())?.DataContext as TapeViewModel
-            ?? (VideoList.SelectedItem as TapeRow)?.Left;
-        if (tape is null || focused is CheckBox) return;
-        if (args.Key == Key.Space) { ViewModel.ToggleTapeSelection(tape); args.Handled = true; }
-        if (args.Key == Key.Enter) { args.Handled = true; await ViewModel.OpenVideoAsync(tape.Video); }
-    }
-    private async void OpenSelectedClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenSelectedAsync();
-    private async void EditClipsClicked(object? sender, RoutedEventArgs args) => await ViewModel.OpenClipEditorAsync();
-    private async void BackClicked(object? sender, RoutedEventArgs args) => await ViewModel.RequestCloseEditorAsync();
-    private async void DiscardClicked(object? sender, RoutedEventArgs args)
-    {
-        CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: true));
-    }
-    private async void SaveAndLeaveClicked(object? sender, RoutedEventArgs args)
-    {
-        if (ViewModel.Editor is { } editor) await editor.SaveAsync();
-        if (ViewModel.Editor?.IsDirty == false) CloseWindowIfRequested(await ViewModel.ConfirmCloseEditorAsync(discard: false));
-    }
-    private void KeepEditingClicked(object? sender, RoutedEventArgs args) => ViewModel.KeepEditing();
-    private void CloseWindowIfRequested(EditorExitDestination destination)
-    {
-        if (destination != EditorExitDestination.Window) return;
-        _allowClose = true;
-        Close();
-    }
-    private void MarkerKeyDown(object? sender, KeyEventArgs args)
-    {
-        if (ViewModel.Editor is not { } editor) return;
-        var focused = FocusManager?.GetFocusedElement() as Control;
-        var textInput = focused is TextBox || focused?.FindAncestorOfType<TextBox>() is not null;
-        if (!VideoEditorViewModel.ShouldAddMarker(args.Key == Key.M, args.KeyModifiers != KeyModifiers.None, textInput, editor.IsBusy)) return;
-        editor.AddChapter();
-        args.Handled = true;
-    }
 }

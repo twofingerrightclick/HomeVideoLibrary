@@ -1,0 +1,151 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Shape and depth for stock Fluent controls whose colors come from FluentResources.axaml. Selectors
+    target Fluent template parts (PART_BorderElement, PART_ContentPresenter); app Styles outrank
+    ControlTheme styles, so these apply on top of Fluent's templates.
+
+    Restyling every stock control is intentional: the app should look like one device without converting
+    each view. Global rules change only color, corners, and depth; rules that change layout (row padding
+    and margins) are opt-in through the "vcr" class so existing lists keep their measured pitch.
+  -->
+
+  <!-- Text fields: inset well. Class "area" is a multi-line editor; "paper" is a printed label;
+       "handwritten" adds the tape-label hand for editing the label text itself. -->
+  <Style Selector="TextBox">
+    <Setter Property="CornerRadius" Value="{DynamicResource Vcr.Radius.Field}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="SelectionBrush" Value="{DynamicResource Vcr.Brush.Selection}"/>
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="TextBox /template/ Border#PART_BorderElement">
+    <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Field}"/>
+  </Style>
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BoxShadow" Value="0 2 4 0 #B3000000 inset, 0 0 0 1 #8FC6DA inset, 0 0 6 0 #338FC6DA inset"/>
+  </Style>
+  <Style Selector="TextBox.area">
+    <Setter Property="AcceptsReturn" Value="True"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+    <Setter Property="MinHeight" Value="96"/>
+    <Setter Property="VerticalContentAlignment" Value="Top"/>
+    <Setter Property="Padding" Value="10,8"/>
+  </Style>
+  <Style Selector="TextBox.paper">
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Ink}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource Vcr.Brush.Ink}"/>
+    <Setter Property="SelectionBrush" Value="#66B7D4DD"/>
+    <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Vcr.Brush.Ink}"/>
+    <Style Selector="^ /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Paper}"/>
+      <Setter Property="BorderBrush" Value="#B9B19A"/>
+      <Setter Property="BoxShadow" Value="0 1 2 0 #40000000 inset, 0 1 0 0 #14FFFFFF"/>
+    </Style>
+    <Style Selector="^:pointerover /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="#EFEADB"/>
+      <Setter Property="BorderBrush" Value="#A39B83"/>
+    </Style>
+    <Style Selector="^:focus /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="#F3EFE2"/>
+      <Setter Property="BorderBrush" Value="#3F7F96"/>
+      <Setter Property="BoxShadow" Value="0 1 2 0 #40000000 inset, 0 0 0 1 #3F7F96 inset"/>
+    </Style>
+    <Style Selector="^ /template/ TextBlock#PART_Watermark, ^ /template/ TextBlock#PART_FloatingWatermark">
+      <Setter Property="Foreground" Value="#8C846E"/>
+    </Style>
+    <Style Selector="^:pointerover, ^:focus">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Ink}"/>
+    </Style>
+  </Style>
+  <Style Selector="TextBox.handwritten">
+    <Setter Property="FontFamily" Value="{DynamicResource Vcr.Font.Hand}"/>
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Padding" Value="12,2,12,4"/>
+  </Style>
+
+  <!-- Check boxes take the legend face and a 3px corner. -->
+  <Style Selector="CheckBox">
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+  </Style>
+  <!-- Fluent has no resource for the checked rim at rest (only its hover/pressed variants). -->
+  <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Green}"/>
+  </Style>
+  <Style Selector="CheckBox:checked:disabled /template/ Border#NormalRectangle">
+    <Setter Property="BorderBrush" Value="#2C3034"/>
+  </Style>
+  <Style Selector="CheckBox /template/ Border#NormalRectangle">
+    <Setter Property="CornerRadius" Value="3"/>
+    <Setter Property="BoxShadow" Value="0 1 2 0 #B3000000 inset, 0 1 0 0 #14FFFFFF"/>
+  </Style>
+
+  <!-- List rows: flat by default, a selection tint when selected. ListBox.vcr adds the rounded inset row
+       layout and a lit left edge (reserved at all times so selecting never shifts content). -->
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem">
+    <Setter Property="Padding" Value="10,7"/>
+    <Setter Property="CornerRadius" Value="3"/>
+    <Setter Property="Margin" Value="2,1"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="2,0,0,0"/>
+  </Style>
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#14FFFFFF"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+  </Style>
+  <Style Selector="ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#0AFFFFFF"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem:selected:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Field.Text}"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
+  </Style>
+  <Style Selector="ListBox.vcr ListBoxItem:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
+  </Style>
+
+  <!-- Menus: rounded raised plate with the legend face for rows. -->
+  <Style Selector="MenuFlyoutPresenter, ContextMenu">
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style Selector="MenuItem">
+    <Setter Property="CornerRadius" Value="3"/>
+    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+  </Style>
+
+  <!-- Separators read as a molded groove: a dark line over a faint highlight. Margins stay the host's. -->
+  <Style Selector="Separator">
+    <Setter Property="Height" Value="2"/>
+    <Setter Property="Background">
+      <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+        <GradientStop Offset="0" Color="#E6000000"/>
+        <GradientStop Offset="0.5" Color="#E6000000"/>
+        <GradientStop Offset="0.5" Color="#14FFFFFF"/>
+        <GradientStop Offset="1" Color="#14FFFFFF"/>
+      </LinearGradientBrush>
+    </Setter>
+  </Style>
+  <Style Selector="MenuFlyoutPresenter Separator, ContextMenu Separator">
+    <Setter Property="Margin" Value="6,4"/>
+  </Style>
+
+  <Style Selector="ToolTip">
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="MaxWidth" Value="460"/>
+  </Style>
+</Styles>
