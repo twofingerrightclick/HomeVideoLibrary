@@ -228,13 +228,17 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// its file is gone) the status line says why.</summary>
     public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null, InspectorTab? tab = null)
     {
-        if (WaitReason is { } reason) return Refuse($"“{video.Label}” cannot open yet. {reason}");
-        if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
-            return Refuse($"“{video.Label}” is no longer in the library.");
-        if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
-        if (Trash.Holds(record.Id)) return Refuse($"“{record.Label}” is being moved to the Trash.");
+        if (_model is not { } model || _services is not { } services) return Refuse($"“{video.Label}” is no longer in the library.");
+        if (CannotOpen(model, video) is { } reason) return Refuse(reason);
         return NavigateAsync(() =>
         {
+            // Checked again: while this waited for another navigation, the video may have gone to a trash or left the library.
+            if (CannotOpen(model, video) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var record = model.Snapshot.Find(video.Id)!;
             var indexed = new IndexedMetadataService(services.Metadata, model, _backfill);
             indexed.IndexingFailed += warning => Status = warning;
             return new VideoPageViewModel(new VideoPageDependencies
@@ -256,6 +260,14 @@ public sealed class MainWindowViewModel : ViewModelBase
             });
         });
     }
+
+    /// <summary>Why <paramref name="video"/> of <paramref name="model"/> cannot open now, or null when it can.</summary>
+    private string? CannotOpen(LibraryModel model, VideoRecord video) =>
+        WaitReason is { } reason ? $"“{video.Label}” cannot open yet. {reason}"
+        : !ReferenceEquals(_model, model) || model.Snapshot.Find(video.Id) is not { } record ? $"“{video.Label}” is no longer in the library."
+        : record.IsMissing ? $"The file for “{record.Label}” is missing, so it cannot play."
+        : Trash.Holds(record.Id) ? $"“{record.Label}” is being moved to the Trash."
+        : null;
 
     private Task<bool> LeavePagesShowingAsync(IReadOnlyCollection<Guid> videoIds) =>
         Page is { } page && videoIds.Any(page.Shows) ? NavigateAsync(() => null) : Task.FromResult(true);

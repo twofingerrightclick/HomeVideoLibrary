@@ -14,6 +14,8 @@ public sealed class TrashTests : IDisposable
     private readonly FakeMatroska _files = new();
     private readonly FakeInteraction _interaction = new();
     private readonly FakeTrash _trash;
+    /// <summary>When set, a page's player closes only once it completes.</summary>
+    private TaskCompletionSource? _playerClosing;
 
     public TrashTests() => _trash = new FakeTrash(Path.Combine(_root, "Trash"));
 
@@ -34,7 +36,7 @@ public sealed class TrashTests : IDisposable
             CreateServices = _ => new LibraryServices(_files, new Metadata()),
             FindUnavailableTools = _ => Task.FromResult<IReadOnlyList<string>>([]),
             SweepScratch = (_, _) => Task.CompletedTask,
-            CreatePlayback = () => new Playback(),
+            CreatePlayback = () => new Playback(() => _playerClosing?.Task ?? Task.CompletedTask),
             Trash = _trash,
             Post = action => action(),
         });
@@ -250,6 +252,43 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
+    public async Task AVideoCannotOpenAgainWhileItsPageClosesForTheTrash()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        await vm.OpenVideoAsync(vm.Model!.Snapshot.Find(videos[0].Id)!);
+        _playerClosing = new TaskCompletionSource();
+        _interaction.ConfirmAnswers.Enqueue(true);
+
+        var trashing = vm.Trash.MoveToTrashAsync([videos[0].Id]);
+        var reopening = vm.OpenVideoAsync(vm.Model.Snapshot.Find(videos[0].Id)!);
+
+        Assert.True(reopening.IsCompleted);
+        Assert.Contains("being moved to the Trash", vm.Status);
+        _playerClosing.SetResult();
+        await (await trashing)!.Completion;
+        Assert.Null(vm.Page);
+        Assert.Null(vm.Model.Snapshot.Find(videos[0].Id));
+    }
+
+    [Fact]
+    public async Task AnOpenWaitingForAnotherNavigationIsRefusedWhenItsVideoLeftMeanwhile()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        await vm.OpenVideoAsync(vm.Model!.Snapshot.Find(videos[1].Id)!);
+        _playerClosing = new TaskCompletionSource();
+
+        var leaving = vm.NavigateAsync(() => null);
+        var opening = vm.OpenVideoAsync(vm.Model.Snapshot.Find(videos[0].Id)!);
+        await vm.Model.RemoveVideosAsync([videos[0].Id]);
+        _playerClosing.SetResult();
+        await leaving;
+        await opening;
+
+        Assert.Null(vm.Page);
+        Assert.Equal("“first” is no longer in the library.", vm.Status);
+    }
+
+    [Fact]
     public async Task UnsavedChangesTheUserKeepsStopTheTrash()
     {
         var (vm, videos) = await OpenAsync("first");
@@ -315,7 +354,7 @@ public sealed class TrashTests : IDisposable
             throw new NotSupportedException();
     }
 
-    private sealed class Playback : IVideoPlayback
+    private sealed class Playback(Func<Task> closing) : IVideoPlayback
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 0;
@@ -325,6 +364,6 @@ public sealed class TrashTests : IDisposable
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;
         public Task SeekAsync(TimeSpan position) => Task.CompletedTask;
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() => new(closing());
     }
 }
