@@ -29,6 +29,10 @@ PlasticButton, RubberButton, LatchButton, LegendFrame, `TabControl.inspector`, S
 ChapterPlaceholderRow, TagChipInput, VhsSpine, LcdCounter, `Slider.volume`, SectionHeader and VcrDialog. The
 gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every control in every state.
 
+**The Amber Key Rule.** The one primary action of a view or dialog (IMPORT VIDEOS, SAVE, RENDER) is a dark plastic key
+like its neighbours, set apart by the amber VFD legend and edge (`.primary`). Destructive keys are red caps and power
+keys green.
+
 **The Paper Rule.** Light material belongs to tape labels, the sticky month pill and toasts.
 
 **The Handwriting Rule.** Caveat handwriting is the user's tape label only, never navigation or form controls.
@@ -59,9 +63,12 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
     saved library's folder when that could not be found or opened.
 - **Spine:** VhsSpine.
   - Its printed sticker art runs vertically, as on a real spine label; the handwritten label reads horizontally.
+  - A title too long for one line shrinks, down to 24 px on screen; then it wraps to two lines at the largest size
+    (24 px or more) that fits; then it ends in an ellipsis on two lines at 24 px. A spine under about 86 px tall has no
+    room for two 24 px lines, so there it trims on one line.
   - Sticker stock, accent and brand mark are a stable pick per video.
   - The shell shows the running time, or MISSING / UNREADABLE (details in the tooltip).
-  - A selection checkbox sits on the leading edge.
+  - A selection checkbox sits on the leading edge and is the only sign of selection; a ring shows keyboard focus only.
   - Spines keep a real VHS spine's 187:25 proportions at every size. In the full 760 px stack (less 28 px of margin
     per side) a spine is 704 px wide and about 94 px tall; in a narrower window it shrinks with the stack.
   - Hover brings the tape slightly forward (2.5% scale, deeper shadow; no shift, no indicator light). Moving the
@@ -70,7 +77,8 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
     motion (macOS setting) keeps the tape still.
   - Clicking a tape plays it coming out toward the viewer (180 ms scale-up and fade) before its page opens; skipped with reduced motion.
 - **Status bar:** the status line and the Activity key. Its light is on while a job is queued or running and its text
-  summarizes the current job, how many wait, and failures. It opens the Activity drawer, a native popup so it also
+  summarizes the current job, how many wait, and failures, on one line trimmed to a 100 px key; the tooltip and
+  accessible name carry the whole summary. It opens the Activity drawer, a native popup so it also
   opens over a playing video: every import, render, Trash move and backfill as a row with progress, ETA when known,
   "Queued (#n)", cancel or remove, and OPEN for a finished job's output. Imports and renders are separate FIFO
   lanes, one job at a time each. A chime plays when a batch finishes if button sounds are on. Closing with jobs
@@ -94,7 +102,9 @@ right inspector that can be hidden and resized.
 - **EDIT tab and Merge page:** trim (in/out, PRECISE), split at the playhead, and merge in a chosen order. The commit
   key is driven by a plan computed from the file: SAVE when every picture is copied (a precise cut that re-encodes
   only the frames at its cuts counts), RENDER when a picture must be re-encoded. The ⓘ key beside it explains in plain
-  words what will happen and why. The edit runs as a render job; the original is never changed.
+  words what will happen and why. The edit runs as a render job; the original is never changed. Once a merge is
+  queued its page drops the form and shows the job (queued, progress, CANCEL); when done it reads "Merged" with a
+  "View video: <title>" link to the new video. A failed or cancelled merge says so and gives the form back.
 
 ## Pointer previews
 

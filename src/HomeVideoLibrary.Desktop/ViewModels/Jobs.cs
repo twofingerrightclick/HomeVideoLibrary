@@ -92,6 +92,9 @@ public sealed class JobQueue : ViewModelBase
         }
     }
 
+    /// <summary><see cref="Summary"/> and any failures, whole: the activity key is narrow and trims both.</summary>
+    public string FullSummary => HasFailures ? $"{Summary} · {FailedLabel}" : Summary;
+
     internal TimeProvider Time { get; }
 
     /// <summary>Adds a job to the end of <paramref name="lane"/>; it starts when the lane is free.</summary>
@@ -144,7 +147,11 @@ public sealed class JobQueue : ViewModelBase
         Notify();
     }
 
-    internal void StatusChanged() => OnPropertyChanged(nameof(Summary));
+    internal void StatusChanged()
+    {
+        OnPropertyChanged(nameof(Summary));
+        OnPropertyChanged(nameof(FullSummary));
+    }
 
     private async Task DrainAsync(Lane lane)
     {
@@ -192,7 +199,7 @@ public sealed class JobQueue : ViewModelBase
 
     private void Notify()
     {
-        foreach (var name in new[] { nameof(ActiveCount), nameof(HasActive), nameof(FailedCount), nameof(HasFailures), nameof(FailedLabel), nameof(Summary) })
+        foreach (var name in new[] { nameof(ActiveCount), nameof(HasActive), nameof(FailedCount), nameof(HasFailures), nameof(FailedLabel), nameof(Summary), nameof(FullSummary) })
             OnPropertyChanged(name);
         ClearFinishedCommand.RaiseCanExecuteChanged();
     }

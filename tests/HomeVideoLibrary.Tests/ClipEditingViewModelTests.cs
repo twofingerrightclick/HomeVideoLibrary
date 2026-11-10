@@ -177,8 +177,74 @@ public sealed class ClipEditingViewModelTests
         Assert.Single(_jobs.Jobs);
         release.SetResult();
         await page.Job!.Completion;
-        Assert.True(page.SaveCommand.CanExecute(null));
+        Assert.False(page.SaveCommand.CanExecute(null));
     }
+
+    [Fact]
+    public Task AQueuedMergeTakesTheFormAwayAndAFinishedOneLinksToTheNewVideo() => UiThread.Run(async () =>
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = Video("Summer 1994", TimeSpan.FromMinutes(3));
+        _editing.Merge = async (_, _) => { await release.Task; return [output]; };
+        var opened = new List<JobViewModel>();
+        var page = Merge(2, new JobQueue(job => { opened.Add(job); return Task.CompletedTask; }, _time));
+        await page.LoadAsync();
+        await page.Plan.Completion;
+        page.SelectedSource = page.Sources[0];
+        Assert.True(page.IsEditing);
+
+        page.SaveCommand.Execute(null);
+
+        Assert.False(page.IsEditing);
+        Assert.False(page.IsMerged);
+        Assert.False(page.SaveCommand.CanExecute(null));
+        Assert.False(page.MoveDownCommand.CanExecute(null));
+
+        release.SetResult();
+        await page.Job!.Completion;
+        await UiThread.Settle();
+
+        Assert.False(page.IsEditing);
+        Assert.True(page.IsMerged);
+        Assert.Equal("Summer 1994", page.MergedTitle);
+        Assert.False(page.SaveCommand.CanExecute(null));
+        page.Job.OpenCommand.Execute(null);
+        await UiThread.Settle();
+        Assert.Equal([page.Job], opened);
+        Assert.Equal([output.Id], page.Job.Outcome!.Outputs);
+    });
+
+    [Theory]
+    [InlineData(JobState.Failed)]
+    [InlineData(JobState.Cancelled)]
+    public Task AMergeThatFailsOrIsCancelledGivesTheFormBackToRetry(JobState ending) => UiThread.Run(async () =>
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _editing.Merge = async (_, token) =>
+        {
+            started.SetResult();
+            if (ending == JobState.Failed) throw new InvalidOperationException("The disk is full.");
+            await Task.Delay(Timeout.Infinite, token);
+            return [];
+        };
+        var page = Merge(2);
+        await page.LoadAsync();
+        await page.Plan.Completion;
+
+        page.SaveCommand.Execute(null);
+        var job = page.Job!;
+        await started.Task;
+        if (ending == JobState.Cancelled) job.Cancel();
+        await job.Completion;
+        await UiThread.Settle();
+
+        Assert.Equal(ending, job.State);
+        Assert.Equal(ending == JobState.Failed ? "The disk is full." : "Cancelled", job.StatusText);
+        Assert.True(page.IsEditing);
+        Assert.False(page.IsMerged);
+        Assert.Null(page.MergedTitle);
+        Assert.True(page.SaveCommand.CanExecute(null));
+    });
 
     [Fact]
     public async Task AnOutPointBeforeTheInPointShowsAMessageAndDoesNotPlan()
@@ -456,9 +522,9 @@ public sealed class ClipEditingViewModelTests
 
     private TrimPanelViewModel Panel() => new(new ClipEdits(_editing, _jobs, Publish), _host, _time);
 
-    private MergePageViewModel Merge(int count) =>
+    private MergePageViewModel Merge(int count, JobQueue? jobs = null) =>
         new(Enumerable.Range(1, count).Select(index => Video($"Clip {index}", TimeSpan.FromMinutes(index))).ToArray(),
-            new ClipEdits(_editing, _jobs, Publish), () => Task.CompletedTask, _time);
+            new ClipEdits(_editing, jobs ?? _jobs, Publish), () => Task.CompletedTask, _time);
 
     private Task Publish(IReadOnlyList<LibraryVideo> outputs)
     {

@@ -6,8 +6,10 @@ using Avalonia.Controls.Metadata;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.TextFormatting;
 using Avalonia.Media.Transformation;
 using Avalonia.Styling;
+using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.UI.Controls;
 
@@ -27,15 +29,16 @@ public enum SpineSticker
 /// <summary>
 /// One ~60px VHS tape spine as seen on a shelf. The sticker's printed artwork (brand marks, "VIDEO
 /// CASSETTE" bands) is rotated a quarter turn the way a real spine label is printed, while the user's
-/// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. The spine keeps a
+/// handwritten <see cref="Label"/> reads horizontally. A label too long for one line at the design size shrinks,
+/// down to <see cref="MinLabelFontSize"/> on screen, then wraps to two lines, then truncates with an ellipsis. The spine keeps a
 /// real VHS spine's proportions (187 x 25 mm) at any size: it takes the available width and the height
 /// that ratio implies (or the reverse when only a height is given), and its face scales uniformly. Hover
 /// brings the tape slightly forward (scale and shadow only; it never shifts). As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
 /// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
-/// left to the host list for selection; selection itself is the host's and is only displayed via
-/// <see cref="IsSelected"/>.
+/// left to the host list for selection, which the host shows (on the shelf, a check box in
+/// <see cref="LeadingContent"/>).
 /// </summary>
-[PseudoClasses(":selected", ":branded", ":graph", ":cream", ":has-leading")]
+[PseudoClasses(":branded", ":graph", ":cream", ":has-leading")]
 public class VhsSpine : Button
 {
     /// <summary>Length to height of a VHS cassette spine (187 x 25 mm).</summary>
@@ -45,6 +48,9 @@ public class VhsSpine : Button
     public const double DesignHeight = 60;
 
     public const double DesignWidth = DesignHeight * AspectRatio;
+
+    /// <summary>Smallest on-screen size (device-independent px) the handwritten label shrinks to before it wraps.</summary>
+    public const double MinLabelFontSize = 24;
 
     public static readonly StyledProperty<string?> LabelProperty =
         AvaloniaProperty.Register<VhsSpine, string?>(nameof(Label));
@@ -73,22 +79,30 @@ public class VhsSpine : Button
     public static readonly StyledProperty<bool> OpenTransitionProperty =
         AvaloniaProperty.Register<VhsSpine, bool>(nameof(OpenTransition));
 
+    // Avalonia has no keyframe animator for RenderTransform, so the come-out scales the face's ScaleTransform; on top of
+    // hover's 1.025 on the shell that takes the tape to 1.12.
+    private const double ComeOutScale = 1.12 / 1.025;
+
     private static readonly Animation ComeOut = new()
     {
         Duration = TimeSpan.FromMilliseconds(180),
         Easing = new CubicEaseIn(),
         Children =
         {
-            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 1d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.025)")) } },
-            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 0d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.12)")) } },
+            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 1d), new Setter(ScaleTransform.ScaleXProperty, 1d), new Setter(ScaleTransform.ScaleYProperty, 1d) } },
+            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 0d), new Setter(ScaleTransform.ScaleXProperty, ComeOutScale), new Setter(ScaleTransform.ScaleYProperty, ComeOutScale) } },
         },
     };
 
-    private Border? _shell;
-    private Task _opening = Task.CompletedTask;
+    // Label fits are shared across spines: a virtualized shelf re-arranges the same titles at the same size while it
+    // scrolls. Bounded because a window resize produces a new scale on every step.
+    private static readonly Dictionary<LabelSlot, LabelFit> LabelFits = [];
+    private const int MaxLabelFits = 4096;
 
-    public static readonly StyledProperty<bool> IsSelectedProperty =
-        AvaloniaProperty.Register<VhsSpine, bool>(nameof(IsSelected));
+    private Viewbox? _face;
+    private TextBlock? _label;
+    private LabelSlot? _fittedSlot;
+    private Task _opening = Task.CompletedTask;
 
     public VhsSpine()
     {
@@ -137,12 +151,6 @@ public class VhsSpine : Button
         set => SetValue(OpenTransitionProperty, value);
     }
 
-    public bool IsSelected
-    {
-        get => GetValue(IsSelectedProperty);
-        set => SetValue(IsSelectedProperty, value);
-    }
-
     /// <summary>Fits the largest spine of the right proportions into the available space; with no constraint it
     /// takes its design size.</summary>
     public static Size FitSize(Size available)
@@ -166,7 +174,13 @@ public class VhsSpine : Button
         return size;
     }
 
-    protected override Size ArrangeOverride(Size finalSize) => base.ArrangeOverride(FitSize(finalSize));
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        var size = FitSize(finalSize);
+        var arranged = base.ArrangeOverride(size);
+        FitLabel(size.Height / DesignHeight);
+        return arranged;
+    }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -175,9 +189,10 @@ public class VhsSpine : Button
         {
             UpdateStickerClasses();
         }
-        else if (change.Property == IsSelectedProperty)
+        else if (change.Property == LabelProperty)
         {
-            PseudoClasses.Set(":selected", change.GetNewValue<bool>());
+            // The label's own re-measure stops at the fixed-size design face, so the fit would not otherwise rerun.
+            InvalidateArrange();
         }
         else if (change.Property == LeadingContentProperty)
         {
@@ -188,13 +203,15 @@ public class VhsSpine : Button
     protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
         base.OnApplyTemplate(e);
-        _shell = e.NameScope.Find<Border>("PART_Shell");
+        _face = e.NameScope.Find<Viewbox>("PART_Face");
+        _label = e.NameScope.Find<TextBlock>("PART_Label");
+        _fittedSlot = null;
     }
 
     // The open waits for the short come-out animation; a click during it is part of the same open.
     protected override void OnClick()
     {
-        if (!OpenTransition || _shell is null)
+        if (!OpenTransition || _face is null)
         {
             base.OnClick();
             return;
@@ -202,15 +219,15 @@ public class VhsSpine : Button
 
         if (_opening.IsCompleted)
         {
-            _opening = ComeOutThenOpenAsync(_shell);
+            _opening = ComeOutThenOpenAsync(_face);
         }
     }
 
-    private async Task ComeOutThenOpenAsync(Border shell)
+    private async Task ComeOutThenOpenAsync(Viewbox face)
     {
         try
         {
-            await ComeOut.RunAsync(shell);
+            await ComeOut.RunAsync(face);
         }
         finally
         {
@@ -229,6 +246,57 @@ public class VhsSpine : Button
 
         base.OnPointerPressed(e);
     }
+
+    // The face is laid out in design units and scaled by the Viewbox, so the on-screen floor and step are divided by the
+    // scale. The hover and open transitions are render transforms and never reach this.
+    private void FitLabel(double scale)
+    {
+        if (_label?.Parent is not Control slot || scale <= 0
+            || !this.TryFindResource("Vcr.FontSize.Hand", ActualThemeVariant, out var resource) || resource is not double maxSize)
+        {
+            return;
+        }
+
+        var width = slot.Bounds.Width - _label.Margin.Left - _label.Margin.Right;
+        var height = slot.Bounds.Height - _label.Margin.Top - _label.Margin.Bottom;
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        var key = new LabelSlot(Label ?? "", width, height, maxSize, MinLabelFontSize / scale, 1 / scale);
+        if (key == _fittedSlot)
+        {
+            return;
+        }
+
+        _fittedSlot = key;
+        if (!LabelFits.TryGetValue(key, out var fit))
+        {
+            var label = _label;
+            var typeface = new Typeface(label.FontFamily, label.FontStyle, label.FontWeight, label.FontStretch);
+            fit = LabelFitting.Fit(width, height, key.MaxSize, key.MinSize, key.Step, size => MeasureLabel(key.Text, typeface, size, width, label));
+            if (LabelFits.Count >= MaxLabelFits)
+            {
+                LabelFits.Clear();
+            }
+
+            LabelFits[key] = fit;
+        }
+
+        _label.FontSize = fit.FontSize;
+        _label.MaxLines = fit.MaxLines;
+        _label.TextWrapping = fit.MaxLines > 1 ? TextWrapping.Wrap : TextWrapping.NoWrap;
+    }
+
+    private static TextMeasure MeasureLabel(string text, Typeface typeface, double fontSize, double width, TextBlock label)
+    {
+        using var layout = new TextLayout(text, typeface, fontSize, null, TextAlignment.Left, TextWrapping.Wrap, TextTrimming.None, null,
+            FlowDirection.LeftToRight, width, double.PositiveInfinity, label.LineHeight, label.LetterSpacing);
+        return new TextMeasure(layout.TextLines.Count, layout.Width, layout.Height);
+    }
+
+    private readonly record struct LabelSlot(string Text, double Width, double Height, double MaxSize, double MinSize, double Step);
 
     private void UpdateStickerClasses()
     {

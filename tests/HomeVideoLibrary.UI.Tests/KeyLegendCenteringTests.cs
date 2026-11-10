@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.UI.Controls;
@@ -93,13 +94,14 @@ public sealed class KeyLegendCenteringTests
         using var buffer = frame.Lock();
         var bytes = new byte[buffer.RowBytes * buffer.Size.Height];
         Marshal.Copy(buffer.Address, bytes, 0, bytes.Length);
+        var (red, blue) = buffer.Format == PixelFormat.Rgba8888 ? (0, 2) : (2, 0);
         int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
         for (var y = (int)search.Top; y < (int)search.Bottom; y++)
         {
             for (var x = (int)search.Left; x < (int)search.Right; x++)
             {
                 var i = (y * buffer.RowBytes) + (x * 4);
-                var luminance = (0.0722 * bytes[i]) + (0.7152 * bytes[i + 1]) + (0.2126 * bytes[i + 2]);
+                var luminance = (0.0722 * bytes[i + blue]) + (0.7152 * bytes[i + 1]) + (0.2126 * bytes[i + red]);
                 if (luminance < 140)
                 {
                     continue;
