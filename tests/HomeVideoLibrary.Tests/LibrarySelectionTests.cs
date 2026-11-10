@@ -373,6 +373,24 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.Contains("Added 1 video to “Beach”.", vm.Status);
     }
 
+    [Fact]
+    public async Task DeleteInAddModeIsDisabled()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        var album = await vm.Model!.CreateAlbumAsync("Beach", [videos[0].Id]);
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Id == album.Id);
+        Tape(vm, videos[0]).IsSelected = true;
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+        bool? announced = null;
+        vm.DeleteSelectedCommand.CanExecuteChanged += (_, _) => announced = vm.DeleteSelectedCommand.CanExecute(null);
+
+        vm.Albums.StartAddingCommand.Execute(null);
+        Tape(vm, videos[1]).IsSelected = true; // Shown in add mode, so it is a visible selection.
+        Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+        Assert.False(announced);
+    }
+
     private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter
     {
         public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)

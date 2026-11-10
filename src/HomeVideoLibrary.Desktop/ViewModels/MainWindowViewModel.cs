@@ -75,7 +75,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
-        Albums.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(AlbumsViewModel.Current)) UpdateCommands(); };
+        Albums.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(AlbumsViewModel.Current) or nameof(AlbumsViewModel.IsAddingVideos)) UpdateCommands();
+        };
 
         OpenSettingsCommand = new AsyncCommand(_ => dependencies.Interaction.ShowSettingsAsync(Settings), context: "Settings");
         PlaySelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record) : Task.CompletedTask,
