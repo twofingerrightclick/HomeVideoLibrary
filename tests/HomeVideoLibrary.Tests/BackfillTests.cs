@@ -139,6 +139,22 @@ public sealed class BackfillTests : IDisposable
         Assert.False(new IdentityBackfill(model, _identity).IsDue);
     });
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("0f8fad5b-d9cb")]
+    public async Task ADamagedPendingListIsRebuiltRatherThanReadAsNothingPending(string content)
+    {
+        var (model, videos) = await LibraryAsync(2);
+        await new IdentityBackfill(model, _identity).RunAsync([videos[0].Id], _ => true);
+        Assert.True(File.Exists(IdentityBackfill.PendingPath(model.Catalog.Paths)));
+        await File.WriteAllTextAsync(IdentityBackfill.PendingPath(model.Catalog.Paths), content);
+
+        var plan = await new IdentityBackfill(model, _identity).PlanAsync();
+
+        Assert.Equal(videos.Select(video => video.Id).Order(), plan.Order());
+        Assert.False(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+    }
+
     [Fact]
     public async Task AnEmptyLibraryIsNotDue()
     {

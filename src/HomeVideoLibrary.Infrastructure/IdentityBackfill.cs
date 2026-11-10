@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
@@ -118,21 +119,36 @@ public sealed class IdentityBackfill(LibraryModel model, IIdentityWriter writer)
         return new BackfillSlice(videoIds.Count, updated, deferred, skipped);
     }
 
-    /// <summary>The videos not yet handled, with their failed attempts; on the first run, every video in the library.</summary>
+    /// <summary>The videos not yet handled, with their failed attempts; on the first run, or when the saved list is
+    /// damaged, every video in the library.</summary>
     private Dictionary<Guid, int> Pending()
     {
         if (_pending is not null) return _pending;
         var path = PendingPath(model.Catalog.Paths);
-        if (!File.Exists(path)) return _pending = model.Snapshot.Chronological.ToDictionary(record => record.Id, _ => 0);
-        _pending = [];
-        foreach (var line in File.ReadLines(path))
-            if (line.Split(' ') is [var id, var attempts] && Guid.TryParse(id, out var videoId) && int.TryParse(attempts, out var count))
-                _pending[videoId] = count;
-        return _pending;
+        if (File.Exists(path))
+        {
+            if (Read(path) is { } saved) return _pending = saved;
+            Trace.TraceWarning($"{path} is damaged; every video is checked again.");
+        }
+        return _pending = model.Snapshot.Chronological.ToDictionary(record => record.Id, _ => 0);
     }
 
-    /// <summary>Writes the pending list, replacing the old one whole so a crash leaves one or the other; once nothing is
-    /// pending, writes the stamp instead.</summary>
+    /// <summary>The saved pending list, or null when it is damaged. It is never written empty (the stamp replaces it), so
+    /// an empty file, like a line that does not parse, is a write a crash cut short.</summary>
+    private static Dictionary<Guid, int>? Read(string path)
+    {
+        var pending = new Dictionary<Guid, int>();
+        foreach (var line in File.ReadLines(path))
+        {
+            if (line.Split(' ') is not [var id, var attempts] || !Guid.TryParse(id, out var videoId) || !int.TryParse(attempts, out var count))
+                return null;
+            pending[videoId] = count;
+        }
+        return pending.Count > 0 ? pending : null;
+    }
+
+    /// <summary>Writes the pending list, replacing the old one whole so a crash leaves one or the other: the new list is
+    /// on disk before it takes the old one's name. Once nothing is pending, writes the stamp instead.</summary>
     private async Task SaveAsync()
     {
         var paths = model.Catalog.Paths;
@@ -145,7 +161,11 @@ public sealed class IdentityBackfill(LibraryModel model, IIdentityWriter writer)
             return;
         }
         var temporary = PendingPath(paths) + ".tmp";
-        await File.WriteAllLinesAsync(temporary, pending.Select(entry => $"{entry.Key:N} {entry.Value}"), CancellationToken.None);
+        await using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(string.Concat(pending.Select(entry => $"{entry.Key:N} {entry.Value}\n"))));
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temporary, PendingPath(paths), overwrite: true);
     }
 }
