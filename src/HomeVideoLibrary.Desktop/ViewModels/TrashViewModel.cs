@@ -167,12 +167,13 @@ public sealed class TrashViewModel : ViewModelBase
     private IReadOnlyList<VideoRecord> Trashable(IEnumerable<Guid> videoIds) =>
         Selected(videoIds).Where(record => !record.IsMissing && !_held.Contains(record.Id)).ToArray();
 
-    /// <summary>The library's records for <paramref name="videoIds"/>, newest first.</summary>
+    /// <summary>The library's records for <paramref name="videoIds"/>, newest first as on the shelf. Looks up only these
+    /// ids, since commands ask on every selection change.</summary>
     private IEnumerable<VideoRecord> Selected(IEnumerable<Guid> videoIds)
     {
         if (_model() is not { } model) return [];
-        var ids = videoIds as IReadOnlySet<Guid> ?? videoIds.ToHashSet();
-        return ids.Count == 0 ? [] : model.Snapshot.Chronological.Where(record => ids.Contains(record.Id));
+        var snapshot = model.Snapshot;
+        return videoIds.Select(snapshot.Find).OfType<VideoRecord>().OrderByDescending(record => record.RecordedAt).ThenBy(record => record.Id);
     }
 
     /// <summary>One line per video: its label, size and albums.</summary>
