@@ -48,7 +48,8 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - The count, plus how many the view hides.
   - PLAY, ADD TO ALBUM ▾, NEW ALBUM.
   - TRIM / SPLIT (one selected) and MERGE (two or more).
-  - REMOVE FROM ALBUM (when an album is shown) and MOVE TO TRASH (only when a trash feature provides it).
+  - REMOVE FROM ALBUM (when an album is shown), MOVE TO TRASH, and REMOVE FROM LIBRARY (only for videos whose file is
+    missing).
   - A clear key.
 - **Shelf:** one virtualized column with one spine per row, at most 1100 px wide and left-aligned.
   - A month divider precedes the first tape of each month. A paper pill pinned at the top shows the month at the
@@ -85,6 +86,8 @@ LibVLC draws into a native child view. Avalonia content in the same window canno
 - Long operations show progress and can be cancelled.
 - Modal questions (unsaved changes) are awaited in one flow. Leaving a page with unsaved edits asks: Save and
   leave, Discard or Keep editing.
+- Destructive actions (Move to Trash, Delete permanently, Remove from library) ask in a real modal window that lists
+  the affected videos with their size and albums. CANCEL is the default key, so Enter and Esc both keep the videos.
 
 **Shortcuts.** Each view has one ShortcutRouter. It ignores keys typed into text fields and tag entry (command
 chords such as Cmd/Ctrl+S still work there) and plays the sound of the on-screen key it stands for.
@@ -92,7 +95,7 @@ chords such as Cmd/Ctrl+S still work there) and plays the sound of the on-screen
 | Scope | Keys |
 |---|---|
 | Global | Cmd/Ctrl+F search, Cmd/Ctrl+I import, Cmd/Ctrl+, settings |
-| Library | Arrows/Home/End/Page move between tapes; Enter play; Space / Shift+Space select / range; Cmd/Ctrl+A select all; Esc clears selection, then search; Cmd/Ctrl+N new album from selection; Delete removes from the shown album; Cmd/Ctrl+Shift+M merge |
+| Library | Arrows/Home/End/Page move between tapes; Enter play; Space / Shift+Space select / range; Cmd/Ctrl+A select all; Esc clears selection, then search; Cmd/Ctrl+N new album from selection; Delete/Backspace move to Trash, or remove from the shown album; Cmd+Backspace / Ctrl+Delete move to Trash in any view; Cmd/Ctrl+Shift+M merge |
 
 Video-page shortcuts are listed with the video page.
 
