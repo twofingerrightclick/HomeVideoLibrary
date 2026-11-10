@@ -63,7 +63,7 @@ public sealed class CatalogMigrationTests : IDisposable
         var catalog = new LibraryCatalog(paths);
         await catalog.InitializeAsync();
 
-        Assert.Equal(4L, await ScalarAsync(paths.DatabasePath, "PRAGMA user_version"));
+        Assert.Equal((long)LibraryCatalog.SchemaVersion, await ScalarAsync(paths.DatabasePath, "PRAGMA user_version"));
         Assert.Equal("wal", await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
         Assert.Equal(0L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('search_cache','video_fts','cache_insert')"));
         Assert.Equal($"Videos/{windows:N}.mkv", await ScalarAsync(paths.DatabasePath, $"SELECT relative_path FROM videos WHERE id='{windows}'"));
@@ -113,7 +113,7 @@ public sealed class CatalogMigrationTests : IDisposable
     {
         var catalog = await CreateCatalogAsync(_root);
         Assert.Empty(Directory.GetFiles(catalog.Paths.CacheDirectory, "backup-*"));
-        await ExecuteAsync(catalog.Paths, "PRAGMA user_version = 5");
+        await ExecuteAsync(catalog.Paths, "PRAGMA user_version = 6");
         await Assert.ThrowsAsync<InvalidDataException>(() => new LibraryCatalog(catalog.Paths).InitializeAsync());
     }
 
@@ -227,6 +227,34 @@ public sealed class CatalogMigrationTests : IDisposable
         var answers = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() => StorageVolume.IsNetwork(_root))));
         Assert.All(answers, Assert.False);
         Assert.False(StorageVolume.IsNetwork(Path.Combine(_root, "does not exist")));
+    }
+
+    [Fact]
+    public async Task VersionFiveMarksOldFingerprintsAndMakesThemUnique()
+    {
+        var paths = new LibraryPaths(_root);
+        var catalog = await CreateCatalogAsync(_root);
+        await ExecuteAsync(paths, """
+            DROP INDEX IF EXISTS videos_source_fingerprint_key;
+            INSERT INTO videos (id, relative_path, display_name, duration_ticks, imported_at, recorded_at, source_fingerprint) VALUES
+                ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d11', 'Videos/a.mkv', 'A', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'abc'),
+                ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d12', 'Videos/b.mkv', 'B', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'abc'),
+                ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d13', 'Videos/c.mkv', 'C', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'v2:def'),
+                ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d14', 'Videos/d.mkv', 'D', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', ''),
+                ('7b0a5f8e-35a4-4c43-9d43-0d3e3b0b4d15', 'Videos/e.mkv', 'E', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'vx:old');
+            PRAGMA user_version = 4;
+            """);
+
+        await new LibraryCatalog(catalog.Paths).InitializeAsync();
+
+        Assert.Equal("v1:abc", await ScalarAsync(paths.DatabasePath, "SELECT source_fingerprint FROM videos WHERE display_name = 'A'"));
+        Assert.Equal(DBNull.Value, await ScalarAsync(paths.DatabasePath, "SELECT source_fingerprint FROM videos WHERE display_name = 'B'"));
+        Assert.Equal("v2:def", await ScalarAsync(paths.DatabasePath, "SELECT source_fingerprint FROM videos WHERE display_name = 'C'"));
+        Assert.Equal(DBNull.Value, await ScalarAsync(paths.DatabasePath, "SELECT source_fingerprint FROM videos WHERE display_name = 'D'"));
+        Assert.Equal("v1:vx:old", await ScalarAsync(paths.DatabasePath, "SELECT source_fingerprint FROM videos WHERE display_name = 'E'"));
+        Assert.True(File.Exists(Path.Combine(paths.CacheDirectory, "backup-v4.sqlite3")));
+        Assert.Equal(1L, await ScalarAsync(paths.DatabasePath,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'videos_source_fingerprint_key' AND sql LIKE 'CREATE UNIQUE%'"));
     }
 
     private static async Task ExecuteAsync(LibraryPaths paths, string sql)
