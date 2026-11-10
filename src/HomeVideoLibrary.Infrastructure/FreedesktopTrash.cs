@@ -56,8 +56,9 @@ internal sealed class FreedesktopTrash : IFileTrash
         yield return Path.Combine(topDirectory, ".Trash-" + _uid.ToString(CultureInfo.InvariantCulture));
     }
 
-    /// <summary>Moves <paramref name="file"/> into <paramref name="trash"/>. Null when this Trash cannot be used (it is a
-    /// symlink or cannot be created, or it is on another device after all), so the next one may be tried.</summary>
+    /// <summary>Moves <paramref name="file"/> into <paramref name="trash"/>. Null when this Trash cannot be used (a device's
+    /// Trash that is a symlink, one that cannot be created, or one on another device after all), so the next one may be
+    /// tried. The home Trash may be a symlink: the user chose where it points.</summary>
     /// <param name="relativeTo">The top directory the trashinfo path is relative to (so the device can be mounted
     /// elsewhere), or null for an absolute path.</param>
     private TrashResult? Move(string file, string trash, string? relativeTo)
@@ -65,7 +66,7 @@ internal sealed class FreedesktopTrash : IFileTrash
         string files, info;
         try
         {
-            if (new DirectoryInfo(trash) is { Exists: true, LinkTarget: not null } || File.Exists(trash)) return null;
+            if ((relativeTo is not null && new DirectoryInfo(trash) is { Exists: true, LinkTarget: not null }) || File.Exists(trash)) return null;
             files = Directory.CreateDirectory(Path.Combine(trash, "files"), Private).FullName;
             info = Directory.CreateDirectory(Path.Combine(trash, "info"), Private).FullName;
         }

@@ -123,6 +123,20 @@ public sealed class FileTrashTests : IDisposable
     }
 
     [Fact]
+    public void AHomeTrashThatIsASymlinkIsUsed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var target = Directory.CreateDirectory(Path.Combine(_root, "elsewhere", "Trash")).FullName;
+        var home = Path.Combine(_root, "home", "Trash");
+        Directory.CreateDirectory(Path.GetDirectoryName(home)!);
+        Directory.CreateSymbolicLink(home, target);
+
+        Assert.Equal(TrashResult.Trashed, new FreedesktopTrash(home, _ => "/", Uid).MoveToTrash(CreateFile(Path.Combine(_root, "Videos", "a.mkv"))));
+
+        Assert.True(File.Exists(Path.Combine(target, "files", "a.mkv")));
+    }
+
+    [Fact]
     public void AFileWhoseDeviceIsUnknownStaysWhereItIs()
     {
         if (OperatingSystem.IsWindows()) return;
