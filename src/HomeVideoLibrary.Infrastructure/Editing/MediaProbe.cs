@@ -120,7 +120,7 @@ internal sealed record MkvInfo(TimeSpan Duration, IReadOnlyList<MkvTrack> Tracks
 /// <summary>The primary video stream as ffprobe reports it.</summary>
 internal sealed record VideoStreamInfo(string CodecName, string Profile, int Level, string PixelFormat, string FieldOrder,
     string ColorRange, string ColorSpace, string ColorPrimaries, string ColorTransfer, string SampleAspectRatio,
-    string AverageFrameRate, int Width, int Height)
+    string AverageFrameRate, int Width, int Height, int BFrames = 0)
 {
     public bool IsProgressive => FieldOrder == "progressive";
 }
@@ -219,7 +219,7 @@ internal sealed class MediaProbe(MediaTools tools, MediaProcess process)
     private async Task<VideoStreamInfo> ReadVideoStreamAsync(string path, CancellationToken cancellationToken)
     {
         var result = await process.RunAsync(tools.Ffprobe, ["-v", "error", "-select_streams", "V:0", "-show_entries",
-            "stream=codec_name,profile,level,pix_fmt,field_order,color_range,color_space,color_primaries,color_transfer,sample_aspect_ratio,avg_frame_rate,width,height",
+            "stream=codec_name,profile,level,pix_fmt,field_order,color_range,color_space,color_primaries,color_transfer,sample_aspect_ratio,avg_frame_rate,width,height,has_b_frames",
             "-of", "json", path], ProbeTimeout, cancellationToken);
         if (result.ExitCode != 0) throw new InvalidDataException("The video is unreadable. " + MediaErrors.Summarize(result.StandardError));
         using var document = JsonDocument.Parse(result.StandardOutput);
@@ -229,7 +229,7 @@ internal sealed class MediaProbe(MediaTools tools, MediaProcess process)
         int Number(string name) => stream.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : 0;
         return new VideoStreamInfo(Text("codec_name"), Text("profile"), Number("level"), Text("pix_fmt"), Text("field_order"),
             Text("color_range"), Text("color_space"), Text("color_primaries"), Text("color_transfer"), Text("sample_aspect_ratio"),
-            Text("avg_frame_rate"), Number("width"), Number("height"));
+            Text("avg_frame_rate"), Number("width"), Number("height"), Number("has_b_frames"));
     }
 
     /// <summary>Video packets of the first video stream with absolute presentation times in about [<paramref name="from"/>,

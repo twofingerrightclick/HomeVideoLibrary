@@ -24,14 +24,15 @@ internal sealed record AudioTarget(MkvTrack Reference, IReadOnlyList<string> Enc
 /// video (which would leave a hole in the picture where the next clip starts).</param>
 /// <param name="ExpectAppend">mkvmerge is expected to accept the append: codec configurations are identical too.</param>
 /// <param name="Subtitles">Subtitle tracks carried by the composite; empty when the clips' subtitle layouts differ.</param>
+/// <param name="RateNote">Says which frame rates copied clips keep, when they differ; otherwise empty.</param>
 internal sealed record MergePlan(bool TryAppend, bool ExpectAppend, VideoTarget Video, bool CanJoinRaw, IReadOnlyList<AudioTarget> Audio,
-    IReadOnlyList<MkvTrack> Subtitles, IReadOnlyList<MergeClip> Clips, string CompositeNote)
+    IReadOnlyList<MkvTrack> Subtitles, IReadOnlyList<MergeClip> Clips, string CompositeNote, string RateNote = "")
 {
     public const string LosslessNote = "Lossless; the clips are joined without re-encoding.";
 
     public int ReencodedClips => ExpectAppend ? 0 : Clips.Count(clip => clip.IsReencoded);
     public bool IsLossless => ReencodedClips == 0;
-    public string Note => ExpectAppend ? LosslessNote : CompositeNote;
+    public string Note => ((ExpectAppend ? LosslessNote : CompositeNote) + " " + RateNote).Trim();
     public ClipMergePlan ToPublic() => new(IsLossless, ReencodedClips, Note);
 
     public IReadOnlyList<ExpectedTrack> CompositeTracks =>
@@ -109,11 +110,17 @@ internal static class MergePlanner
         };
         if (clips.Any(clip => clip.Audio.Any(choice => choice.Kind == AudioSourceKind.Silence))) notes.Add("Silent clips get silence.");
         if (!subtitlesAgree) notes.Add("Subtitles are not carried over because the clips' subtitle tracks differ.");
-        return new MergePlan(tryAppend, expectAppend, video, canJoinRaw, audio, subtitles, clips, string.Join(' ', notes));
+        var copiedRates = (expectAppend ? sources : clips.Where(clip => clip.CopyVideo).Select(clip => clip.Source))
+            .Select(source => FormatRate(source.Video.AverageFrameRate)).Distinct().ToArray();
+        var rateNote = copiedRates.Length > 1 ? $"Clips keep their own frame rates ({string.Join(" and ", copiedRates)} fps)." : "";
+        return new MergePlan(tryAppend, expectAppend, video, canJoinRaw, audio, subtitles, clips, string.Join(' ', notes), rateNote);
     }
 
-    private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, source.Video.Width, source.Video.Height,
-        source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
+    /// <summary>What copied clips must share to join as one stream: profile and level too, because strict hardware
+    /// decoders configure themselves from the first sequence header (LosslessCut's merge check compares them as well).
+    /// Frame rate is not part of it: Matroska stores a timestamp per frame.</summary>
+    private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, source.Video.Profile, source.Video.Level,
+        source.Video.Width, source.Video.Height, source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
 
     private static string FormatRate(string rate) =>
         MediaProbe.TryParseRatio(rate, out var value) ? value.ToString("0.##", CultureInfo.InvariantCulture) : rate;
