@@ -100,7 +100,9 @@ right inspector that can be hidden and resized.
 - **EDIT tab and Merge page:** trim (in/out, PRECISE), split at the playhead, and merge in a chosen order. The commit
   key is driven by a plan computed from the file: SAVE when every picture is copied (a precise cut that re-encodes
   only the frames at its cuts counts), RENDER when a picture must be re-encoded. The ⓘ key beside it explains in plain
-  words what will happen and why. The edit runs as a render job; the original is never changed.
+  words what will happen and why. The edit runs as a render job; the original is never changed. Once a merge is
+  queued its page drops the form and shows the job (queued, progress, CANCEL); when done it reads "Merged" with a
+  "View video: <title>" link to the new video. A failed or cancelled merge says so and gives the form back.
 
 ## Pointer previews
 

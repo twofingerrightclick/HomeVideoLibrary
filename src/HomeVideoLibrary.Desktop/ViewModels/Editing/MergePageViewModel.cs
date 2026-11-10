@@ -23,6 +23,7 @@ public sealed class MergePageViewModel : PageViewModel
     private MergeSource? _selectedSource;
     private string _outputTitle = "";
     private JobViewModel? _job;
+    private string? _mergedTitle;
 
     /// <param name="edits">Plans the merge and runs it as a render job, which keeps running if the page closes.</param>
     /// <param name="back">Returns to the library.</param>
@@ -36,7 +37,7 @@ public sealed class MergePageViewModel : PageViewModel
         Plan = new PlanReadout(time ?? TimeProvider.System);
         MoveUpCommand = new RelayCommand(() => MoveSelected(-1), () => CanMove(-1));
         MoveDownCommand = new RelayCommand(() => MoveSelected(1), () => CanMove(1));
-        SaveCommand = new RelayCommand(Save, () => Plan.IsReady && Job is not { IsFinished: false });
+        SaveCommand = new RelayCommand(Save, () => Plan.IsReady && IsEditing);
         Plan.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(PlanReadout.State)) SaveCommand.RaiseCanExecuteChanged(); };
         BackCommand = new AsyncCommand(_ => back(), context: "Back to library");
     }
@@ -68,8 +69,18 @@ public sealed class MergePageViewModel : PageViewModel
     /// <summary>Whether the merge is lossless or which clips it re-encodes, refreshed after reordering pauses.</summary>
     public PlanReadout Plan { get; }
 
-    /// <summary>The latest merge started here, shown with its progress, CANCEL and OPEN; null until one starts.</summary>
+    /// <summary>The latest merge started here, shown with its progress and CANCEL; null until one starts.</summary>
     public JobViewModel? Job { get => _job; private set => SetProperty(ref _job, value); }
+
+    /// <summary>Whether the order, title and SAVE are offered: before a merge is queued, and again after it fails or is
+    /// cancelled so it can be retried. A queued, running or finished merge takes the form away, so it cannot be saved
+    /// twice.</summary>
+    public bool IsEditing => Job is null or { State: JobState.Failed or JobState.Cancelled };
+
+    public bool IsMerged => Job is { State: JobState.Succeeded };
+
+    /// <summary>The new video's title once merged; its link opens it through <see cref="JobViewModel.OpenCommand"/>.</summary>
+    public string? MergedTitle { get => _mergedTitle; private set => SetProperty(ref _mergedTitle, value); }
 
     /// <summary>The page's toolbar has its own ◀ LIBRARY key (and Esc).</summary>
     public override bool HasBackKey => true;
@@ -79,8 +90,8 @@ public sealed class MergePageViewModel : PageViewModel
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
 
-    /// <summary>Queues a render job for the planned order. Disabled while the plan is not ready, and while this page's
-    /// merge is queued or running, so pressing twice cannot queue the same merge twice.</summary>
+    /// <summary>Queues a render job for the planned order. Disabled while the plan is not ready and while the form is not
+    /// offered (see <see cref="IsEditing"/>).</summary>
     public RelayCommand SaveCommand { get; }
     public AsyncCommand BackCommand { get; }
 
@@ -97,7 +108,7 @@ public sealed class MergePageViewModel : PageViewModel
     }
 
     private bool CanMove(int direction) =>
-        SelectedSource is { } source && Sources.IndexOf(source) + direction is var target && target >= 0 && target < Sources.Count;
+        IsEditing && SelectedSource is { } source && Sources.IndexOf(source) + direction is var target && target >= 0 && target < Sources.Count;
 
     private void MoveSelected(int direction)
     {
@@ -117,15 +128,26 @@ public sealed class MergePageViewModel : PageViewModel
     {
         // Captured now: the job may start later, and runs on the thread pool.
         var (order, title) = (Sources.Select(source => source.Video).ToArray(), OutputTitle);
-        Job = ClipEditJob.Enqueue(_edits, $"Merge {order.Length} videos", order.Select(video => video.Id).ToArray(),
-            (editing, progress, token) => editing.MergeAsync(order, title, progress, token));
-        _ = UpdateSaveWhenDoneAsync(Job);
+        IReadOnlyList<LibraryVideo> outputs = [];
+        var job = ClipEditJob.Enqueue(_edits, $"Merge {order.Length} videos", order.Select(video => video.Id).ToArray(),
+            async (editing, progress, token) => outputs = await editing.MergeAsync(order, title, progress, token));
+        Job = job;
+        _ = ShowResultWhenDoneAsync(job, () => outputs);
     }
 
-    private async Task UpdateSaveWhenDoneAsync(JobViewModel job)
+    /// <param name="outputs">Read only after the job completes, which orders it after the thread-pool write.</param>
+    private async Task ShowResultWhenDoneAsync(JobViewModel job, Func<IReadOnlyList<LibraryVideo>> outputs)
     {
-        SaveCommand.RaiseCanExecuteChanged();
+        EditingChanged();
         await job.Completion;
-        SaveCommand.RaiseCanExecuteChanged();
+        if (job.State == JobState.Succeeded) MergedTitle = outputs().FirstOrDefault()?.Label;
+        EditingChanged();
+    }
+
+    private void EditingChanged()
+    {
+        OnPropertyChanged(nameof(IsEditing));
+        OnPropertyChanged(nameof(IsMerged));
+        foreach (var command in new[] { SaveCommand, MoveUpCommand, MoveDownCommand }) command.RaiseCanExecuteChanged();
     }
 }
