@@ -214,6 +214,32 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
+    public async Task ATrashEndingWhileTheAppClosesOffersNoPermanentDeletion()
+    {
+        var (vm, videos) = await OpenAsync("first");
+        var render = new TaskCompletionSource();
+        vm.Jobs.Enqueue("Render", JobLane.Render, async (_, _) =>
+        {
+            await render.Task;
+            return JobOutcome.Done("ok");
+        });
+        _trash.Answers.Enqueue(TrashResult.Unavailable);
+        _interaction.ConfirmAnswers.Enqueue(true);
+        _interaction.ConfirmAnswers.Enqueue(true);
+        var request = await vm.Trash.MoveToTrashAsync([videos[0].Id]);
+        _interaction.CloseChoice = CloseChoice.WaitForJobs;
+
+        var closing = vm.RequestCloseAsync();
+        render.SetResult();
+        Assert.True(await closing);
+        await request!.Completion;
+
+        Assert.Equal("MOVE TO TRASH", Assert.Single(_interaction.Confirmations).Title);
+        Assert.Single(vm.Jobs.Jobs, job => job.Title.StartsWith("Move", StringComparison.Ordinal));
+        Assert.True(File.Exists(PathOf(vm, videos[0])));
+    }
+
+    [Fact]
     public async Task DecliningTheSystemsWarningKeepsTheVideoWithoutAskingAgain()
     {
         var (vm, videos) = await OpenAsync("first");

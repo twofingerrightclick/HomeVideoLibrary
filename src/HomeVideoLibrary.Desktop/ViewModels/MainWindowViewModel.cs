@@ -87,7 +87,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             message => Status = message);
         var holders = new ShellVideoHolders(() => _strips, () => _previews, dependencies.Post);
         Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash, holders), Shelf, Jobs, dependencies.Interaction,
-            LeavePagesShowingAsync, () => IsSettled, message => Status = message, RefreshView);
+            LeavePagesShowingAsync, () => IsSettled && _lock is not null, message => Status = message, RefreshView);
         Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);

@@ -29,7 +29,7 @@ public sealed class TrashViewModel : ViewModelBase
     /// <param name="model">The open library's model, or null.</param>
     /// <param name="leave">Leaves the page when it shows one of these videos (asking about unsaved changes); false
     /// when the page stays.</param>
-    /// <param name="canStart">Whether new work may start (the library is not being switched or closed).</param>
+    /// <param name="canStart">Whether new work may start: the library is open, and not being switched or closed.</param>
     /// <param name="viewChanged">Shows the model's current snapshot, so the shelf no longer has the removed tapes when
     /// focus moves on.</param>
     public TrashViewModel(Func<LibraryModel?> model, Func<LibraryModel, VideoRemover> createRemover, ShelfViewModel shelf, JobQueue jobs,
@@ -125,7 +125,7 @@ public sealed class TrashViewModel : ViewModelBase
             var report = new List<string> { Summarize(trash.Results) };
             var stranded = videos.Where(video => trash.Results.Any(result => result.VideoId == video.Id && result.Result == RemovalResult.Unavailable))
                 .ToArray();
-            if (stranded.Length > 0 && ReferenceEquals(_model(), model) && await _interaction.ConfirmAsync(new Confirmation("DELETE PERMANENTLY",
+            if (stranded.Length > 0 && ReferenceEquals(_model(), model) && _canStart() && await _interaction.ConfirmAsync(new Confirmation("DELETE PERMANENTLY",
                     $"{Count(stranded.Length)} cannot go to the Trash because {(stranded.Length == 1 ? "its" : "their")} drive has none. " +
                     $"Delete {(stranded.Length == 1 ? "it" : "them")} permanently? {Size(model, stranded)} is deleted and cannot be restored.",
                     Details(model, stranded), "DELETE PERMANENTLY")))
