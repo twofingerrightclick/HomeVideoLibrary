@@ -22,6 +22,17 @@ internal static class VideoEncoding
     public static async Task<bool> CanEncodeAsync(MediaTools tools, MediaProcess process, string codecName) =>
         (await ListEncodersAsync(tools, process)).Contains(codecName switch { "hevc" => " libx265 ", _ => " libx264 " }, StringComparison.Ordinal);
 
+    /// <summary>A codec name as people know it, for explanations.</summary>
+    public static string FriendlyCodec(string codecName) => codecName switch
+    {
+        "h264" => "H.264",
+        "hevc" => "HEVC",
+        "mpeg2video" => "MPEG-2",
+        "mpeg4" => "MPEG-4",
+        "dvvideo" => "DV",
+        _ => codecName.ToUpperInvariant(),
+    };
+
     /// <summary>The raw (Annex-B) bitstream filter and format for codecs whose pieces can be joined by concatenation.</summary>
     public static (string Filter, string Format)? AnnexB(string codecName) => codecName switch
     {

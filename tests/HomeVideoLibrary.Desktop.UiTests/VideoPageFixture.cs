@@ -25,7 +25,7 @@ internal static class VideoPageFixture
             Record = record, Path = path, Metadata = new MemoryMetadata(metadata), Playback = new SilentPlayback(),
             Snapshot = LibrarySnapshot.Empty, SuggestTags = (_, _, _) => [], Session = new VideoPageSession(),
             Post = action => Dispatcher.UIThread.Post(action), Previews = previews, Time = time ?? TimeProvider.System,
-            Back = back ?? (() => Task.CompletedTask),
+            Back = back ?? (() => Task.CompletedTask), Edits = NoClipEditing.Edits(),
         });
     }
 

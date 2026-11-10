@@ -33,7 +33,44 @@ internal sealed record MergePlan(bool TryAppend, bool ExpectAppend, VideoTarget 
     public int ReencodedClips => ExpectAppend ? 0 : Clips.Count(clip => clip.IsReencoded);
     public bool IsLossless => ReencodedClips == 0;
     public string Note => ((ExpectAppend ? LosslessNote : CompositeNote) + " " + RateNote).Trim();
-    public ClipMergePlan ToPublic() => new(IsLossless, ReencodedClips, Note);
+    public ClipMergePlan ToPublic() => new(IsLossless, ReencodedClips, Note)
+    {
+        Clips = Clips.Select(clip =>
+        {
+            var length = clip.Source.VideoEnd - clip.Source.Timeline.StartTime;
+            if (ExpectAppend || !clip.IsReencoded) return new ClipMergeSourcePlan(false, false, length, null);
+            var encodesAudio = clip.Audio.Any(audio => audio.Kind == AudioSourceKind.Encode);
+            var reasons = new List<string>();
+            if (!clip.CopyVideo) reasons.Add(VideoReason(clip.Source));
+            if (encodesAudio) reasons.Add("its sound differs from the other clips' and is converted to match");
+            return new ClipMergeSourcePlan(!clip.CopyVideo, encodesAudio, length, string.Join(" and ", reasons));
+        }).ToArray(),
+    };
+
+    /// <summary>Why <paramref name="source"/>'s picture cannot be copied: the first way it differs from the clips that
+    /// set the merged format, or why nothing can be copied.</summary>
+    private string VideoReason(EditSource source)
+    {
+        var target = Video.Colour;
+        var video = source.Video;
+        if (!CanJoinRaw)
+        {
+            if (VideoEncoding.AnnexB(target.CodecName) is null) return $"{VideoEncoding.FriendlyCodec(target.CodecName)} video can't be joined without re-encoding";
+            if (Clips.Any(clip => clip.Source.Mkv.Tracks.Count(track => track.Type == "video") != 1)) return "a clip has more than one video track";
+            return "joining HEVC video needs an HEVC encoder, and this ffmpeg has none";
+        }
+        if (video.CodecName != target.CodecName)
+            return $"it is {VideoEncoding.FriendlyCodec(video.CodecName)} video and the merged video is {VideoEncoding.FriendlyCodec(target.CodecName)}";
+        if (MergePlanner.ProfileFamily(video.Profile) != MergePlanner.ProfileFamily(target.Profile))
+            return $"it uses the {video.Profile} profile and the merged video uses {target.Profile}";
+        if (video.Width != target.Width || video.Height != target.Height)
+            return $"it is {video.Width}×{video.Height} and the merged video is {target.Width}×{target.Height}";
+        if (video.SampleAspectRatio != target.SampleAspectRatio)
+            return $"its pixel shape ({video.SampleAspectRatio}) differs from the merged video's ({target.SampleAspectRatio})";
+        if (video.FieldOrder != target.FieldOrder)
+            return $"its interlacing ({video.FieldOrder}) differs from the merged video's ({target.FieldOrder})";
+        return $"its colour format ({video.PixelFormat}) differs from the merged video's ({target.PixelFormat})";
+    }
 
     public IReadOnlyList<ExpectedTrack> CompositeTracks =>
     [
@@ -125,7 +162,7 @@ internal static class MergePlanner
     private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, ProfileFamily(source.Video.Profile),
         source.Video.Width, source.Video.Height, source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
 
-    private static string ProfileFamily(string profile) =>
+    internal static string ProfileFamily(string profile) =>
         profile.Replace("Constrained ", "", StringComparison.Ordinal).Replace(" Intra", "", StringComparison.Ordinal);
 
     private static string FormatRate(string rate) =>

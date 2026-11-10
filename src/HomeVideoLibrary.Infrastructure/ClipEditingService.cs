@@ -36,13 +36,6 @@ public sealed class ClipEditingService : IClipEditingService
         _merges = new MergeEditor(tools, _process, _probe, commands);
     }
 
-    public async Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default)
-    {
-        var video = (await ProbeAsync(source, cancellationToken)).Video;
-        return new ClipOutputFormat(video.Width, video.Height, video.AverageFrameRate,
-            video.SampleAspectRatio is { Length: > 0 } and not "0:1" ? video.SampleAspectRatio : "1:1");
-    }
-
     public async Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
         CancellationToken cancellationToken = default)
     {
@@ -69,7 +62,7 @@ public sealed class ClipEditingService : IClipEditingService
     {
         var probe = await ProbeAsync(source, cancellationToken);
         var range = probe.ResolveRange(start, end);
-        var name = TitleOrDefault(title, source.DisplayName + " · trim");
+        var name = TitleOrDefault(title, BaseName(source) + " · trim");
         var tracks = probe.Mkv.Tracks.Select(track => track.Expected).ToArray();
         return await ExecuteAsync([source], progress, async (scratch, report) =>
         {
@@ -103,7 +96,7 @@ public sealed class ClipEditingService : IClipEditingService
     {
         var probe = await ProbeAsync(source, cancellationToken);
         var split = await PlanSplitAsync(probe, position, cancellationToken);
-        var name = TitleOrDefault(title, source.DisplayName);
+        var name = TitleOrDefault(title, BaseName(source));
         return await ExecuteAsync([source], progress, async (scratch, report) =>
         {
             EnsureFreeSpace(scratch, probe, probe.VideoEnd, 1.1);
@@ -322,6 +315,9 @@ public sealed class ClipEditingService : IClipEditingService
         new(length, [new DecodeWindow(sourcePath, sourceEnd - MediaValidator.BoundaryRadius, MediaValidator.BoundaryRadius)]);
 
     private static string TitleOrDefault(string title, string fallback) => string.IsNullOrWhiteSpace(title) ? fallback : title.Trim();
+
+    /// <summary>What new clips are named after when no title is given: the source's title, or its file name.</summary>
+    private static string BaseName(LibraryVideo source) => string.IsNullOrWhiteSpace(source.Title) ? source.DisplayName : source.Title.Trim();
 
     /// <summary>A source range [Start, End) placed at <paramref name="Offset"/> in the output. Times are absolute source
     /// timestamps; <paramref name="Origin"/> is where the source's timeline starts.</summary>
