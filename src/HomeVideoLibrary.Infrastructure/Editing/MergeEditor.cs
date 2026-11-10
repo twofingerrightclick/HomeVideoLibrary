@@ -61,6 +61,8 @@ internal sealed record MergePlan(bool TryAppend, bool ExpectAppend, VideoTarget 
         }
         if (video.CodecName != target.CodecName)
             return $"it is {VideoEncoding.FriendlyCodec(video.CodecName)} video and the merged video is {VideoEncoding.FriendlyCodec(target.CodecName)}";
+        if (MergePlanner.ProfileFamily(video.Profile) != MergePlanner.ProfileFamily(target.Profile))
+            return $"it uses the {video.Profile} profile and the merged video uses {target.Profile}";
         if (video.Width != target.Width || video.Height != target.Height)
             return $"it is {video.Width}×{video.Height} and the merged video is {target.Width}×{target.Height}";
         if (video.SampleAspectRatio != target.SampleAspectRatio)
@@ -160,7 +162,7 @@ internal static class MergePlanner
     private static string VideoKey(EditSource source) => string.Join('|', source.Video.CodecName, ProfileFamily(source.Video.Profile),
         source.Video.Width, source.Video.Height, source.Video.PixelFormat, source.Video.SampleAspectRatio, source.Video.FieldOrder);
 
-    private static string ProfileFamily(string profile) =>
+    internal static string ProfileFamily(string profile) =>
         profile.Replace("Constrained ", "", StringComparison.Ordinal).Replace(" Intra", "", StringComparison.Ordinal);
 
     private static string FormatRate(string rate) =>

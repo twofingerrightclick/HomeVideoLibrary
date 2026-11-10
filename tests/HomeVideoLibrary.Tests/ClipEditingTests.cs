@@ -413,9 +413,9 @@ public sealed class ClipEditingTests : IDisposable
         var catalog = await CreateCatalogAsync();
         var source = await CreateFixtureAsync(catalog, "bounds");
         var editing = new ClipEditingService(catalog, _tools);
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.TrimAsync(source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1), ""));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.SplitAsync(source, TimeSpan.Zero, ""));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => editing.SplitAsync(source, TimeSpan.FromSeconds(6), ""));
+        await Assert.ThrowsAsync<ClipRangeException>(() => editing.TrimAsync(source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1), ""));
+        await Assert.ThrowsAsync<ClipRangeException>(() => editing.SplitAsync(source, TimeSpan.Zero, ""));
+        await Assert.ThrowsAsync<ClipRangeException>(() => editing.SplitAsync(source, TimeSpan.FromSeconds(6), ""));
         await Assert.ThrowsAsync<ArgumentException>(() => editing.MergeAsync([source], ""));
         Assert.Single(await catalog.ListAsync());
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));

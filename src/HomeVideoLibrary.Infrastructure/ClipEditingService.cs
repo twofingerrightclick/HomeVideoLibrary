@@ -36,13 +36,6 @@ public sealed class ClipEditingService : IClipEditingService
         _merges = new MergeEditor(tools, _process, _probe, commands);
     }
 
-    public async Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default)
-    {
-        var video = (await ProbeAsync(source, cancellationToken)).Video;
-        return new ClipOutputFormat(video.Width, video.Height, video.AverageFrameRate,
-            video.SampleAspectRatio is { Length: > 0 } and not "0:1" ? video.SampleAspectRatio : "1:1");
-    }
-
     public async Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
         CancellationToken cancellationToken = default)
     {

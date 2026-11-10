@@ -330,9 +330,6 @@ public sealed class ClipEditingViewModelTests
             IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) =>
             Merge is { } merge ? merge(progress, cancellationToken) : Task.FromResult<IReadOnlyList<LibraryVideo>>([sources[0]]);
 
-        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
         public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
             IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LibraryVideo>>([]);

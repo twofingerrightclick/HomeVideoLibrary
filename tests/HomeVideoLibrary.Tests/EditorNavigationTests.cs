@@ -291,8 +291,6 @@ public sealed class EditorNavigationTests : IDisposable
     private sealed class BlockingClipEditing : IClipEditingService
     {
         private static readonly ClipCutPlan Plan = new(TimeSpan.Zero, TimeSpan.FromSeconds(10), true, "");
-        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ClipOutputFormat(160, 120, "10", "1:1"));
         public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
             CancellationToken cancellationToken = default) => Task.FromResult(Plan);
         public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>

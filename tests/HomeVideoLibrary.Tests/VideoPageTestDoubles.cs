@@ -148,7 +148,6 @@ internal static class VideoPages
 /// <summary>For pages whose tests do not edit clips: every call fails, which a plan readout shows as its message.</summary>
 internal sealed class UnusedClipEditing : IClipEditingService
 {
-    public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>

@@ -10,7 +10,6 @@ internal sealed class NoClipEditing : IClipEditingService
     /// <summary>Edits that plan nothing and queue into a queue of their own.</summary>
     public static ClipEdits Edits() => new(new NoClipEditing(), new JobQueue(_ => Task.CompletedTask), _ => Task.CompletedTask);
 
-    public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
         CancellationToken cancellationToken = default) => new TaskCompletionSource<ClipCutPlan>().Task;
     public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
