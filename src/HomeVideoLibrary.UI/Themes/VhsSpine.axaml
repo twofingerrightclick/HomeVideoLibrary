@@ -194,12 +194,6 @@
             </Panel>
           </Border>
           </Viewbox>
-          <Border Name="PART_SelectionRing"
-                  Margin="-3"
-                  CornerRadius="8"
-                  BorderThickness="2"
-                  BorderBrush="{DynamicResource Vcr.Brush.Primary}"
-                  IsVisible="False"/>
           <Border Name="PART_FocusRing"
                   Margin="-3"
                   CornerRadius="8"
@@ -241,15 +235,8 @@
       <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Forward}"/>
       <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Spine.Forward}"/>
     </Style>
-    <Style Selector="^:selected /template/ Border#PART_SelectionRing">
-      <Setter Property="IsVisible" Value="True"/>
-    </Style>
     <Style Selector="^:focus-visible /template/ Border#PART_FocusRing">
       <Setter Property="IsVisible" Value="True"/>
-    </Style>
-    <Style Selector="^:selected:focus-visible /template/ Border#PART_FocusRing">
-      <Setter Property="Margin" Value="-6"/>
-      <Setter Property="CornerRadius" Value="10"/>
     </Style>
   </ControlTheme>
 </ResourceDictionary>

@@ -32,10 +32,10 @@ public enum SpineSticker
 /// that ratio implies (or the reverse when only a height is given), and its face scales uniformly. Hover
 /// brings the tape slightly forward (scale and shadow only; it never shifts). As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
 /// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
-/// left to the host list for selection; selection itself is the host's and is only displayed via
-/// <see cref="IsSelected"/>.
+/// left to the host list for selection, which the host shows (on the shelf, a check box in
+/// <see cref="LeadingContent"/>).
 /// </summary>
-[PseudoClasses(":selected", ":branded", ":graph", ":cream", ":has-leading")]
+[PseudoClasses(":branded", ":graph", ":cream", ":has-leading")]
 public class VhsSpine : Button
 {
     /// <summary>Length to height of a VHS cassette spine (187 x 25 mm).</summary>
@@ -87,9 +87,6 @@ public class VhsSpine : Button
     private Border? _shell;
     private Task _opening = Task.CompletedTask;
 
-    public static readonly StyledProperty<bool> IsSelectedProperty =
-        AvaloniaProperty.Register<VhsSpine, bool>(nameof(IsSelected));
-
     public VhsSpine()
     {
         UpdateStickerClasses();
@@ -137,12 +134,6 @@ public class VhsSpine : Button
         set => SetValue(OpenTransitionProperty, value);
     }
 
-    public bool IsSelected
-    {
-        get => GetValue(IsSelectedProperty);
-        set => SetValue(IsSelectedProperty, value);
-    }
-
     /// <summary>Fits the largest spine of the right proportions into the available space; with no constraint it
     /// takes its design size.</summary>
     public static Size FitSize(Size available)
@@ -174,10 +165,6 @@ public class VhsSpine : Button
         if (change.Property == StickerProperty)
         {
             UpdateStickerClasses();
-        }
-        else if (change.Property == IsSelectedProperty)
-        {
-            PseudoClasses.Set(":selected", change.GetNewValue<bool>());
         }
         else if (change.Property == LeadingContentProperty)
         {

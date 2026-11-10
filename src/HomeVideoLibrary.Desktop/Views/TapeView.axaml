@@ -6,7 +6,7 @@
   <c:VhsSpine x:Name="Spine" Focusable="False" IsTabStop="False"
    Label="{Binding Label}" Sticker="{Binding Spine.Sticker}" BrandText="{Binding Spine.BrandText}"
    Accent="{Binding Spine.AccentKey, Converter={x:Static views:ResourceConverter.Instance}}"
-   ShellText="{Binding ShellText}" IsSelected="{Binding IsSelected}" Command="{Binding OpenCommand}"
+   ShellText="{Binding ShellText}" Command="{Binding OpenCommand}"
    Classes.problem="{Binding HasProblem}" ToolTip.Tip="{Binding ProblemDetail}"
    AutomationProperties.Name="{Binding Label}">
    <c:VhsSpine.LeadingContent>

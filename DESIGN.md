@@ -59,7 +59,7 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - Its printed sticker art runs vertically, as on a real spine label; the handwritten label reads horizontally.
   - Sticker stock, accent and brand mark are a stable pick per video.
   - The shell shows the running time, or MISSING / UNREADABLE (details in the tooltip).
-  - A selection checkbox sits on the leading edge.
+  - A selection checkbox sits on the leading edge and is the only sign of selection; a ring shows keyboard focus only.
   - Spines keep a real VHS spine's 187:25 proportions at every size. In the full 760 px stack (less 28 px of margin
     per side) a spine is 704 px wide and about 94 px tall; in a narrower window it shrinks with the stack.
   - Hover brings the tape slightly forward (2.5% scale, deeper shadow; no shift, no indicator light). Moving the
