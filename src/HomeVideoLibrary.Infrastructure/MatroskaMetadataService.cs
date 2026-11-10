@@ -49,7 +49,10 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         {
             var state = await ReadStateAsync(path, scratch, cancellationToken);
             var duration = state.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : TimeSpan.Zero;
-            return new VideoTextMetadata(state.Metadata, state.Manifest.Select(ToRef).ToArray(), duration, state.Warnings);
+            return new VideoTextMetadata(state.Metadata, state.Manifest.Select(ToRef).ToArray(), duration, state.Warnings)
+            {
+                MediaIdentity = state.Container.MediaIdentity,
+            };
         }
         finally { DeleteDirectory(scratch); }
     }
@@ -428,7 +431,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         /// <summary>Selects by UID: positional IDs shift as earlier deletions in the same mkvpropedit run take effect.</summary>
         public string DeleteSelector => "=" + Uid.ToString(CultureInfo.InvariantCulture);
     }
-    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title);
+    private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title)
+    {
+        /// <summary>A hash of exactly what <see cref="VerifyAsync"/> requires every metadata write to preserve: the duration
+        /// and each track as mkvmerge describes it (UID, codec data, dimensions, frame and byte statistics).</summary>
+        public string MediaIdentity => Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            string.Join('\n', Tracks.Prepend(DurationNanoseconds?.ToString(CultureInfo.InvariantCulture) ?? "")))), 0, 8);
+    }
     /// <param name="Manifest">The thumbnail manifest the file must have after the write.</param>
     /// <param name="TouchesAttachments">Whether the write deletes the owned attachments and adds the planned ones.</param>
     private sealed record WritePlan(IReadOnlyList<string> Arguments, IReadOnlyList<ThumbnailEntry> Manifest, bool TouchesAttachments,

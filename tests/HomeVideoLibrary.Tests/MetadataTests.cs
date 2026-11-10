@@ -518,6 +518,33 @@ public sealed class MetadataTests : IDisposable
         Assert.Equal("640,480", probe.StandardOutput.Trim());
     }
 
+    [Fact]
+    public async Task MediaIdentitySurvivesMetadataSavesAndTheCacheButNotNewMedia()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var model = new LibraryModel(catalog, service);
+        var imported = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(imported.MediaIdentity);
+
+        var thumbnail = await service.CaptureThumbnailAsync(video, TimeSpan.FromSeconds(0.5));
+        await service.SaveAsync(video, imported.ToMetadata()! with { Title = "Renamed", Tags = ["family"], Thumbnails = [thumbnail] });
+        var saved = await model.UpsertFromFileAsync(video);
+        Assert.NotEqual(imported.Stamp, saved.Stamp);
+        Assert.Equal(imported.MediaIdentity, saved.MediaIdentity);
+
+        var reopened = new LibraryModel(new LibraryCatalog(catalog.Paths), service);
+        await reopened.LoadAsync();
+        Assert.Equal(saved.MediaIdentity, reopened.Snapshot.Find(video.Id)!.MediaIdentity);
+
+        // Same size and length, different pictures.
+        await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", catalog.GetVideoPath(video.RelativePath)]);
+        var replaced = await model.UpsertFromFileAsync(video);
+        Assert.NotNull(replaced.MediaIdentity);
+        Assert.NotEqual(saved.MediaIdentity, replaced.MediaIdentity);
+    }
+
     private async Task<(LibraryCatalog Catalog, LibraryVideo Video)> CreateVideoAsync()
     {
         var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));

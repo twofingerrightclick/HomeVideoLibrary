@@ -19,7 +19,12 @@ public sealed record VideoThumbnailRef(Guid Id, TimeSpan Position, string Attach
 
 /// <param name="Metadata">Text metadata; its <see cref="VideoMetadata.Thumbnails"/> is always empty.</param>
 public sealed record VideoTextMetadata(VideoMetadata Metadata, IReadOnlyList<VideoThumbnailRef> Thumbnails,
-    TimeSpan Duration, IReadOnlyList<string> Warnings);
+    TimeSpan Duration, IReadOnlyList<string> Warnings)
+{
+    /// <summary>Identifies the file's media (its tracks and duration), not its metadata: saving metadata leaves it
+    /// unchanged, and replacing the media changes it. Null when the reader cannot tell.</summary>
+    public string? MediaIdentity { get; init; }
+}
 
 public sealed record MetadataWriteOptions
 {
