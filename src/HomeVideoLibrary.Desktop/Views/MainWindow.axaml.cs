@@ -26,7 +26,7 @@ public sealed partial class MainWindow : Window
         Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
         Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
         Closing += WindowClosing;
-        DataContextChanged += (_, _) => { if (DataContext is MainWindowViewModel vm) vm.SearchFocusRequested += FocusSearch; };
+        DataContextChanged += (_, _) => Subscribe(DataContext as MainWindowViewModel);
 
         var router = new ShortcutRouter(ShortcutRouter.CommandModifierOf(this));
         SearchHint.Text = router.CommandModifier == KeyModifiers.Meta ? "⌘F" : "Ctrl+F";
@@ -45,6 +45,15 @@ public sealed partial class MainWindow : Window
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
+    private MainWindowViewModel? _subscribed;
+
+    private void Subscribe(MainWindowViewModel? viewModel)
+    {
+        if (_subscribed is { } old) old.SearchFocusRequested -= FocusSearch;
+        _subscribed = viewModel;
+        if (viewModel is not null) viewModel.SearchFocusRequested += FocusSearch;
+    }
+
     private void MapShortcuts(ShortcutRouter router)
     {
         Func<System.Windows.Input.ICommand?> OnShelf(Func<System.Windows.Input.ICommand?> command) => () => ViewModel.IsShelfShown ? command() : null;
@@ -52,19 +61,22 @@ public sealed partial class MainWindow : Window
             .MapCommand(Key.F, () => ViewModel.FocusSearchCommand)
             .MapCommand(Key.I, () => ViewModel.Import.ImportCommand, ClickSoundKind.Plastic)
             .MapCommand(Key.OemComma, () => ViewModel.OpenSettingsCommand, ClickSoundKind.Plastic)
-            .Map(Key.Enter, KeyModifiers.None, OnShelf(() => FocusedTape()?.OpenCommand))
+            .Map(Key.Enter, KeyModifiers.None, OnShelf(() => FocusedTape() is { } tape ? tape.HasMatchedChapter ? tape.OpenAtMatchCommand : tape.OpenCommand : null))
+            .Map(Key.F2, KeyModifiers.None, OnShelf(() => FocusedAlbum()?.RenameCommand))
             .Map(Key.Space, KeyModifiers.None, OnShelf(() => FocusedTape()?.ToggleSelectionCommand))
             .Map(Key.Space, KeyModifiers.Shift, OnShelf(() => FocusedTape()?.SelectRangeCommand))
             .Map(Key.Escape, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.ClearCommand))
-            .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.Albums.RemoveSelectedCommand))
-            .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand))
-            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.Albums.RemoveSelectedCommand))
-            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand));
+            .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
+            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand));
         router
             .MapCommand(Key.A, OnShelf(() => ViewModel.Shelf.SelectAllCommand))
             .MapCommand(Key.N, OnShelf(() => ViewModel.Albums.CreateFromSelectionCommand), ClickSoundKind.Plastic)
             .MapCommand(Key.M, OnShelf(() => ViewModel.MergeSelectedCommand), ClickSoundKind.Plastic, extra: KeyModifiers.Shift);
     }
+
+    /// <summary>The album whose row has keyboard focus.</summary>
+    private AlbumRowViewModel? FocusedAlbum() =>
+        (FocusManager?.GetFocusedElement() as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as AlbumRowViewModel;
 
     /// <summary>The tape whose row has keyboard focus.</summary>
     private TapeViewModel? FocusedTape() =>

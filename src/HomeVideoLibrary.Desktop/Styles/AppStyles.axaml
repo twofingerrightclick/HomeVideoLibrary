@@ -118,6 +118,17 @@
   <Setter Property="IsVisible" Value="True"/>
  </Style>
 
+ <!-- Activity LED: dark at rest, lit green while jobs run or wait. -->
+ <Style Selector="Ellipse.led">
+  <Setter Property="Fill" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+ </Style>
+ <Style Selector="Ellipse.led.lit">
+  <Setter Property="Fill" Value="{DynamicResource Vcr.Brush.Green.Led}"/>
+ </Style>
+ <Style Selector="TextBlock.meta.error">
+  <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Red.Led}"/>
+ </Style>
+
  <!-- An album row a dragged tape would drop onto. -->
  <Style Selector="ListBox.vcr ListBoxItem.dropTarget /template/ ContentPresenter#PART_ContentPresenter">
   <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Selection}"/>

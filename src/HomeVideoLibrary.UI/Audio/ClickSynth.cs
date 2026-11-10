@@ -12,6 +12,7 @@ public static class ClickSynth
     {
         ClickSoundKind.Plastic => ToPcm(Plastic()),
         ClickSoundKind.Rubber => ToPcm(Rubber()),
+        ClickSoundKind.Chime => ToPcm(Chime()),
         _ => [],
     };
 
@@ -61,6 +62,28 @@ public static class ClickSynth
         }
 
         return Normalize(samples, 0.6f);
+    }
+
+    // A quiet VCR-style "done" beep: two short sine notes a fifth apart, each with a soft attack and decay.
+    private static float[] Chime()
+    {
+        var samples = new float[Samples(0.32)];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var t = i / (double)SampleRate;
+            var first = Note(t, 1046.5, 0.0);
+            var second = Note(t, 1568.0, 0.11);
+            samples[i] = (float)(first + second);
+        }
+
+        samples[^1] = 0;
+        return Normalize(samples, 0.3f);
+
+        static double Note(double t, double frequency, double start)
+        {
+            var local = t - start;
+            return local < 0 ? 0 : Math.Sin(2 * Math.PI * frequency * local) * Math.Min(1, local / 0.004) * Decay(local, 0.05);
+        }
     }
 
     private static int Samples(double seconds) => (int)(seconds * SampleRate);

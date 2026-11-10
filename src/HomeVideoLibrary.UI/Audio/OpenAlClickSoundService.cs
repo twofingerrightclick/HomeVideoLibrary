@@ -154,7 +154,7 @@ public sealed unsafe class OpenAlClickSoundService : IClickSoundService, IDispos
 
                 _context = _alc.CreateContext(_device, null);
                 _alc.MakeContextCurrent(_context);
-                foreach (var kind in new[] { ClickSoundKind.Plastic, ClickSoundKind.Rubber })
+                foreach (var kind in new[] { ClickSoundKind.Plastic, ClickSoundKind.Rubber, ClickSoundKind.Chime })
                 {
                     var pcm = ClickSynth.Synthesize(kind);
                     var buffer = _al.GenBuffer();
