@@ -50,8 +50,7 @@
       <ControlTemplate>
         <Panel>
           <Popup Name="PART_Popup"
-                 Placement="Top"
-                 VerticalOffset="3"
+                 Classes="pointer-preview"
                  ShouldUseOverlayLayer="False"
                  IsLightDismissEnabled="False">
             <Border Name="PART_Tooltip"

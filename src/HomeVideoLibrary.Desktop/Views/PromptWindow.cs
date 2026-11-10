@@ -18,6 +18,8 @@ public sealed class PromptWindow<TAnswer> : Window
         Title = title;
         SizeToContent = SizeToContent.WidthAndHeight;
         CanResize = false;
+        // The VcrDialog draws the title; a native title bar would repeat it.
+        SystemDecorations = SystemDecorations.BorderOnly;
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         MinWidth = 380;

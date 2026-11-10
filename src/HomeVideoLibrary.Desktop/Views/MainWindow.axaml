@@ -4,6 +4,9 @@
  x:Class="HomeVideoLibrary.Desktop.Views.MainWindow" x:DataType="vm:MainWindowViewModel" Title="{Binding Title}"
  Width="1440" Height="900" MinWidth="900" MinHeight="600">
  <Window.Resources>
+  <x:Double x:Key="ShelfStackWidth">760</x:Double>
+  <!-- Room beside each tape for the hovered tape's forward scale and shadow, so the viewport never cuts them. -->
+  <Thickness x:Key="ShelfTapeMargin">28,0,28,6</Thickness>
   <!-- An album in an "Add to album" menu: picking it adds the selected videos. -->
   <ControlTheme x:Key="AddToAlbumItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}" x:DataType="vm:AlbumRowViewModel">
    <Setter Property="Header" Value="{Binding Name}"/>
@@ -148,6 +151,9 @@
     </Border>
    </StackPanel>
 
+   <c:PlasticButton Classes="toolbar" Content="◀ LIBRARY" Command="{Binding BackCommand}" IsVisible="{Binding ShowsShellBackKey}"
+    HorizontalAlignment="Left" Margin="20,12,20,0" ToolTip.Tip="Back to the library (Esc)"/>
+
    <!-- Shelf: one virtualized column of spines with month dividers and a sticky month pill. -->
    <Grid Grid.Row="2" IsVisible="{Binding IsShelfShown}" Margin="20,12,0,0">
     <ListBox x:Name="TapeList" Classes="shelf" ItemsSource="{Binding Shelf.Tapes}" SelectionMode="Single"
@@ -166,9 +172,9 @@
      </ListBox.ContextMenu>
      <ListBox.ItemTemplate>
       <DataTemplate x:DataType="vm:TapeViewModel">
-       <!-- One spine per row, stretched to the shelf but never wider than 1100 px, left-aligned. -->
-       <Grid Margin="4,0,8,6">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="1100"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <!-- One spine per row in a centered stack: as wide as the shelf allows up to a comfortable size; the spine
+            itself keeps real VHS proportions, so its height follows. -->
+       <Grid Margin="{StaticResource ShelfTapeMargin}" MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Center">
         <StackPanel Spacing="2">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" IsVisible="{Binding HasMonthHeader}" Height="22" Margin="0,8,0,0">
          <TextBlock Classes="legend" Text="{Binding MonthHeader}" VerticalAlignment="Center"/>
@@ -182,10 +188,13 @@
       </DataTemplate>
      </ListBox.ItemTemplate>
     </ListBox>
-    <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,8,0,0" IsHitTestVisible="False"
-     IsVisible="{Binding !Shelf.IsEmpty}">
-     <TextBlock Text="{Binding Shelf.StickyMonth}"/>
-    </Border>
+    <!-- Pinned over the stack's month dividers, aligned with the centered stack. -->
+    <Grid MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="32,8,44,0"
+     IsHitTestVisible="False" IsVisible="{Binding !Shelf.IsEmpty}">
+     <Border Classes="pill" HorizontalAlignment="Left" Margin="-6,0,0,0">
+      <TextBlock Text="{Binding Shelf.StickyMonth}"/>
+     </Border>
+    </Grid>
     <StackPanel IsVisible="{Binding Shelf.IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440" Spacing="16" Margin="24">
      <TextBlock Classes="title" Text="{Binding EmptyTitle}" TextAlignment="Center" TextWrapping="Wrap"/>
      <TextBlock Classes="meta" Text="{Binding EmptyMessage}" TextWrapping="Wrap" TextAlignment="Center"/>
@@ -196,50 +205,56 @@
 
    <ContentControl Grid.Row="2" Content="{Binding Page}" ContentTemplate="{x:Static views:PageViews.Template}" IsVisible="{Binding HasPage}"/>
 
-   <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16" Margin="20,6,20,8">
+   <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16" Margin="20,6,20,8" IsVisible="{Binding IsChromeShown}">
     <TextBlock Classes="meta" Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Status}" VerticalAlignment="Center"/>
     <TextBlock Grid.Column="1" Classes="meta" Text="Click to play · check, ⌘/Ctrl- or Shift-click to select" IsVisible="{Binding IsShelfShown}"
      VerticalAlignment="Center"/>
     <!-- Activity: background imports and edits. The flyout is a native popup, so it also opens over a playing video. -->
-    <c:PlasticButton x:Name="ActivityButton" Grid.Column="2" Classes="toolbar" MaxWidth="420" AutomationProperties.Name="Activity">
-     <StackPanel Orientation="Horizontal" Spacing="8">
-      <Ellipse Width="7" Height="7" Classes="led" Classes.lit="{Binding Jobs.HasActive}" VerticalAlignment="Center"/>
-      <TextBlock Text="{Binding Jobs.Summary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-     </StackPanel>
-     <c:PlasticButton.Flyout>
-      <Flyout Placement="TopEdgeAlignedRight" ShowMode="Standard">
-       <StackPanel Width="440" Spacing="10">
-        <c:SectionHeader Title="ACTIVITY">
-         <c:PlasticButton Classes="toolbar" Content="CLEAR FINISHED" Command="{Binding Jobs.ClearFinishedCommand}"/>
-        </c:SectionHeader>
-        <TextBlock Classes="meta" Text="No imports or edits yet." IsVisible="{Binding !Jobs.Jobs.Count}"/>
-        <ScrollViewer MaxHeight="420">
-         <ItemsControl ItemsSource="{Binding Jobs.Jobs}">
-          <ItemsControl.ItemTemplate>
-           <DataTemplate x:DataType="vm:JobViewModel">
-            <Border Classes="well" Margin="0,0,0,6">
-             <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
-              <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Grid.Row="1" Classes="meta" Classes.error="{Binding HasFailed}" Text="{Binding StatusText}" TextWrapping="Wrap"/>
-              <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
-               Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
-              <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-               <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"/>
-               <c:PlasticButton Classes="toolbar" Content="{Binding IsQueued, Converter={x:Static views:JobCancelLabel.Instance}}"
-                Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
-               <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"
-                IsVisible="{Binding IsFinished}" ToolTip.Tip="Remove from the list" AutomationProperties.Name="Remove from the list"/>
-              </StackPanel>
-             </Grid>
-            </Border>
-           </DataTemplate>
-          </ItemsControl.ItemTemplate>
-         </ItemsControl>
-        </ScrollViewer>
-       </StackPanel>
-      </Flyout>
-     </c:PlasticButton.Flyout>
-    </c:PlasticButton>
+    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+     <c:PlasticButton Classes="toolbar destructive" Content="CANCEL QUIT" Command="{Binding CancelQuitCommand}" IsVisible="{Binding IsWaitingToQuit}"
+      ToolTip.Tip="Keep the app open instead of quitting when the jobs finish"/>
+     <c:PlasticButton x:Name="ActivityButton" Classes="toolbar" MaxWidth="420" AutomationProperties.Name="Activity">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+       <Ellipse Width="7" Height="7" Classes="led" Classes.lit="{Binding Jobs.HasActive}" VerticalAlignment="Center"/>
+       <TextBlock Text="{Binding Jobs.Summary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+       <TextBlock Classes="meta error" Text="{Binding Jobs.FailedLabel}" IsVisible="{Binding Jobs.HasFailures}" VerticalAlignment="Center"/>
+      </StackPanel>
+      <c:PlasticButton.Flyout>
+       <Flyout Placement="TopEdgeAlignedRight" ShowMode="Standard">
+        <StackPanel Width="440" Spacing="10">
+         <c:SectionHeader Title="ACTIVITY">
+          <c:PlasticButton Classes="toolbar" Content="CLEAR FINISHED" Command="{Binding Jobs.ClearFinishedCommand}"/>
+         </c:SectionHeader>
+         <TextBlock Classes="meta" Text="No imports or edits yet." IsVisible="{Binding !Jobs.Jobs.Count}"/>
+         <ScrollViewer MaxHeight="420">
+          <ItemsControl ItemsSource="{Binding Jobs.Jobs}">
+           <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:JobViewModel">
+             <Border Classes="well" Margin="0,0,0,6">
+              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
+               <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+               <TextBlock Grid.Row="1" Classes="meta" Classes.error="{Binding HasFailed}" Text="{Binding StatusText}" TextWrapping="Wrap"/>
+               <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
+                Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
+               <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"
+                 Click="CloseActivity"/>
+                <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"
+                 Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
+                <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"
+                 IsVisible="{Binding IsFinished}" ToolTip.Tip="Remove from the list" AutomationProperties.Name="Remove from the list"/>
+               </StackPanel>
+              </Grid>
+             </Border>
+            </DataTemplate>
+           </ItemsControl.ItemTemplate>
+          </ItemsControl>
+         </ScrollViewer>
+        </StackPanel>
+       </Flyout>
+      </c:PlasticButton.Flyout>
+     </c:PlasticButton>
+    </StackPanel>
    </Grid>
   </Grid>
 

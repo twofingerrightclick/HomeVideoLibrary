@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
+        Opened += (_, _) => AppErrors.Run(async () => Classes.Set("reduced-motion", await ReducedMotion.IsRequestedAsync()), "Reduced motion");
         Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
         Closing += WindowClosing;
         DataContextChanged += (_, _) => Subscribe(DataContext as MainWindowViewModel);
@@ -66,6 +67,7 @@ public sealed partial class MainWindow : Window
             .Map(Key.Space, KeyModifiers.None, OnShelf(() => FocusedTape()?.ToggleSelectionCommand))
             .Map(Key.Space, KeyModifiers.Shift, OnShelf(() => FocusedTape()?.SelectRangeCommand))
             .Map(Key.Escape, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.ClearCommand))
+            .Map(Key.Escape, KeyModifiers.None, () => ViewModel.ShowsShellBackKey ? ViewModel.BackCommand : null)
             .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
             .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand));
         router
@@ -100,6 +102,10 @@ public sealed partial class MainWindow : Window
             Close();
         }, "Close window");
     }
+
+    /// <summary>OPEN on a finished job runs its command and closes the activity flyout, so the opened page (or the
+    /// status line saying why it could not open) is in view.</summary>
+    private void CloseActivity(object? sender, RoutedEventArgs args) => ActivityButton.Flyout?.Hide();
 
     /// <summary>Tells the shelf which tape is at the top of the viewport (for the sticky month pill).</summary>
     private void UpdateTopVisible()

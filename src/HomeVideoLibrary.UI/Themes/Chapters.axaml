@@ -16,44 +16,52 @@
                   BorderBrush="Transparent"
                   BorderThickness="1"
                   CornerRadius="3">
-            <Grid ColumnDefinitions="3,Auto,*,Auto">
-              <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
-              <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
-                <TextBlock Text="{TemplateBinding StartGhostText}"
-                           FontFamily="{DynamicResource Vcr.Font.Segment}"
-                           FontSize="11"
-                           Foreground="{DynamicResource Vcr.Brush.Amber.Ghost}"
-                           HorizontalAlignment="Right"/>
-                <TextBlock Text="{TemplateBinding StartText}"
-                           FontFamily="{DynamicResource Vcr.Font.Segment}"
-                           FontSize="11"
-                           Foreground="{DynamicResource Vcr.Brush.Amber}"
-                           HorizontalAlignment="Right"/>
-              </Panel>
-              <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
-                <Panel Name="PART_TitleRow">
-                  <TextBlock Name="PART_TitleText"
-                             Text="{TemplateBinding Title}"
-                             TextTrimming="CharacterEllipsis"
-                             VerticalAlignment="Center"/>
-                  <TextBlock Name="PART_Watermark"
-                             Text="{TemplateBinding TitleWatermark}"
-                             FontStyle="Italic"
-                             Foreground="{DynamicResource Vcr.Brush.Legend.Dim}"
-                             TextTrimming="CharacterEllipsis"
-                             VerticalAlignment="Center"
-                             IsVisible="{TemplateBinding Title, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+            <DockPanel>
+              <!-- The host's editor for an expanded row, below the header. -->
+              <ContentPresenter Name="PART_ExpandedPresenter"
+                                DockPanel.Dock="Bottom"
+                                IsVisible="{TemplateBinding IsExpanded}"
+                                Content="{TemplateBinding ExpandedContent}"
+                                ContentTemplate="{TemplateBinding ExpandedContentTemplate}"/>
+              <Grid ColumnDefinitions="3,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
+                <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
+                <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+                  <TextBlock Text="{TemplateBinding StartGhostText}"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="11"
+                             Foreground="{DynamicResource Vcr.Brush.Amber.Ghost}"
+                             HorizontalAlignment="Right"/>
+                  <TextBlock Text="{TemplateBinding StartText}"
+                             FontFamily="{DynamicResource Vcr.Font.Segment}"
+                             FontSize="11"
+                             Foreground="{DynamicResource Vcr.Brush.Amber}"
+                             HorizontalAlignment="Right"/>
                 </Panel>
-                <!-- The title field exists only while editing; the control creates it per edit. -->
-                <ContentControl Name="PART_Editor" Margin="-9,0,0,0" IsVisible="False"/>
-              </Panel>
-              <ContentPresenter Name="PART_ContentPresenter"
-                                Grid.Column="3"
-                                Margin="0,0,4,0"
-                                Content="{TemplateBinding Content}"
-                                ContentTemplate="{TemplateBinding ContentTemplate}"
-                                VerticalAlignment="Center"/>
-            </Grid>
+                <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
+                  <Panel Name="PART_TitleRow">
+                    <TextBlock Name="PART_TitleText"
+                               Text="{TemplateBinding Title}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Name="PART_Watermark"
+                               Text="{TemplateBinding TitleWatermark}"
+                               FontStyle="Italic"
+                               Foreground="{DynamicResource Vcr.Brush.Legend.Dim}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"
+                               IsVisible="{TemplateBinding Title, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+                  </Panel>
+                  <!-- The title field exists only while editing; the control creates it per edit. -->
+                  <ContentControl Name="PART_Editor" Margin="-9,0,0,0" IsVisible="False"/>
+                </Panel>
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Grid.Column="3"
+                                  Margin="0,0,4,0"
+                                  Content="{TemplateBinding Content}"
+                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  VerticalAlignment="Center"/>
+              </Grid>
+            </DockPanel>
           </Border>
           <Border Name="PART_FocusRing"
                   BorderThickness="2"
@@ -83,6 +91,12 @@
       <Style Selector="^ /template/ TextBlock#PART_TitleText">
         <Setter Property="FontWeight" Value="SemiBold"/>
       </Style>
+    </Style>
+
+    <!-- An expanded row reads as one card: the header and the editor below it on a raised face. -->
+    <Style Selector="^:expanded /template/ Border#PART_Row">
+      <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Chassis.Edge}"/>
     </Style>
 
     <Style Selector="^:editing">

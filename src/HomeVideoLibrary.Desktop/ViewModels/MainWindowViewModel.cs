@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels.Editing;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Audio;
 using HomeVideoLibrary.UI.Logic;
@@ -32,6 +33,8 @@ public sealed record MainWindowDependencies
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
+    /// <summary>The clock for toasts and job estimates.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
 }
 
 /// <summary>The window shell and the only adapter from <see cref="LibraryModel"/> to the UI: it opens and releases the
@@ -49,30 +52,36 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibrarySnapshot _shown = LibrarySnapshot.Empty;
     private readonly SemaphoreSlim _navigation = new(1, 1);
     private Task<bool>? _closing;
+    private CancellationTokenSource? _quitWait;
     private Task? _opening;
-    private CancellationTokenSource? _toastTimer;
+    private object? _shownToast;
     private DateTime _lastActivationStat;
     private IReadOnlyList<string> _unavailableTools = [];
     private string _status = "Your original files stay untouched.";
     private string _toolWarning = "", _recoveryNotice = "", _toast = "";
     private bool _isDrawerOpen = true, _isDraggingTapes;
     private PageViewModel? _page;
+    private readonly VideoPageSession _videoPageSession = new();
 
     public MainWindowViewModel(MainWindowDependencies dependencies)
     {
         _dependencies = dependencies;
-        Jobs = new JobQueue(OpenJobOutputAsync);
+        Jobs = new JobQueue(OpenJobOutputAsync, dependencies.Time);
         Jobs.Finished += JobFinished;
+        Jobs.Drained += LaneDrained;
         Jobs.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.ActiveCount)) UpdateCommands(); };
         Shelf = new ShelfViewModel(CreatePreviewSession, (record, at) => OpenVideoAsync(record, at));
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
-            OpenLibraryAsync, message => Status = message);
+            OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, message => Status = message);
         Shelf.SelectionChanged += UpdateCommands;
         Shelf.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ShelfViewModel.IsEmpty)) NotifyViewState(); };
-        Albums.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(AlbumsViewModel.Current)) UpdateCommands(); };
+        Albums.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(AlbumsViewModel.Current) or nameof(AlbumsViewModel.IsAddingVideos)) UpdateCommands();
+        };
 
         OpenSettingsCommand = new AsyncCommand(_ => dependencies.Interaction.ShowSettingsAsync(Settings), context: "Settings");
         PlaySelectedCommand = new AsyncCommand(_ => FirstSelected() is { } record ? OpenVideoAsync(record) : Task.CompletedTask,
@@ -82,6 +91,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         DeleteSelectedCommand = new RelayCommand(() => DeleteTarget?.Execute(null), () => DeleteTarget?.CanExecute(null) == true);
         BackCommand = new AsyncCommand(_ => NavigateAsync(() => null), () => Page is not null, context: "Back to library");
         FocusSearchCommand = new AsyncCommand(_ => FocusSearchAsync(), context: "Search");
+        CancelQuitCommand = new RelayCommand(() => _quitWait?.Cancel(), () => IsWaitingToQuit);
     }
 
     public string Title => "Home Video Library";
@@ -112,6 +122,22 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// <summary>Returns to the shelf (through the leave prompt) and asks the view to focus the search field.</summary>
     public AsyncCommand FocusSearchCommand { get; }
 
+    /// <summary>Keeps the app open while a close waits for jobs to finish ("quit when done").</summary>
+    public RelayCommand CancelQuitCommand { get; }
+    public bool IsWaitingToQuit => QuitWait is not null;
+
+    /// <summary>The wait of a close for jobs to finish; cancelling it keeps the app open.</summary>
+    private CancellationTokenSource? QuitWait
+    {
+        get => _quitWait;
+        set
+        {
+            _quitWait = value;
+            OnPropertyChanged(nameof(IsWaitingToQuit));
+            CancelQuitCommand.RaiseCanExecuteChanged();
+        }
+    }
+
     /// <summary>Raised when the view should move keyboard focus to the search field.</summary>
     public event Action? SearchFocusRequested;
 
@@ -134,8 +160,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool CanEditClips => _model is not null && ToolsReady && IsSettled;
     private System.Windows.Input.ICommand? DeleteTarget => Albums.IsAllVideos ? Shelf.MoveToTrashCommand : Albums.RemoveSelectedCommand;
 
-    /// <summary>False while the library is being switched or the window is closing; new work waits for that to end.</summary>
-    private bool IsSettled => _opening is not { IsCompleted: false } && _closing is not { IsCompleted: false };
+    /// <summary>Why new work must wait (the library is being switched or the window is closing), or null when it need not.</summary>
+    private string? WaitReason => _closing is { IsCompleted: false } ? "The app is closing." : _opening is { IsCompleted: false } ? "A library is still opening." : null;
+    private bool IsSettled => WaitReason is null;
     /// <summary>Set when <c>.cache/recovery</c> holds snapshots from a save that could not be rolled back; they are
     /// never deleted automatically.</summary>
     public string RecoveryNotice { get => _recoveryNotice; private set { if (SetProperty(ref _recoveryNotice, value)) OnPropertyChanged(nameof(HasRecoveryNotice)); } }
@@ -150,10 +177,25 @@ public sealed class MainWindowViewModel : ViewModelBase
         get => _page;
         private set
         {
+            var previous = _page;
             if (!SetProperty(ref _page, value)) return;
-            OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown));
+            if (previous is not null) previous.PropertyChanged -= PagePropertyChanged;
+            if (value is not null) value.PropertyChanged += PagePropertyChanged;
+            OnPropertyChanged(nameof(HasPage)); OnPropertyChanged(nameof(IsShelfShown)); OnPropertyChanged(nameof(IsChromeShown));
+            OnPropertyChanged(nameof(ShowsShellBackKey));
             UpdateCommands();
         }
+    }
+
+    /// <summary>Whether the shell's own status bar shows; hidden while a page is immersive (fullscreen video).</summary>
+    public bool IsChromeShown => Page is not { IsImmersive: true };
+
+    /// <summary>Whether the shell shows its own ◀ LIBRARY key: for pages without one.</summary>
+    public bool ShowsShellBackKey => Page is { HasBackKey: false };
+
+    private void PagePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(PageViewModel.IsImmersive)) OnPropertyChanged(nameof(IsChromeShown));
     }
     public bool HasPage => Page is not null;
     public bool IsShelfShown => Page is null;
@@ -166,19 +208,38 @@ public sealed class MainWindowViewModel : ViewModelBase
         return new TapePreviewSession(tape.Record, model.GetVideoPath(tape.Record), services.Files, previews);
     }
 
-    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter).</summary>
+    /// <summary>Opens a video's page, optionally starting at <paramref name="at"/> (a matched chapter). When it cannot (the
+    /// app is busy switching or closing, or the video or its file is gone) the status line says why.</summary>
     public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null)
     {
-        if (!IsSettled || _model is not { } model || _services is not { } services) return Task.CompletedTask;
-        if (model.Snapshot.Find(video.Id) is not { } record) return Task.CompletedTask;
-        if (record.IsMissing) { Status = $"The file for “{record.Label}” is missing, so it cannot play."; return Task.CompletedTask; }
+        if (WaitReason is { } reason) return Refuse($"“{video.Label}” cannot open yet. {reason}");
+        if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
+            return Refuse($"“{video.Label}” is no longer in the library.");
+        if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
         return NavigateAsync(() =>
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
             indexed.IndexingFailed += warning => Status = warning;
-            return new VideoEditorPage(new VideoEditorViewModel(record.ToLibraryVideo(), model.GetVideoPath(record), indexed,
-                _dependencies.CreatePlayback(), record.ToMetadata()));
+            return new VideoPageViewModel(new VideoPageDependencies
+            {
+                Record = record, Path = model.GetVideoPath(record), Metadata = indexed, Playback = _dependencies.CreatePlayback(),
+                Snapshot = model.Snapshot, SuggestTags = SuggestTags, Session = _videoPageSession, Post = _dependencies.Post,
+                StartAt = at ?? TimeSpan.Zero,
+                Previews = ToolsReady ? _previews : null,
+                Back = () => NavigateAsync(() => null),
+                ShowAlbum = async album =>
+                {
+                    if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
+                },
+                AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
+            });
         });
+    }
+
+    private Task Refuse(string reason)
+    {
+        Status = reason;
+        return Task.CompletedTask;
     }
 
     public Task OpenClipEditorAsync()
@@ -244,16 +305,20 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally { _navigation.Release(); }
     }
 
-    /// <summary>Everything that must happen before the window closes: waits for a library switch, settles the page
-    /// (finishing a save) and asks about its unsaved changes, asks whether to wait for or cancel background jobs, then
-    /// stops the library refresh and releases the library. Returns false when the user keeps the app open. Repeated
-    /// calls while one is running share it; new work is refused meanwhile.</summary>
+    /// <summary>Everything that must happen before the window closes, in order: waits for a library switch; asks whether
+    /// to wait for or cancel background jobs (only a question, so keeping the app open there changes nothing); settles
+    /// the page (finishing a save) and leaves it, asking about unsaved changes; cancels or waits for the jobs; then stops
+    /// the library refresh and releases the library. Returns false when the user keeps the app open, including by
+    /// <see cref="CancelQuitCommand"/> while waiting for jobs. Repeated calls while one is running share it; new work is
+    /// refused meanwhile.</summary>
     public Task<bool> RequestCloseAsync()
     {
-        if (_closing is { IsCompleted: false } running) return running;
-        _closing = CloseAsync();
-        UpdateCommands();
-        return _closing;
+        if (_closing is not { IsCompleted: false })
+        {
+            _closing = CloseAsync();
+            UpdateCommands();
+        }
+        return UpdateCommandsAfterAsync(_closing);
     }
 
     private async Task<bool> CloseAsync()
@@ -262,37 +327,55 @@ public sealed class MainWindowViewModel : ViewModelBase
         try
         {
             if (_opening is { } opening) await opening;
+            var jobs = Jobs.HasActive ? await _dependencies.Interaction.AskCloseWithJobsAsync(Jobs.ActiveCount) : CloseChoice.WaitForJobs;
+            if (jobs == CloseChoice.KeepOpen) return false;
             if (Page is { } page)
             {
                 Status = "Finishing the current operation, then closing…";
                 await page.SettleForCloseAsync();
             }
             if (!await NavigateAsync(() => null)) return false;
-            if (Jobs.HasActive)
+            if (jobs == CloseChoice.CancelJobs)
             {
-                switch (await _dependencies.Interaction.AskCloseWithJobsAsync(Jobs.ActiveCount))
-                {
-                    case CloseChoice.KeepOpen: return false;
-                    case CloseChoice.CancelJobs:
-                        Status = "Cancelling imports and edits, then closing…";
-                        await Jobs.CancelAllAndWaitAsync();
-                        break;
-                    default:
-                        Status = "Closing when the remaining imports and edits finish…";
-                        await Jobs.WhenIdleAsync();
-                        break;
-                }
+                Status = "Cancelling imports and edits, then closing…";
+                await Jobs.CancelAllAndWaitAsync();
             }
+            else if (!await WaitForJobsAsync()) return false;
             status = Status;
             await ReleaseLibraryAsync();
             return true;
         }
-        finally
+        finally { Status = status; }
+    }
+
+    /// <summary>Waits for the active jobs to end; false when the user cancels the quit meanwhile.</summary>
+    private async Task<bool> WaitForJobsAsync()
+    {
+        if (!Jobs.HasActive) return true;
+        Status = "Closing when the remaining imports and edits finish…";
+        using var quit = new CancellationTokenSource();
+        QuitWait = quit;
+        try
         {
-            Status = status;
-            // The closing task is still the current one here; let commands re-check once it has completed.
-            _dependencies.Post(UpdateCommands);
+            await Jobs.WhenIdleAsync().WaitAsync(quit.Token);
+            return true;
         }
+        catch (OperationCanceledException) when (quit.IsCancellationRequested) { return false; }
+        finally { QuitWait = null; }
+    }
+
+    /// <summary>Awaits a library switch or close and then re-checks the commands it held off: only once it has
+    /// completed does <see cref="IsSettled"/> read true.</summary>
+    private async Task<T> UpdateCommandsAfterAsync<T>(Task<T> flow)
+    {
+        try { return await flow; }
+        finally { UpdateCommands(); }
+    }
+
+    private async Task UpdateCommandsAfterAsync(Task flow)
+    {
+        try { await flow; }
+        finally { UpdateCommands(); }
     }
 
     /// <summary>Stops work on the open library and gives up its lock. The lock is released even if stopping fails.</summary>
@@ -323,10 +406,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { Status = exception.Message; }
     }
 
-    /// <summary>Opens (and if needed migrates) a library. Nothing about the current library changes unless the new one
-    /// is free (not open in another instance), initializes and loads; only then is the old one released and the
-    /// background refresh started. Reopening the open library just refreshes it. An open page is left first (through
-    /// the leave prompt); background jobs must have finished. New work waits until the switch completes.</summary>
+    /// <summary>Opens (and if needed migrates) a library. The new library is locked (refused if another instance has
+    /// it), initialized and loaded first; a failure there leaves the current library as it was. Then the open page is
+    /// left through the leave prompt (keeping it releases the new lock), and only then is the old library released and
+    /// the background refresh started. Reopening the open library just refreshes it. Background jobs must have
+    /// finished, and new work waits until the switch completes. The returned task never faults: failures go to the
+    /// status line.</summary>
     public Task OpenLibraryAsync(string root)
     {
         if (!IsSettled) return Task.CompletedTask;
@@ -337,13 +422,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         _opening = SwitchLibraryAsync(root);
         UpdateCommands();
-        return _opening;
+        return UpdateCommandsAfterAsync(_opening);
     }
 
     private async Task SwitchLibraryAsync(string root)
     {
         try { await SwitchLibraryCoreAsync(root); }
-        finally { _dependencies.Post(UpdateCommands); }
+        catch (Exception exception)
+        {
+            Status = "The library could not be opened: " + exception.Message;
+            AppErrors.Report(exception, "Open library");
+        }
     }
 
     private async Task SwitchLibraryCoreAsync(string root)
@@ -390,12 +479,21 @@ public sealed class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (!await NavigateAsync(() => null))
+        try
+        {
+            if (!await NavigateAsync(() => null))
+            {
+                owner.Dispose();
+                Status = "The library was not switched; the open page has work to finish or save first.";
+                return;
+            }
+            await ReleaseLibraryAsync();
+        }
+        catch
         {
             owner.Dispose();
-            return;
+            throw;
         }
-        await ReleaseLibraryAsync();
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);
@@ -468,6 +566,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         _shown = snapshot;
         Albums.Apply(snapshot);
         Shelf.Apply(snapshot, Albums.Filter);
+        (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
         OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
 
@@ -488,30 +587,46 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task OpenJobOutputAsync(JobViewModel job)
     {
-        if (job.Outcome?.Outputs.FirstOrDefault() is { } id && _model?.Snapshot.Find(id) is { } record) await OpenVideoAsync(record);
+        if (job.Outcome?.Outputs.FirstOrDefault() is not { } id) return;
+        if (_model?.Snapshot.Find(id) is { } record) await OpenVideoAsync(record);
+        else Status = $"The video from “{job.Title}” is no longer in the library.";
     }
 
+    /// <summary>A failure is announced at once; successes wait for the lane's summary.</summary>
     private void JobFinished(JobViewModel job)
     {
-        if (job.State == JobState.Cancelled) return;
+        if (!job.HasFailed) return;
         ShowToast($"{job.Title}: {job.StatusText}");
-        if (_dependencies.Sounds.IsEnabled) _dependencies.Sounds.Play(job.HasFailed ? ClickSoundKind.Rubber : ClickSoundKind.Chime);
+        Play(ClickSoundKind.Rubber);
+    }
+
+    /// <summary>One toast and one chime per batch of jobs, for example "Imported 48 · 2 failed".</summary>
+    private void LaneDrained(JobBatch batch)
+    {
+        if (batch.Succeeded + batch.Failed == 0) return;
+        var done = (batch.Lane == JobLane.Import ? "Imported " : "Rendered ") + batch.Succeeded;
+        ShowToast(batch.Failed == 0 ? done : $"{done} · {batch.Failed} failed");
+        if (batch.Succeeded > 0) Play(ClickSoundKind.Chime);
+    }
+
+    private void Play(ClickSoundKind sound)
+    {
+        if (_dependencies.Sounds.IsEnabled) _dependencies.Sounds.Play(sound);
     }
 
     /// <summary>Shows <paramref name="message"/> as a toast (and on the status line) for a few seconds; a newer toast
-    /// replaces it.</summary>
+    /// replaces it and restarts the time.</summary>
     private void ShowToast(string message)
     {
-        _toastTimer?.Cancel();
-        var timer = _toastTimer = new CancellationTokenSource();
+        var shown = _shownToast = new object();
         Toast = message; Status = message;
-        _ = HideToastAsync(timer);
+        _ = HideToastAsync(shown);
     }
 
-    private async Task HideToastAsync(CancellationTokenSource timer)
+    private async Task HideToastAsync(object shown)
     {
-        try { await Task.Delay(ToastDuration, timer.Token); }
-        catch (OperationCanceledException) { return; }
-        Toast = "";
+        await Task.Delay(ToastDuration, _dependencies.Time);
+        // An older toast's delay can end after a newer toast is shown; only the newest one's clears it.
+        if (ReferenceEquals(_shownToast, shown)) Toast = "";
     }
 }

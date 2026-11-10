@@ -14,7 +14,7 @@
      ToolTip.Tip="Select for albums or clip editing"/>
    </c:VhsSpine.LeadingContent>
   </c:VhsSpine>
-  <Popup x:Name="PreviewPopup" PlacementTarget="{Binding #Spine}" Placement="Bottom" IsLightDismissEnabled="False" IsHitTestVisible="False">
+  <Popup x:Name="PreviewPopup" Classes="pointer-preview" PlacementTarget="{Binding #Spine}" IsHitTestVisible="False">
    <Border Classes="bezel" Padding="5" IsHitTestVisible="False">
     <Grid Width="208" Height="132" RowDefinitions="112,20">
      <Image x:Name="PreviousPreview" Stretch="UniformToFill"/>

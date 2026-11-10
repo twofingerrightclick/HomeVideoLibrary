@@ -2,8 +2,8 @@ using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.Editing;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
-using LibVLCSharp.Shared;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -45,7 +45,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var (viewModel, video) = await OpenLibraryAsync();
         await viewModel.OpenVideoAsync(viewModel.Model!.Snapshot.Find(video.Id)!);
-        Assert.IsType<VideoEditorPage>(viewModel.Page);
+        Assert.IsType<VideoPageViewModel>(viewModel.Page);
         return viewModel;
     }
 
@@ -131,7 +131,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         var viewModel = await OpenEditorAsync();
         var page = viewModel.Page;
-        Editor(viewModel).Title = "unsaved";
+        Page(viewModel).Details.Title = "unsaved";
 
         _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
         Assert.False(await viewModel.NavigateAsync(() => null));
@@ -147,7 +147,7 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task ASecondNavigationWaitsForTheOpenQuestionInsteadOfStackingAnother()
     {
         var viewModel = await OpenEditorAsync();
-        Editor(viewModel).Title = "unsaved";
+        Page(viewModel).Details.Title = "unsaved";
         var answer = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
 
         var back = viewModel.NavigateAsync(() => null);
@@ -165,7 +165,7 @@ public sealed class EditorNavigationTests : IDisposable
     public async Task SaveAndLeaveSavesThenCloses()
     {
         var viewModel = await OpenEditorAsync();
-        Editor(viewModel).Title = "saved title";
+        Page(viewModel).Details.Title = "saved title";
 
         _interaction.Answers.Enqueue(LeaveChoice.Save);
         Assert.True(await viewModel.NavigateAsync(() => null));
@@ -173,7 +173,115 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.Null(viewModel.Page);
     }
 
-    private static VideoEditorViewModel Editor(MainWindowViewModel viewModel) => Assert.IsType<VideoEditorPage>(viewModel.Page).Editor;
+    [Fact]
+    public async Task CloseAsksJobsBeforeLeavingPage()
+    {
+        var viewModel = await OpenEditorAsync();
+        var page = viewModel.Page;
+        Page(viewModel).Details.Title = "unsaved";
+        var job = viewModel.Jobs.Enqueue("render", JobLane.Render, async (_, token) =>
+        {
+            await Task.Delay(Timeout.Infinite, token);
+            return JobOutcome.Done("never");
+        });
+
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.Equal(1, _interaction.CloseAsked);
+        Assert.Equal(0, _interaction.Asked);
+        Assert.Same(page, viewModel.Page);
+        Assert.Equal("unsaved", Page(viewModel).Details.Title);
+        Assert.Equal(0, _metadata.Saves);
+        Assert.True(job.IsRunning);
+
+        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.Same(page, viewModel.Page);
+        Assert.True(job.IsRunning);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.RequestCloseAsync());
+        Assert.Equal(JobState.Cancelled, job.State);
+        Assert.Equal(0, _metadata.Saves);
+    }
+
+    [Fact]
+    public async Task QuitWhenDoneCanBeCancelledWhileItWaits()
+    {
+        var (viewModel, _) = await OpenLibraryAsync();
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var job = viewModel.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
+        _interaction.CloseChoice = CloseChoice.WaitForJobs;
+
+        var close = viewModel.RequestCloseAsync();
+        Assert.True(viewModel.IsWaitingToQuit);
+        viewModel.CancelQuitCommand.Execute(null);
+        Assert.False(await close);
+        Assert.False(viewModel.IsWaitingToQuit);
+        Assert.True(job.IsRunning);
+
+        var quit = viewModel.RequestCloseAsync();
+        gate.SetResult(JobOutcome.Done("ok"));
+        Assert.True(await quit);
+        Assert.Equal(JobState.Succeeded, job.State);
+    }
+
+    [Fact]
+    public async Task CloseAfterFailedSwitchStillCloses()
+    {
+        var viewModel = await OpenEditorAsync();
+        Page(viewModel).Details.Title = "unsaved";
+        var other = await CreateCatalogAsync(Path.Combine(_root, "other"));
+        var broken = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
+        broken.SetException(new InvalidOperationException("prompt failed"));
+
+        await viewModel.OpenLibraryAsync(other.Paths.RootDirectory);
+        Assert.Contains("prompt failed", viewModel.Status);
+        Assert.Equal(Library.RootDirectory, viewModel.Settings.LibraryRoot);
+        using (var free = LibraryLock.TryAcquire(other.Paths)) Assert.NotNull(free);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.RequestCloseAsync());
+        using var released = LibraryLock.TryAcquire(Library);
+        Assert.NotNull(released);
+    }
+
+    [Fact]
+    public async Task KeepEditingDuringALibrarySwitchReleasesTheNewLibrary()
+    {
+        var viewModel = await OpenEditorAsync();
+        Page(viewModel).Details.Title = "unsaved";
+        var other = await CreateCatalogAsync(Path.Combine(_root, "other"));
+
+        _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
+        await viewModel.OpenLibraryAsync(other.Paths.RootDirectory);
+
+        Assert.Contains("not switched", viewModel.Status);
+        Assert.Equal(Library.RootDirectory, viewModel.Settings.LibraryRoot);
+        Assert.IsType<VideoPageViewModel>(viewModel.Page);
+        using var free = LibraryLock.TryAcquire(other.Paths);
+        Assert.NotNull(free);
+    }
+
+    [Fact]
+    public async Task NavigateFailureDoesNotPoisonLaterNavigation()
+    {
+        var viewModel = await OpenEditorAsync();
+        var page = viewModel.Page;
+        Page(viewModel).Details.Title = "unsaved";
+        var broken = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
+        broken.SetException(new InvalidOperationException("prompt failed"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => viewModel.NavigateAsync(() => null));
+        Assert.Same(page, viewModel.Page);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.NavigateAsync(() => null));
+        Assert.Null(viewModel.Page);
+    }
+
+    private static VideoPageViewModel Page(MainWindowViewModel viewModel) => Assert.IsType<VideoPageViewModel>(viewModel.Page);
 
     private sealed class BlockingClipEditing : IClipEditingService
     {
@@ -220,8 +328,7 @@ public sealed class EditorNavigationTests : IDisposable
     {
         public event EventHandler<PlaybackUpdate>? Updated { add { } remove { } }
         public long Version => 0;
-        // A real MediaPlayer needs the native runtime; the editor only passes it through to the view.
-        public Task<MediaPlayer> CreatePlayerAsync() => Task.FromResult<MediaPlayer>(null!);
+        public Task<VideoSurface> CreatePlayerAsync() => Task.FromResult(new VideoSurface(null));
         public Task StartAsync(string path, TimeSpan position, bool play, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task CloseAsync() => Task.CompletedTask;
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;

@@ -25,14 +25,20 @@
     <Border Classes="bezel" Padding="8">
       <ItemsControl ItemsSource="{Binding Chapters.Rows}">
         <ItemsControl.DataTemplates>
+          <!-- A click expands the row in place into its editor (one at a time); the play key seeks. -->
           <DataTemplate DataType="demo:ChapterRowViewModel">
             <c:ChapterListItem Start="{Binding Start}"
                                Title="{Binding Title}"
                                IsCurrent="{Binding IsCurrent}"
                                IsEditing="{Binding IsEditing, Mode=TwoWay}"
                                DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
-                               JumpCommand="{Binding Jump}"
-                               CommitTitleCommand="{Binding CommitTitle}"/>
+                               JumpCommand="{Binding ToggleExpanded}"
+                               CommitTitleCommand="{Binding CommitTitle}"
+                               IsExpanded="{Binding IsExpanded}"
+                               ExpandedContent="{Binding Editor}"
+                               ExpandedContentTemplate="{x:Static demo:VideoPageViewModel.RowEditorTemplate}">
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}" Command="{Binding Jump}" ToolTip.Tip="Play from here"/>
+            </c:ChapterListItem>
           </DataTemplate>
           <DataTemplate DataType="demo:PlaceholderRowViewModel">
             <c:ChapterPlaceholderRow Start="{Binding Start}"/>

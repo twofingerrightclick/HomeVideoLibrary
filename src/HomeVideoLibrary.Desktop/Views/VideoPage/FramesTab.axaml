@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.FramesTab"
+             x:DataType="vp:VideoPageViewModel">
+  <UserControl.Resources>
+    <!-- A frame is a picture to click, not a key. -->
+    <ControlTheme x:Key="Page.Theme.Frame" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Ring" BorderThickness="2" BorderBrush="Transparent" CornerRadius="4">
+            <ContentPresenter Content="{TemplateBinding Content}"/>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+      <Style Selector="^:pointerover /template/ Border#Ring, ^:focus-visible /template/ Border#Ring">
+        <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Focus}"/>
+      </Style>
+    </ControlTheme>
+  </UserControl.Resources>
+  <StackPanel Spacing="10">
+    <c:SectionHeader Title="CHOSEN FRAMES">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Classes="meta" Text="{Binding Details.Frames.CountText}" VerticalAlignment="Center"/>
+        <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Frame}" Content="CAPTURE"
+                         Command="{Binding Details.Frames.CaptureCommand}" ToolTip.Tip="Capture the frame at the playhead (Shift+C)"/>
+      </StackPanel>
+    </c:SectionHeader>
+    <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Frames.Thumbnails.Count}"
+               Text="Frames you capture become this video's pictures on the shelf."/>
+    <ItemsControl ItemsSource="{Binding Details.Frames.Thumbnails}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vp:ThumbnailEditorViewModel">
+          <Grid RowDefinitions="Auto,Auto" Margin="3">
+            <Button Theme="{StaticResource Page.Theme.Frame}" Command="{Binding $parent[local:FramesTab].((vp:VideoPageViewModel)DataContext).Details.Frames.SeekCommand}"
+                    CommandParameter="{Binding}" ToolTip.Tip="Play from this frame">
+              <Border Background="{DynamicResource Vcr.Brush.Chassis.Deep}" CornerRadius="3" ClipToBounds="True" Height="84">
+                <Image Source="{Binding Image}" Stretch="UniformToFill"/>
+              </Border>
+            </Button>
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="2,4,0,0">
+              <TextBlock Classes="meta" Text="{Binding PositionText}" VerticalAlignment="Center"/>
+              <c:PlasticButton Grid.Column="1" Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" ToolTip.Tip="Remove this frame"
+                               Command="{Binding $parent[local:FramesTab].((vp:VideoPageViewModel)DataContext).Details.Frames.RemoveCommand}"
+                               CommandParameter="{Binding}"/>
+            </Grid>
+          </Grid>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>

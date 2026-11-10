@@ -29,10 +29,11 @@ public sealed class AlbumsViewModel : ViewModelBase
         CreateCommand = new AsyncCommand(_ => CreateAsync([]), () => _model() is not null, context: "Create album");
         CreateFromSelectionCommand = new AsyncCommand(_ => CreateAsync([.. _shelf.SelectedIds]), () => _model() is not null && _shelf.HasSelection,
             context: "Create album");
-        RemoveSelectedCommand = new AsyncCommand(_ => RemoveSelectedAsync(), () => Current is not null && _shelf.VisibleSelectedIds.Count > 0,
+        // Add mode shows the videos outside the album, so there is nothing in it to remove.
+        RemoveSelectedCommand = new AsyncCommand(_ => RemoveSelectedAsync(), () => Current is not null && !IsAddingVideos && _shelf.VisibleSelectedCount > 0,
             context: "Remove from album");
-        AddSelectedHereCommand = new AsyncCommand(_ => Current is { } album ? AddToAlbumAsync(album.Id, _shelf.VisibleSelectedIds) : Task.CompletedTask,
-            () => Current is not null && IsAddingVideos && _shelf.VisibleSelectedIds.Count > 0, context: "Add to album");
+        AddSelectedHereCommand = new AsyncCommand(_ => Current is { } album ? AddToAlbumAsync(album.Id, _shelf.VisibleSelectedIds()) : Task.CompletedTask,
+            () => Current is not null && IsAddingVideos && _shelf.VisibleSelectedCount > 0, context: "Add to album");
         StartAddingCommand = new RelayCommand(() => IsAddingVideos = true, () => Current is not null && !IsAddingVideos);
         DoneAddingCommand = new RelayCommand(() => IsAddingVideos = false, () => IsAddingVideos);
         _shelf.SelectionChanged += UpdateCommands;
@@ -74,7 +75,7 @@ public sealed class AlbumsViewModel : ViewModelBase
     public AlbumFilter Filter => Current is { } album ? new AlbumFilter(album.Id, IsAddingVideos) : AlbumFilter.All;
     public string ViewTitle => Current is { } album ? IsAddingVideos ? $"Choose videos to add to “{album.Name}”" : album.Name : "All videos";
     /// <summary>Counts only the selected videos this view shows; hidden ones (already members) are not added.</summary>
-    public string AddHereLabel => $"ADD {_shelf.VisibleSelectedIds.Count}";
+    public string AddHereLabel => $"ADD {_shelf.VisibleSelectedCount}";
 
     public RelayCommand ShowAllCommand { get; }
     /// <summary>Creates an empty album with a free "New album" name and opens its inline rename.</summary>
@@ -150,8 +151,8 @@ public sealed class AlbumsViewModel : ViewModelBase
         var name = NewAlbumName;
         for (var number = 2; taken.Contains(AlbumNames.Key(name)); number++) name = $"{NewAlbumName} {number}";
         var album = await Task.Run(() => model.CreateAlbumAsync(name, ids));
-        // The model has published the album, so patching to its snapshot creates the row; showing it refreshes the shelf.
-        Apply(model.Snapshot);
+        // The model has published the album; showing its snapshot everywhere creates the row and keeps the shelf in step.
+        _viewChanged();
         if (Rows.FirstOrDefault(row => row.Id == album.Id) is not { } created) return;
         Current = created;
         created.BeginRename();
@@ -161,7 +162,7 @@ public sealed class AlbumsViewModel : ViewModelBase
     private Task RemoveSelectedAsync()
     {
         if (Current is not { } album) return Task.CompletedTask;
-        var ids = _shelf.VisibleSelectedIds.ToArray();
+        var ids = _shelf.VisibleSelectedIds();
         return RunAsync(async model =>
         {
             var change = await Task.Run(() => model.RemoveFromAlbumAsync(album.Id, ids));

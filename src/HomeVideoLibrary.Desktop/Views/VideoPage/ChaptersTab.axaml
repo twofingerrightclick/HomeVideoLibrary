@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:HomeVideoLibrary.UI.Controls"
+             xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChaptersTab"
+             x:DataType="vp:VideoPageViewModel">
+  <UserControl.Styles>
+    <!-- Row keys show on hover, keyboard focus and expansion only, so titles keep the row's width. -->
+    <Style Selector="c|ChapterListItem StackPanel.rowActions">
+      <Setter Property="Opacity" Value="0"/>
+    </Style>
+    <Style Selector="c|ChapterListItem:pointerover StackPanel.rowActions, c|ChapterListItem:focus-within StackPanel.rowActions, c|ChapterListItem:expanded StackPanel.rowActions">
+      <Setter Property="Opacity" Value="1"/>
+    </Style>
+  </UserControl.Styles>
+  <StackPanel Spacing="10">
+    <c:SectionHeader Title="CHAPTERS">
+      <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Chapter}" Content="ADD  M"
+                       Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
+    </c:SectionHeader>
+    <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Chapters.HasChapters}"
+               Text="Play or scrub to a moment, then press M to start a chapter there."/>
+    <!-- The playhead moves only the placeholder, so a row being clicked or edited is never rebuilt. A row expands in
+         place into its editor; the editor exists only while its row is expanded. -->
+    <ItemsControl ItemsSource="{Binding Details.Chapters.Rows}">
+      <ItemsControl.DataTemplates>
+        <DataTemplate DataType="vp:ChapterRowViewModel">
+          <c:ChapterListItem Margin="0,1"
+                             Start="{Binding Start}"
+                             Title="{Binding Title}"
+                             IsCurrent="{Binding IsCurrent}"
+                             IsEditing="{Binding IsEditing, Mode=TwoWay}"
+                             DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
+                             JumpCommand="{Binding ToggleExpandedCommand}"
+                             CommitTitleCommand="{Binding CommitTitleCommand}"
+                             IsExpanded="{Binding IsExpanded}"
+                             ExpandedContent="{Binding Editor}"
+                             ExpandedContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
+                             ToolTip.Tip="Click to edit this chapter">
+            <StackPanel Orientation="Horizontal" Spacing="4" Classes="rowActions">
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}" Command="{Binding SeekCommand}"
+                               ToolTip.Tip="Play from here"/>
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Edit}" Command="{Binding EditCommand}"
+                               ToolTip.Tip="Edit (F2)"/>
+              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DeleteCommand}"
+                               ToolTip.Tip="Remove chapter (Delete)"/>
+            </StackPanel>
+          </c:ChapterListItem>
+        </DataTemplate>
+        <DataTemplate DataType="vp:PlaceholderRowViewModel">
+          <c:ChapterPlaceholderRow Margin="0,1" Start="{Binding Start}" IsVisible="{Binding IsShown}"/>
+        </DataTemplate>
+      </ItemsControl.DataTemplates>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>
