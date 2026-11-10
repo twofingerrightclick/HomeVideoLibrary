@@ -5,6 +5,8 @@
  Width="1440" Height="900" MinWidth="900" MinHeight="600">
  <Window.Resources>
   <x:Double x:Key="ShelfStackWidth">760</x:Double>
+  <!-- Room beside each tape for the hovered tape's forward scale and shadow, so the viewport never cuts them. -->
+  <Thickness x:Key="ShelfTapeMargin">28,0,28,6</Thickness>
   <!-- An album in an "Add to album" menu: picking it adds the selected videos. -->
   <ControlTheme x:Key="AddToAlbumItem" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}" x:DataType="vm:AlbumRowViewModel">
    <Setter Property="Header" Value="{Binding Name}"/>
@@ -172,7 +174,7 @@
       <DataTemplate x:DataType="vm:TapeViewModel">
        <!-- One spine per row in a centered stack: as wide as the shelf allows up to a comfortable size; the spine
             itself keeps real VHS proportions, so its height follows. -->
-       <Grid Margin="0,0,0,6" MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Center">
+       <Grid Margin="{StaticResource ShelfTapeMargin}" MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Center">
         <StackPanel Spacing="2">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" IsVisible="{Binding HasMonthHeader}" Height="22" Margin="0,8,0,0">
          <TextBlock Classes="legend" Text="{Binding MonthHeader}" VerticalAlignment="Center"/>
@@ -187,7 +189,7 @@
      </ListBox.ItemTemplate>
     </ListBox>
     <!-- Pinned over the stack's month dividers, aligned with the centered stack. -->
-    <Grid MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="0,8,12,0"
+    <Grid MaxWidth="{StaticResource ShelfStackWidth}" HorizontalAlignment="Stretch" VerticalAlignment="Top" Margin="32,8,44,0"
      IsHitTestVisible="False" IsVisible="{Binding !Shelf.IsEmpty}">
      <Border Classes="pill" HorizontalAlignment="Left" Margin="-6,0,0,0">
       <TextBlock Text="{Binding Shelf.StickyMonth}"/>

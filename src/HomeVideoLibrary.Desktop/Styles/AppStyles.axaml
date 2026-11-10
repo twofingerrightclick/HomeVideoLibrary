@@ -111,6 +111,10 @@
   <Setter Property="Padding" Value="4,0"/>
   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
  </Style>
+ <!-- The hovered tape comes forward over its neighbours. -->
+ <Style Selector="ListBox.shelf ListBoxItem:pointerover">
+  <Setter Property="ZIndex" Value="1"/>
+ </Style>
  <Style Selector="ListBox.shelf ListBoxItem /template/ ContentPresenter#PART_ContentPresenter, ListBox.shelf ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBox.shelf ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBox.shelf ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
   <Setter Property="Background" Value="Transparent"/>
  </Style>
