@@ -14,16 +14,18 @@ public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
         AppleUniformTypeIdentifiers = ["public.movie"],
     };
 
-    public Task<LeaveChoice> AskLeaveAsync(string title)
+    public Task<LeaveChoice> AskLeaveAsync(string title, string? cannotSave)
     {
         if (owner() is not { } window) return Task.FromResult(LeaveChoice.KeepEditing);
-        return new PromptWindow<LeaveChoice>("UNSAVED CHANGES",
-            $"“{title}” has changes that are not saved in the video file yet.", LeaveChoice.KeepEditing,
-            [
-                new("KEEP EDITING", LeaveChoice.KeepEditing, IsCancel: true),
-                new("DISCARD", LeaveChoice.Discard, "destructive"),
-                new("SAVE AND LEAVE", LeaveChoice.Save, "primary", IsDefault: true),
-            ]).AskAsync(window);
+        var message = $"“{title}” has changes that are not saved in the video file yet.";
+        var keys = new List<PromptWindow<LeaveChoice>.Option>
+        {
+            new("KEEP EDITING", LeaveChoice.KeepEditing, IsDefault: cannotSave is not null, IsCancel: true),
+            new("DISCARD", LeaveChoice.Discard, "destructive"),
+        };
+        if (cannotSave is null) keys.Add(new("SAVE AND LEAVE", LeaveChoice.Save, "primary", IsDefault: true));
+        else message += $" They cannot be saved now. {cannotSave}";
+        return new PromptWindow<LeaveChoice>("UNSAVED CHANGES", message, LeaveChoice.KeepEditing, keys).AskAsync(window);
     }
 
     public Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs)

@@ -215,6 +215,29 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelAndQuitOffersASaveTheJobsBlockAndCancelsThemToSave()
+    {
+        var viewModel = await OpenEditorAsync();
+        var page = Page(viewModel);
+        page.Details.Title = "saved title";
+        var job = viewModel.Jobs.Enqueue("Trim", JobLane.Render, async (_, token) =>
+        {
+            await Task.Delay(Timeout.Infinite, token);
+            return JobOutcome.Done("never");
+        }, [page.Id]);
+        Assert.NotNull(page.SaveBlocker);
+        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        _interaction.Answers.Enqueue(LeaveChoice.Save);
+
+        Assert.True(await viewModel.RequestCloseAsync());
+
+        Assert.Equal([null], _interaction.CannotSave);
+        Assert.Equal(JobState.Cancelled, job.State);
+        Assert.Equal(1, _metadata.Saves);
+        Assert.Empty(_interaction.Errors);
+    }
+
+    [Fact]
     public async Task QuitWhenDoneCanBeCancelledWhileItWaits()
     {
         var (viewModel, _) = await OpenLibraryAsync();

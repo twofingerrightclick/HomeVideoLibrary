@@ -21,6 +21,8 @@ public sealed record JobOutcome(string Summary, IReadOnlyList<Guid> Outputs)
 /// <summary>What a lane finished between two idle moments, reported once when it drains.</summary>
 public readonly record struct JobBatch(JobLane Lane, int Succeeded = 0, int Failed = 0, int Cancelled = 0)
 {
+    public bool IsEmpty => Succeeded + Failed + Cancelled == 0;
+
     internal JobBatch Add(JobState state) => state switch
     {
         JobState.Succeeded => this with { Succeeded = Succeeded + 1 },
@@ -54,7 +56,8 @@ public sealed class JobQueue : ViewModelBase
     /// <summary>Raised once per job when it ends (succeeded, failed or cancelled), after its <see cref="JobViewModel.Completion"/>.</summary>
     public event Action<JobViewModel>? Finished;
 
-    /// <summary>Raised when a lane has no job left to run, with what it finished since it last drained.</summary>
+    /// <summary>Raised when a lane has no job left to run but background ones, with what it finished since it last
+    /// drained; never with an empty batch.</summary>
     public event Action<JobBatch>? Drained;
 
     /// <summary>Running jobs, then queued ones in the order they will run, then finished ones newest first. A job
@@ -93,9 +96,10 @@ public sealed class JobQueue : ViewModelBase
 
     /// <summary>Adds a job to the end of <paramref name="lane"/>; it starts when the lane is free.</summary>
     /// <param name="sources">The library videos the job reads, which must not be rewritten while it is active.</param>
-    public JobViewModel Enqueue(string title, JobLane lane, JobWork work, IReadOnlyCollection<Guid>? sources = null)
+    /// <param name="background">See <see cref="JobViewModel.IsBackground"/>.</param>
+    public JobViewModel Enqueue(string title, JobLane lane, JobWork work, IReadOnlyCollection<Guid>? sources = null, bool background = false)
     {
-        var job = new JobViewModel(title, lane, work, this) { Order = ++_sequence, Sources = sources ?? [] };
+        var job = new JobViewModel(title, lane, work, this) { Order = ++_sequence, Sources = sources ?? [], IsBackground = background };
         var state = _lanes[lane];
         state.Waiting.Add(job);
         Place(job);
@@ -151,13 +155,14 @@ public sealed class JobQueue : ViewModelBase
             finally { job.Complete(); }
             Announce(job);
             // Raised inside the loop, so a job a handler enqueues is picked up by this loop rather than stranded.
-            if (!lane.HasWaiting) Raise(Drained, lane.TakeBatch(), "Jobs drained");
+            if (!lane.HasWaiting && lane.TakeBatch() is { IsEmpty: false } batch) Raise(Drained, batch, "Jobs drained");
         }
     }
 
     private void Announce(JobViewModel job)
     {
-        _lanes[job.Lane].Count(job.State);
+        if (!job.IsBackground) _lanes[job.Lane].Count(job.State);
+        else if (job.State == JobState.Succeeded) Dismiss(job);
         Raise(Finished, job, "Job finished");
     }
 
@@ -206,7 +211,8 @@ public sealed class JobQueue : ViewModelBase
 
         public List<JobViewModel> Waiting { get; } = [];
         public Task Drain { get; set; } = Task.CompletedTask;
-        public bool HasWaiting => Waiting.Any(job => job.IsQueued);
+        /// <summary>Whether a job the user is waiting for is queued; background jobs are not counted.</summary>
+        public bool HasWaiting => Waiting.Any(job => job.IsQueued && !job.IsBackground);
 
         public JobViewModel? Next()
         {
@@ -269,6 +275,11 @@ public sealed class JobViewModel : ViewModelBase
 
     /// <summary>The library videos the job reads; see <see cref="JobQueue.Holds"/>.</summary>
     public IReadOnlyCollection<Guid> Sources { get; internal init; } = [];
+
+    /// <summary>Maintenance the user did not ask for. It shows in the drawer while active and when it fails, but a success
+    /// leaves the drawer at once and no background job counts in a lane's <see cref="JobBatch"/>, so it raises no
+    /// "Finished" toast or chime.</summary>
+    public bool IsBackground { get; internal init; }
     public JobState State => _state;
     public bool IsQueued => State == JobState.Queued;
     public bool IsRunning => State == JobState.Running;

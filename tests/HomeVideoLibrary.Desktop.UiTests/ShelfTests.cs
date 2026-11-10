@@ -87,7 +87,7 @@ public sealed class ShelfTests : IDisposable
 
 internal sealed class NoInteraction : IInteraction
 {
-    public Task<LeaveChoice> AskLeaveAsync(string title) => Task.FromResult(LeaveChoice.KeepEditing);
+    public Task<LeaveChoice> AskLeaveAsync(string title, string? cannotSave) => Task.FromResult(LeaveChoice.KeepEditing);
     public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
     /// <summary>Declines every confirmation.</summary>
     public Task<bool> ConfirmAsync(Confirmation confirmation) => Task.FromResult(false);

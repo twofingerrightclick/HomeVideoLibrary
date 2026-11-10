@@ -31,7 +31,7 @@
       </StackPanel>
     </c:SectionHeader>
     <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Frames.Thumbnails.Count}"
-               Text="Frames you capture become this video's pictures on the shelf."/>
+               Text="Frames you capture are kept inside the video file when you save, and trims, splits and merges carry them along. Click one to play from it."/>
     <ItemsControl ItemsSource="{Binding Details.Frames.Thumbnails}">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate>

@@ -156,7 +156,7 @@ public sealed class TrashKeyTests : IDisposable
             Asked.Add(confirmation.Title);
             return Task.FromResult(Agrees);
         }
-        public Task<LeaveChoice> AskLeaveAsync(string title) => Task.FromResult(LeaveChoice.KeepEditing);
+        public Task<LeaveChoice> AskLeaveAsync(string title, string? cannotSave) => Task.FromResult(LeaveChoice.KeepEditing);
         public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
         public Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs) => Task.FromResult(CloseChoice.CancelJobs);
         public Task<PickedFiles> PickVideosAsync() => Task.FromResult(PickedFiles.None);

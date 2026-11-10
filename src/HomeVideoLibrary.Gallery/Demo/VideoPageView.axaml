@@ -25,14 +25,15 @@
     <Border Classes="bezel" Padding="8">
       <ItemsControl ItemsSource="{Binding Chapters.Rows}">
         <ItemsControl.DataTemplates>
-          <!-- A click expands the row in place into its editor (one at a time); the play key seeks. -->
+          <!-- A click expands the row in place into its editor (one at a time); a click on the time or the play key seeks. -->
           <DataTemplate DataType="demo:ChapterRowViewModel">
             <c:ChapterListItem Start="{Binding Start}"
                                Title="{Binding Title}"
                                IsCurrent="{Binding IsCurrent}"
                                IsEditing="{Binding IsEditing, Mode=TwoWay}"
                                DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
-                               JumpCommand="{Binding ToggleExpanded}"
+                               ActivateCommand="{Binding ToggleExpanded}"
+                               SeekCommand="{Binding Jump}"
                                CommitTitleCommand="{Binding CommitTitle}"
                                IsExpanded="{Binding IsExpanded}"
                                ExpandedContent="{Binding Editor}"

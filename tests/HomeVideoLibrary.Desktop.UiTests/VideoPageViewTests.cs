@@ -74,6 +74,27 @@ public sealed class VideoPageViewTests
     }
 
     [AvaloniaFact]
+    public void Clicking_a_chapters_time_plays_from_it_and_clicking_elsewhere_on_the_row_expands_it()
+    {
+        var (window, host) = Window();
+        var page = Page(TwoChapters);
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        Show(host, page);
+        var chapters = page.Details.Chapters;
+        var time = Row(host, 1).GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
+
+        var point = time.TranslatePoint(new Point(time.Bounds.Width / 2, time.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(TimeSpan.FromSeconds(30), page.Player.Position);
+        Assert.Null(chapters.ExpandedChapter);
+
+        Click(window, Row(host, 1));
+        Assert.Same(chapters.Chapters[1], chapters.ExpandedChapter);
+    }
+
+    [AvaloniaFact]
     public void A_chapter_added_from_another_tab_opens_expanded_and_takes_its_typed_title()
     {
         var (window, host) = Window();

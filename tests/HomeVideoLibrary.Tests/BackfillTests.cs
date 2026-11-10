@@ -77,12 +77,13 @@ public sealed class BackfillTests : IDisposable
     {
         var (model, videos) = await LibraryAsync(3);
         var jobs = new JobQueue(_ => Task.CompletedTask);
+        var queued = new List<string>();
+        jobs.Jobs.CollectionChanged += (_, args) => queued.AddRange(args.NewItems?.Cast<JobViewModel>().Select(job => job.Title) ?? []);
 
         await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), id => id == videos[0].Id, () => true);
 
         Assert.Equal([videos[1].Id, videos[2].Id], _identity.Checked);
-        Assert.Equal(2, jobs.Jobs.Count);
-        Assert.Equal($"{BackfillJob.Title} (videos that were open)", jobs.Jobs[0].Title);
+        Assert.Equal([$"{BackfillJob.Title} (1–3 of 3)", $"{BackfillJob.Title} (videos that were open)"], queued);
         Assert.False(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
 
         await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => true);
@@ -140,6 +141,39 @@ public sealed class BackfillTests : IDisposable
     });
 
     [Fact]
+    public async Task AUserSaveThatClearsATitleHandlesItsVideoAndOtherSavesLeaveItPending()
+    {
+        var (model, videos) = await LibraryAsync(2);
+        _files.Set(model.Catalog.GetVideoPath(videos[0].RelativePath), VideoMetadata.Empty with { Title = "Birthday" });
+        await model.UpsertFromFileAsync(videos[0]);
+        var backfill = new IdentityBackfill(model, _identity);
+        var cleared = model.Snapshot.Find(videos[0].Id)!;
+        var described = model.Snapshot.Find(videos[1].Id)!;
+
+        await backfill.SavedAsync(cleared, VideoMetadata.Empty);
+        await backfill.SavedAsync(described, VideoMetadata.Empty with { Description = "At the lake" });
+        await backfill.RunAsync([videos[0].Id, videos[1].Id], _ => false);
+
+        Assert.Equal([videos[1].Id], _identity.Checked);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0f8fad5b-d9cb")]
+    public async Task ADamagedPendingListIsRebuiltRatherThanReadAsNothingPending(string content)
+    {
+        var (model, videos) = await LibraryAsync(2);
+        await new IdentityBackfill(model, _identity).RunAsync([videos[0].Id], _ => true);
+        Assert.True(File.Exists(IdentityBackfill.PendingPath(model.Catalog.Paths)));
+        await File.WriteAllTextAsync(IdentityBackfill.PendingPath(model.Catalog.Paths), content);
+
+        var plan = await new IdentityBackfill(model, _identity).PlanAsync();
+
+        Assert.Equal(videos.Select(video => video.Id).Order(), plan.Order());
+        Assert.False(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+    }
+
+    [Fact]
     public async Task AnEmptyLibraryIsNotDue()
     {
         var (model, _) = await LibraryAsync(0);
@@ -153,11 +187,9 @@ public sealed class BackfillTests : IDisposable
         await AddVideoAsync(catalog, "old");
 
         var first = await OpenAsync(catalog);
-        var job = Assert.Single(first.Jobs.Jobs);
-        Assert.StartsWith(BackfillJob.Title, job.Title);
-        Assert.Equal(JobLane.Render, job.Lane);
-        await job.Completion;
         await WaitUntilAsync(() => File.Exists(IdentityBackfill.StampPath(catalog.Paths)));
+        await WaitUntilAsync(() => first.Jobs.Jobs.Count == 0);
+        Assert.False(first.HasToast);
         Assert.True(await first.RequestCloseAsync());
 
         var second = await OpenAsync(catalog);

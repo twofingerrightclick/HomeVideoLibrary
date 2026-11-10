@@ -9,8 +9,8 @@ public sealed record TrashRequest(JobViewModel Job, Task Completion);
 /// <summary>Moving videos to the Trash, and removing videos whose files are missing from the library. A request is
 /// confirmed, then a page showing one of the videos is left through its leave prompt, then the files go in one background
 /// job of the render lane. Trims, splits and merges read their source files in that lane, so a video is never trashed
-/// under a running edit, and an edit queued after a trash finds its source gone rather than half read. Until its job
-/// ends, a video is held: it cannot be opened or trashed again.</summary>
+/// under a running edit, and an edit queued after a trash finds its source gone rather than half read. From before its
+/// page is left until its job ends, a video is held: it cannot be opened or trashed again.</summary>
 public sealed class TrashViewModel : ViewModelBase
 {
     private const int MaxDetails = 40;
@@ -29,7 +29,7 @@ public sealed class TrashViewModel : ViewModelBase
     /// <param name="model">The open library's model, or null.</param>
     /// <param name="leave">Leaves the page when it shows one of these videos (asking about unsaved changes); false
     /// when the page stays.</param>
-    /// <param name="canStart">Whether new work may start (the library is not being switched or closed).</param>
+    /// <param name="canStart">Whether new work may start: the library is open, and not being switched or closed.</param>
     /// <param name="viewChanged">Shows the model's current snapshot, so the shelf no longer has the removed tapes when
     /// focus moves on.</param>
     public TrashViewModel(Func<LibraryModel?> model, Func<LibraryModel, VideoRemover> createRemover, ShelfViewModel shelf, JobQueue jobs,
@@ -75,14 +75,23 @@ public sealed class TrashViewModel : ViewModelBase
                 Details(model, videos), "MOVE TO TRASH")))
             return null;
         var ids = videos.Select(video => video.Id).ToArray();
-        if (!await _leave(ids))
+        // Held before the page is left, so the video cannot be opened again while the page closes.
+        _held.UnionWith(ids);
+        UpdateCommands();
+        bool left;
+        try { left = await _leave(ids); }
+        catch
         {
+            Release(ids);
+            throw;
+        }
+        if (!left)
+        {
+            Release(ids);
             _status("Nothing was moved to the Trash; the open video stayed open.");
             return null;
         }
         var next = _shelf.TapeAfter(ids);
-        _held.UnionWith(ids);
-        UpdateCommands();
         var remover = _createRemover(model);
         var title = videos.Count == 1 ? $"Move “{videos[0].Label}” to Trash" : $"Move {videos.Count} videos to Trash";
         var batch = Enqueue(title, videos, remover.MoveToTrashAsync, "Moving");
@@ -116,7 +125,7 @@ public sealed class TrashViewModel : ViewModelBase
             var report = new List<string> { Summarize(trash.Results) };
             var stranded = videos.Where(video => trash.Results.Any(result => result.VideoId == video.Id && result.Result == RemovalResult.Unavailable))
                 .ToArray();
-            if (stranded.Length > 0 && ReferenceEquals(_model(), model) && await _interaction.ConfirmAsync(new Confirmation("DELETE PERMANENTLY",
+            if (stranded.Length > 0 && ReferenceEquals(_model(), model) && _canStart() && await _interaction.ConfirmAsync(new Confirmation("DELETE PERMANENTLY",
                     $"{Count(stranded.Length)} cannot go to the Trash because {(stranded.Length == 1 ? "its" : "their")} drive has none. " +
                     $"Delete {(stranded.Length == 1 ? "it" : "them")} permanently? {Size(model, stranded)} is deleted and cannot be restored.",
                     Details(model, stranded), "DELETE PERMANENTLY")))
@@ -133,11 +142,13 @@ public sealed class TrashViewModel : ViewModelBase
             _shelf.RequestFocus(id);
         }
         catch (Exception exception) { AppErrors.Report(exception, "Move to Trash"); }
-        finally
-        {
-            _held.ExceptWith(videos.Select(video => video.Id));
-            UpdateCommands();
-        }
+        finally { Release(videos.Select(video => video.Id)); }
+    }
+
+    private void Release(IEnumerable<Guid> videoIds)
+    {
+        _held.ExceptWith(videoIds);
+        UpdateCommands();
     }
 
     /// <summary>Queues one job removing <paramref name="videos"/> one by one. It fails only when nothing left the library

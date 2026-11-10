@@ -23,7 +23,9 @@ public abstract class PageViewModel : ViewModelBase, IAsyncDisposable
 
     /// <summary>Whether the user may leave now. A dirty page asks through <paramref name="interaction"/> and saves or
     /// discards; busy work keeps the page. Returns false to stay.</summary>
-    public virtual Task<bool> CanLeaveAsync(IInteraction interaction) => Task.FromResult(true);
+    /// <param name="cancelJobs">Set when every background job is cancelled once the page is left (closing with
+    /// CANCEL AND QUIT): a save that jobs block is then still offered, and choosing it cancels them first.</param>
+    public virtual Task<bool> CanLeaveAsync(IInteraction interaction, Func<Task>? cancelJobs = null) => Task.FromResult(true);
 
     /// <summary>Called before the window closes: cancels cancellable work and waits for work that must finish (a
     /// save), so <see cref="CanLeaveAsync"/> afterwards only has unsaved changes left to ask about.</summary>

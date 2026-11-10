@@ -18,6 +18,8 @@ public sealed record MergeSource(LibraryVideo Video)
 public sealed class MergePageViewModel : PageViewModel
 {
     private readonly ClipEdits _edits;
+    /// <summary>The sources' ids; a set that never changes, so <see cref="Shows"/> can read it from any thread.</summary>
+    private readonly IReadOnlySet<Guid> _sourceIds;
     private MergeSource? _selectedSource;
     private string _outputTitle = "";
     private JobViewModel? _job;
@@ -30,6 +32,7 @@ public sealed class MergePageViewModel : PageViewModel
         if (sources.Count < 2) throw new ArgumentException("Select at least two videos to merge.", nameof(sources));
         _edits = edits;
         Sources = new ObservableCollection<MergeSource>(sources.Select(video => new MergeSource(video)));
+        _sourceIds = sources.Select(video => video.Id).ToHashSet();
         Plan = new PlanReadout(time ?? TimeProvider.System);
         MoveUpCommand = new RelayCommand(() => MoveSelected(-1), () => CanMove(-1));
         MoveDownCommand = new RelayCommand(() => MoveSelected(1), () => CanMove(1));
@@ -70,6 +73,8 @@ public sealed class MergePageViewModel : PageViewModel
 
     /// <summary>The page's toolbar has its own ◀ LIBRARY key (and Esc).</summary>
     public override bool HasBackKey => true;
+
+    public override bool Shows(Guid videoId) => _sourceIds.Contains(videoId);
 
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }

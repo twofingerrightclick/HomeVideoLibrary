@@ -249,6 +249,7 @@ public sealed class FileTrashTests : IDisposable
     [InlineData(0x75, 0, false, null, TrashResult.Declined)]
     [InlineData(0, 0, true, null, TrashResult.Declined)]
     [InlineData(0, unchecked((int)0x80270000), true, null, TrashResult.Declined)]
+    [InlineData(0, unchecked((int)0x80270001), true, null, TrashResult.Declined)]
     [InlineData(unchecked((int)0x80070020), 0, false, null, TrashResult.Locked)]
     [InlineData(unchecked((int)0x80270027), 0, false, null, TrashResult.Locked)]
     [InlineData(0, unchecked((int)0x80270027), true, null, TrashResult.Locked)]

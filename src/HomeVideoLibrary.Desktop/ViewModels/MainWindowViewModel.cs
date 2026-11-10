@@ -51,6 +51,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibraryLock? _lock;
     private LibraryModel? _model;
     private LibraryServices? _services;
+    private IdentityBackfill? _backfill;
     private PreviewCache? _previews;
     /// <summary>Builds the open library's hover strips; null without a library or without the media tools.</summary>
     private HoverStripScheduler? _strips;
@@ -86,7 +87,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             message => Status = message);
         var holders = new ShellVideoHolders(() => _strips, () => _previews, dependencies.Post);
         Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash, holders), Shelf, Jobs, dependencies.Interaction,
-            LeavePagesShowingAsync, () => IsSettled, message => Status = message, RefreshView);
+            LeavePagesShowingAsync, () => IsSettled && _lock is not null, message => Status = message, RefreshView);
         Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
@@ -227,14 +228,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// its file is gone) the status line says why.</summary>
     public Task OpenVideoAsync(VideoRecord video, TimeSpan? at = null, InspectorTab? tab = null)
     {
-        if (WaitReason is { } reason) return Refuse($"“{video.Label}” cannot open yet. {reason}");
-        if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
-            return Refuse($"“{video.Label}” is no longer in the library.");
-        if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
-        if (Trash.Holds(record.Id)) return Refuse($"“{record.Label}” is being moved to the Trash.");
+        if (_model is not { } model || _services is not { } services) return Refuse($"“{video.Label}” is no longer in the library.");
+        if (CannotOpen(model, video) is { } reason) return Refuse(reason);
         return NavigateAsync(() =>
         {
-            var indexed = new IndexedMetadataService(services.Metadata, model);
+            // Checked again: while this waited for another navigation, the video may have gone to a trash or left the library.
+            if (CannotOpen(model, video) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var record = model.Snapshot.Find(video.Id)!;
+            var indexed = new IndexedMetadataService(services.Metadata, model, _backfill);
             indexed.IndexingFailed += warning => Status = warning;
             return new VideoPageViewModel(new VideoPageDependencies
             {
@@ -256,6 +261,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         });
     }
 
+    /// <summary>Why <paramref name="video"/> of <paramref name="model"/> cannot open now, or null when it can.</summary>
+    private string? CannotOpen(LibraryModel model, VideoRecord video) =>
+        WaitReason is { } reason ? $"“{video.Label}” cannot open yet. {reason}"
+        : !ReferenceEquals(_model, model) || model.Snapshot.Find(video.Id) is not { } record ? $"“{video.Label}” is no longer in the library."
+        : record.IsMissing ? $"The file for “{record.Label}” is missing, so it cannot open."
+        : Trash.Holds(record.Id) ? $"“{record.Label}” is being moved to the Trash."
+        : null;
+
     private Task<bool> LeavePagesShowingAsync(IReadOnlyCollection<Guid> videoIds) =>
         Page is { } page && videoIds.Any(page.Shows) ? NavigateAsync(() => null) : Task.FromResult(true);
 
@@ -265,13 +278,27 @@ public sealed class MainWindowViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    /// <summary>Opens the merge page for the selected videos, in shelf order.</summary>
+    /// <summary>Opens the merge page for the selected videos, in shelf order. Refused, like <see cref="OpenVideoAsync"/>,
+    /// while one of them cannot open.</summary>
     public Task OpenMergeAsync()
     {
         if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
-        var sources = Shelf.SelectedRecords.Select(record => record.ToLibraryVideo()).ToArray();
-        return NavigateAsync(() => new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null)));
+        var selected = Shelf.SelectedRecords.ToArray();
+        if (CannotOpen(model, selected) is { } reason) return Refuse(reason);
+        return NavigateAsync(() =>
+        {
+            if (CannotOpen(model, selected) is { } refusal)
+            {
+                Status = refusal;
+                return null;
+            }
+            var sources = selected.Select(record => model.Snapshot.Find(record.Id)!.ToLibraryVideo()).ToArray();
+            return new MergePageViewModel(sources, ClipEditsFor(model), () => NavigateAsync(() => null));
+        });
     }
+
+    private string? CannotOpen(LibraryModel model, IEnumerable<VideoRecord> videos) =>
+        videos.Select(video => CannotOpen(model, video)).FirstOrDefault(reason => reason is not null);
 
     private ClipEdits ClipEditsFor(LibraryModel model) =>
         new(_dependencies.CreateClipEditing(model.Catalog), Jobs, outputs => PublishOutputsAsync(model, outputs));
@@ -297,14 +324,17 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// <summary>Leaves the current page (asking about unsaved changes) and shows <paramref name="next"/>'s page, or the
     /// shelf when it returns null. Returns false when the current page stays. Navigations run one at a time, so two
     /// prompts never stack; a page must not navigate from its own <see cref="PageViewModel.LoadAsync"/>.</summary>
-    public async Task<bool> NavigateAsync(Func<PageViewModel?> next)
+    public Task<bool> NavigateAsync(Func<PageViewModel?> next) => NavigateAsync(next, cancelJobs: null);
+
+    /// <param name="cancelJobs">See <see cref="PageViewModel.CanLeaveAsync"/>.</param>
+    private async Task<bool> NavigateAsync(Func<PageViewModel?> next, Func<Task>? cancelJobs)
     {
         await _navigation.WaitAsync();
         try
         {
             if (Page is { } current)
             {
-                if (!await current.CanLeaveAsync(_dependencies.Interaction)) return false;
+                if (!await current.CanLeaveAsync(_dependencies.Interaction, cancelJobs)) return false;
                 Page = null;
                 await current.DisposeAsync();
             }
@@ -324,8 +354,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     /// <summary>Everything that must happen before the window closes, in order: waits for a library switch; asks whether
     /// to wait for or cancel background jobs (only a question, so keeping the app open there changes nothing); settles
-    /// the page (finishing a save) and leaves it, asking about unsaved changes; cancels or waits for the jobs; then stops
-    /// the library refresh and releases the library. Returns false when the user keeps the app open, including by
+    /// the page (finishing a save) and leaves it, asking about unsaved changes (when the jobs are to be cancelled, saving
+    /// there cancels them first if they block the save); cancels or waits for the jobs; then stops the library refresh and
+    /// releases the library. Returns false when the user keeps the app open, including by
     /// <see cref="CancelQuitCommand"/> while waiting for jobs. Repeated calls while one is running share it; new work is
     /// refused meanwhile.</summary>
     public Task<bool> RequestCloseAsync()
@@ -351,18 +382,20 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Status = "Finishing the current operation, then closing…";
                 await page.SettleForCloseAsync();
             }
-            if (!await NavigateAsync(() => null)) return false;
-            if (jobs == CloseChoice.CancelJobs)
-            {
-                Status = "Cancelling imports and edits, then closing…";
-                await Jobs.CancelAllAndWaitAsync();
-            }
+            if (!await NavigateAsync(() => null, jobs == CloseChoice.CancelJobs ? CancelJobsAsync : null)) return false;
+            if (jobs == CloseChoice.CancelJobs) await CancelJobsAsync();
             else if (!await WaitForJobsAsync()) return false;
             status = Status;
             await ReleaseLibraryAsync();
             return true;
         }
         finally { Status = status; }
+    }
+
+    private Task CancelJobsAsync()
+    {
+        Status = "Cancelling imports and edits, then closing…";
+        return Jobs.CancelAllAndWaitAsync();
     }
 
     /// <summary>Waits for the active jobs to end; false when the user cancels the quit meanwhile.</summary>
@@ -524,6 +557,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             throw;
         }
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
+        _backfill = services.Identity is { } identity ? new IdentityBackfill(model, identity) : null;
         if (unavailable.Count == 0)
         {
             var store = new HoverStripStore(paths, services.Files);
@@ -557,8 +591,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
-        if (services.Identity is { } identity && ToolsReady)
-            _ = BackfillJob.RunAsync(Jobs, new IdentityBackfill(model, identity), id => Volatile.Read(ref _page)?.Shows(id) == true,
+        if (_backfill is { } backfill && ToolsReady)
+            _ = BackfillJob.RunAsync(Jobs, backfill, id => Volatile.Read(ref _page)?.Shows(id) == true,
                 () => ReferenceEquals(_model, model) && IsSettled);
     }
 

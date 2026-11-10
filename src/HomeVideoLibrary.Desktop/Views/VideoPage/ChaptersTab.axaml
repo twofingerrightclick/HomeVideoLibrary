@@ -32,12 +32,13 @@
                              IsCurrent="{Binding IsCurrent}"
                              IsEditing="{Binding IsEditing, Mode=TwoWay}"
                              DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
-                             JumpCommand="{Binding ToggleExpandedCommand}"
+                             ActivateCommand="{Binding ToggleExpandedCommand}"
+                             SeekCommand="{Binding SeekCommand}"
                              CommitTitleCommand="{Binding CommitTitleCommand}"
                              IsExpanded="{Binding IsExpanded}"
                              ExpandedContent="{Binding Editor}"
                              ExpandedContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
-                             ToolTip.Tip="Click to edit this chapter">
+                             ToolTip.Tip="Click the time to play from it, or elsewhere to edit the chapter">
             <StackPanel Orientation="Horizontal" Spacing="4" Classes="rowActions">
               <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}" Command="{Binding SeekCommand}"
                                ToolTip.Tip="Play from here"/>
