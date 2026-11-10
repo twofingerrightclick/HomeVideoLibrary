@@ -11,6 +11,12 @@ public sealed record PickedFiles(IReadOnlyList<string> Paths, int Unavailable)
     public static PickedFiles None { get; } = new([], 0);
 }
 
+/// <summary>A yes-or-no question before something destructive. Declining is the default answer: Enter, Esc and closing
+/// the window all decline.</summary>
+/// <param name="Details">One line per affected item, listed under the message.</param>
+/// <param name="ConfirmLabel">The key that agrees, naming the action ("MOVE TO TRASH").</param>
+public sealed record Confirmation(string Title, string Message, IReadOnlyList<string> Details, string ConfirmLabel);
+
 /// <summary>Modal UI a view model awaits: questions, pickers and the settings window. The app shows them as real
 /// windows, so they appear above the native video surface; tests answer them directly.</summary>
 public interface IInteraction
@@ -19,6 +25,9 @@ public interface IInteraction
     Task<LeaveChoice> AskLeaveAsync(string title);
 
     Task ShowErrorAsync(string title, string message);
+
+    /// <summary>Asks <paramref name="confirmation"/>; true only when the user chose its confirm key.</summary>
+    Task<bool> ConfirmAsync(Confirmation confirmation);
 
     /// <summary>Asks whether to wait for <paramref name="activeJobs"/> running or queued jobs, cancel them, or keep the app open.</summary>
     Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs);

@@ -26,6 +26,10 @@ public sealed class HoverStripScheduler : IAsyncDisposable
     private readonly OrderedDictionary<Guid, VideoRecord> _backfill = [];
     private readonly Dictionary<Guid, Request> _requests = [];
     private readonly Dictionary<Guid, (string Identity, DateTimeOffset At)> _failed = [];
+    /// <summary>Videos whose file must not be read (see <see cref="HoldAsync"/>), with how many holds each has.</summary>
+    private readonly Dictionary<Guid, int> _held = [];
+    /// <summary>The build in progress: whose it is, how to stop it alone, and its task.</summary>
+    private (Guid Id, CancellationTokenSource Stop, Task Task)? _building;
     private readonly CancellationTokenSource _lifetime = new();
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task _loop = Task.CompletedTask;
@@ -82,6 +86,49 @@ public sealed class HoverStripScheduler : IAsyncDisposable
         }
     }
 
+    /// <summary>Stops reading the video's file: its build, if running, is cancelled and awaited (its processes killed),
+    /// and it is neither built nor requested until the returned hold is disposed, when it is queued again if it is still
+    /// known. For work that needs the file to itself, such as moving it to the Trash.</summary>
+    public async Task<IAsyncDisposable> HoldAsync(Guid videoId)
+    {
+        _held[videoId] = _held.GetValueOrDefault(videoId) + 1;
+        _backfill.Remove(videoId);
+        if (_requests.Remove(videoId, out var request)) request.Done.TrySetResult(null);
+        if (_building is { } building && building.Id == videoId)
+        {
+            building.Stop.Cancel();
+            await building.Task.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+        return new Hold(this, videoId);
+    }
+
+    /// <summary>Forgets a video that has left the library, deleting its strips.</summary>
+    public void Forget(Guid videoId)
+    {
+        _latest.Remove(videoId);
+        _backfill.Remove(videoId);
+        _failed.Remove(videoId);
+        _store.Forget(videoId);
+    }
+
+    private void Release(Guid videoId)
+    {
+        if (--_held[videoId] > 0) return;
+        _held.Remove(videoId);
+        if (_latest.TryGetValue(videoId, out var record)) Enqueue([record]);
+    }
+
+    private sealed class Hold(HoverStripScheduler owner, Guid videoId) : IAsyncDisposable
+    {
+        private int _released;
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0) owner.Release(videoId);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     /// <summary>Re-checks whether backfill may run; call when the busy condition may have changed.</summary>
     public void BusyChanged() => Wake();
 
@@ -92,7 +139,7 @@ public sealed class HoverStripScheduler : IAsyncDisposable
         if (_latest.TryGetValue(videoId, out var record)) Enqueue([record]);
     }
 
-    private bool IsWanted(VideoRecord record) => record is { State: VideoRecordState.Ok, IsMissing: false } &&
+    private bool IsWanted(VideoRecord record) => record is { State: VideoRecordState.Ok, IsMissing: false } && !_held.ContainsKey(record.Id) &&
         HoverStripStore.CanBuild(record) &&
         !(_failed.TryGetValue(record.Id, out var failure) && failure.Identity == record.MediaIdentity && _time.GetUtcNow() - failure.At < FailureRetry);
 
@@ -121,12 +168,16 @@ public sealed class HoverStripScheduler : IAsyncDisposable
             }
             _backfill.Remove(next.Id);
             string? path = null, strip = null;
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
             try
             {
                 var file = path = _pathOf(next);
-                strip = await Task.Run(() => _store.GetOrBuildAsync(next, file, token), token);
+                var build = Task.Run(() => _store.GetOrBuildAsync(next, file, stop.Token), stop.Token);
+                _building = (next.Id, stop, build);
+                strip = await build;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
             catch (Exception exception)
             {
                 Trace.TraceWarning($"Could not build the hover strip of “{next.Label}”: {exception.Message}");
@@ -135,6 +186,7 @@ public sealed class HoverStripScheduler : IAsyncDisposable
                 if (exception is InvalidDataException && path is not null && FileStamp.TryRead(path) == next.Stamp)
                     _failed[next.Id] = (next.MediaIdentity!, _time.GetUtcNow());
             }
+            finally { _building = null; }
             if (_requests.Remove(next.Id, out var request)) request.Done.TrySetResult(strip);
         }
     }

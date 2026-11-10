@@ -144,7 +144,9 @@
       <c:PlasticButton Classes="toolbar" Content="REMOVE FROM ALBUM" Command="{Binding Albums.RemoveSelectedCommand}"
        IsVisible="{Binding !Albums.IsAllVideos}" Margin="0,2,8,2"/>
       <c:PlasticButton Classes="toolbar destructive" Content="MOVE TO TRASH" Command="{Binding Shelf.MoveToTrashCommand}"
-       IsVisible="{Binding Shelf.HasMoveToTrash}" Margin="0,2,8,2"/>
+       IsVisible="{Binding Shelf.HasMoveToTrash}" Margin="0,2,8,2" ToolTip.Tip="Move the selected videos to the Trash (⌘⌫ or Ctrl+Delete)"/>
+      <c:PlasticButton Classes="toolbar" Content="REMOVE FROM LIBRARY" Command="{Binding Trash.RemoveMissingCommand}"
+       IsVisible="{Binding Trash.HasMissingSelected}" Margin="0,2,8,2" ToolTip.Tip="Forget the selected videos whose files are missing"/>
       <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding Shelf.ClearSelectionCommand}"
        ToolTip.Tip="Clear selection" AutomationProperties.Name="Clear selection" Margin="0,2,0,2"/>
      </WrapPanel>
@@ -168,6 +170,7 @@
        <MenuItem Header="Merge selected…" Command="{Binding MergeSelectedCommand}"/>
        <Separator IsVisible="{Binding Shelf.HasMoveToTrash}"/>
        <MenuItem Header="Move to Trash" Command="{Binding Shelf.MoveToTrashCommand}" IsVisible="{Binding Shelf.HasMoveToTrash}"/>
+       <MenuItem Header="Remove from library" Command="{Binding Trash.RemoveMissingCommand}" IsVisible="{Binding Trash.HasMissingSelected}"/>
       </ContextMenu>
      </ListBox.ContextMenu>
      <ListBox.ItemTemplate>

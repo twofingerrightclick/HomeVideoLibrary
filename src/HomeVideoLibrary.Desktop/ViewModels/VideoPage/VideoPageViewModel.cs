@@ -39,6 +39,9 @@ public sealed record VideoPageDependencies
     /// <summary>Shows an album in the library through the shell's leave flow.</summary>
     public Func<VideoAlbum, Task> ShowAlbum { get; init; } = _ => Task.CompletedTask;
     public Func<VideoAlbum, Task> AddToAlbum { get; init; } = _ => Task.CompletedTask;
+    /// <summary>Moves this video to the Trash through the library, which asks first and leaves this page; null hides the
+    /// action.</summary>
+    public Func<Task>? MoveToTrash { get; init; }
     public Action<string> RevealFile { get; init; } = FileManager.Reveal;
     /// <summary>Whether Save closes the player first. An in-place mkvpropedit write is safe under an open reader on macOS
     /// and Linux; Windows sharing rules for that are unverified, so the player is released there.</summary>
@@ -86,6 +89,7 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
         ShowAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.ShowAlbum(album), onError: Report);
         AddToAlbumCommand = new AsyncCommand<VideoAlbum>((album, _) => dependencies.AddToAlbum(album), onError: Report);
         RevealFileCommand = new RelayCommand(() => dependencies.RevealFile(dependencies.Path));
+        MoveToTrashCommand = dependencies.MoveToTrash is { } moveToTrash ? new AsyncCommand(_ => moveToTrash(), onError: Report) : null;
         ToggleInspectorCommand = new RelayCommand(() => IsInspectorOpen = !IsInspectorOpen);
         SelectTabCommand = new RelayCommand<int>(tab => SelectedTab = tab);
         AddChapterCommand = new RelayCommand(AddChapter, () => Details.Chapters.CanAddChapter);
@@ -138,7 +142,9 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
     string? IEditHost.EditBlocker => Details.IsDirty ? UnsavedDetailsMessage : null;
 
     /// <summary>Move to Trash, when the library offers it; hidden while null.</summary>
-    public ICommand? MoveToTrashCommand => null;
+    public ICommand? MoveToTrashCommand { get; }
+
+    public override bool Shows(Guid videoId) => videoId == Id;
 
     public string DisplayTitle => string.IsNullOrWhiteSpace(Details.Title) ? Details.TitleWatermark : Details.Title;
 

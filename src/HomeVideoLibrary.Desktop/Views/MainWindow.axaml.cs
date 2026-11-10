@@ -50,9 +50,15 @@ public sealed partial class MainWindow : Window
 
     private void Subscribe(MainWindowViewModel? viewModel)
     {
-        if (_subscribed is { } old) old.SearchFocusRequested -= FocusSearch;
+        if (_subscribed is { } old)
+        {
+            old.SearchFocusRequested -= FocusSearch;
+            old.Shelf.FocusRequested -= FocusTape;
+        }
         _subscribed = viewModel;
-        if (viewModel is not null) viewModel.SearchFocusRequested += FocusSearch;
+        if (viewModel is null) return;
+        viewModel.SearchFocusRequested += FocusSearch;
+        viewModel.Shelf.FocusRequested += FocusTape;
     }
 
     private void MapShortcuts(ShortcutRouter router)
@@ -69,7 +75,11 @@ public sealed partial class MainWindow : Window
             .Map(Key.Escape, KeyModifiers.None, OnShelf(() => ViewModel.Shelf.ClearCommand))
             .Map(Key.Escape, KeyModifiers.None, () => ViewModel.ShowsShellBackKey ? ViewModel.BackCommand : null)
             .Map(Key.Delete, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
-            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand));
+            .Map(Key.Back, KeyModifiers.None, OnShelf(() => ViewModel.DeleteSelectedCommand))
+            // Finder's ⌘⌫ and Ctrl+Delete elsewhere always mean the Trash, also in an album. Not command chords: in a text
+            // box they edit text.
+            .Map(Key.Back, router.CommandModifier, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand))
+            .Map(Key.Delete, router.CommandModifier, OnShelf(() => ViewModel.Shelf.MoveToTrashCommand));
         router
             .MapCommand(Key.A, OnShelf(() => ViewModel.Shelf.SelectAllCommand))
             .MapCommand(Key.N, OnShelf(() => ViewModel.Albums.CreateFromSelectionCommand), ClickSoundKind.Plastic)
@@ -83,6 +93,16 @@ public sealed partial class MainWindow : Window
     /// <summary>The tape whose row has keyboard focus.</summary>
     private TapeViewModel? FocusedTape() =>
         (FocusManager?.GetFocusedElement() as Control)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as TapeViewModel;
+
+    /// <summary>Focuses a tape the shelf asks for (the next one after a trash), unless the user is typing or has left the shelf.</summary>
+    private void FocusTape(TapeViewModel tape)
+    {
+        if (!ViewModel.IsShelfShown || ShortcutRouter.IsTextEntry(FocusManager?.GetFocusedElement())) return;
+        var index = ViewModel.Shelf.Tapes.IndexOf(tape);
+        if (index < 0) return;
+        TapeList.ScrollIntoView(index);
+        TapeList.ContainerFromIndex(index)?.Focus(NavigationMethod.Directional);
+    }
 
     private void FocusSearch()
     {

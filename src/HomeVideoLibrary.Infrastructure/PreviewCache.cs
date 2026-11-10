@@ -18,6 +18,8 @@ public sealed class PreviewCache
     private readonly LinkedList<(Guid VideoId, int Bucket, string Path)> _recent = new();
     private readonly Dictionary<(Guid, int), LinkedListNode<(Guid VideoId, int Bucket, string Path)>> _entries = [];
     private readonly Dictionary<Guid, (FileStamp? Stamp, string Reason)> _failed = [];
+    /// <summary>Videos that left the library; a capture of one still running when it left removes what it wrote.</summary>
+    private readonly HashSet<Guid> _forgotten = [];
 
     public PreviewCache(LibraryPaths paths, IMatroskaFileEditor frames, int capacity = 400, int maxConcurrentCaptures = 2)
     {
@@ -30,7 +32,8 @@ public sealed class PreviewCache
 
     /// <summary>Returns the frame's JPEG path, capturing it first on a cache miss.</summary>
     /// <param name="fileStamp">The video file's current stamp; a failure is remembered only for this version of the file.</param>
-    /// <exception cref="InvalidOperationException">An earlier capture of this version of the file failed.</exception>
+    /// <exception cref="InvalidOperationException">An earlier capture of this version of the file failed, or the video has
+    /// left the library (see <see cref="Forget"/>).</exception>
     public async Task<string> GetAsync(Guid videoId, FileStamp? fileStamp, string mkvPath, TimeSpan position, int bucket,
         CancellationToken cancellationToken)
     {
@@ -43,6 +46,7 @@ public sealed class PreviewCache
             }
             if (_failed.TryGetValue(videoId, out var failure) && failure.Stamp == fileStamp)
                 throw new InvalidOperationException("No preview is available for this video: " + failure.Reason);
+            if (_forgotten.Contains(videoId)) throw LeftTheLibrary();
         }
         await _captures.WaitAsync(cancellationToken);
         var directory = Path.Combine(_paths.PreviewDirectory, videoId.ToString("N"));
@@ -57,25 +61,69 @@ public sealed class PreviewCache
         catch (Exception exception)
         {
             Delete(temporary);
-            if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested) throw;
-            lock (_lock) _failed[videoId] = (fileStamp, exception.Message);
-            throw;
+            var cancelled = exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
+            bool forgotten;
+            lock (_lock)
+            {
+                forgotten = _forgotten.Contains(videoId);
+                if (!forgotten && !cancelled) _failed[videoId] = (fileStamp, exception.Message);
+            }
+            if (!forgotten) throw;
+            // Forget may have deleted the directory under the capture, which is then why it failed.
+            RemoveDirectory(directory);
+            if (cancelled) throw;
+            throw LeftTheLibrary();
         }
         finally { _captures.Release(); }
         List<string> evicted = [];
+        bool left;
         lock (_lock)
         {
-            if (_entries.Remove((videoId, bucket), out var stale)) _recent.Remove(stale);
-            _entries[(videoId, bucket)] = _recent.AddFirst((videoId, bucket, target));
-            while (_entries.Count > _capacity && _recent.Last is { } oldest)
+            left = _forgotten.Contains(videoId);
+            if (!left)
             {
-                _recent.RemoveLast();
-                _entries.Remove((oldest.Value.VideoId, oldest.Value.Bucket));
-                evicted.Add(oldest.Value.Path);
+                if (_entries.Remove((videoId, bucket), out var stale)) _recent.Remove(stale);
+                _entries[(videoId, bucket)] = _recent.AddFirst((videoId, bucket, target));
+                while (_entries.Count > _capacity && _recent.Last is { } oldest)
+                {
+                    _recent.RemoveLast();
+                    _entries.Remove((oldest.Value.VideoId, oldest.Value.Bucket));
+                    evicted.Add(oldest.Value.Path);
+                }
             }
+        }
+        if (left)
+        {
+            RemoveDirectory(directory);
+            throw LeftTheLibrary();
         }
         foreach (var path in evicted) Delete(path);
         return target;
+    }
+
+    /// <summary>Forgets a video that has left the library, deleting its frames, and captures none of it again; one already
+    /// running deletes its frame when it ends.</summary>
+    public void Forget(Guid videoId)
+    {
+        lock (_lock)
+        {
+            _forgotten.Add(videoId);
+            foreach (var key in _entries.Keys.Where(key => key.Item1 == videoId).ToArray())
+                if (_entries.Remove(key, out var node)) _recent.Remove(node);
+            _failed.Remove(videoId);
+        }
+        RemoveDirectory(Path.Combine(_paths.PreviewDirectory, videoId.ToString("N")));
+    }
+
+    private static InvalidOperationException LeftTheLibrary() => new("The video has left the library.");
+
+    private static void RemoveDirectory(string directory)
+    {
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning($"Could not remove the previews in {directory}: {exception.Message}");
+        }
     }
 
     private static void Delete(string path)

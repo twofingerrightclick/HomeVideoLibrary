@@ -85,6 +85,15 @@ public sealed class HoverStripStore(LibraryPaths paths, IMatroskaFileEditor fram
         TryDelete(strip);
     }
 
+    /// <summary>Forgets and deletes every strip of a video that has left the library.</summary>
+    public void Forget(Guid videoId)
+    {
+        var prefix = $"{videoId:N}.";
+        foreach (var name in _known.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal))) _known.TryRemove(name, out _);
+        if (!Directory.Exists(paths.StripDirectory)) return;
+        foreach (var strip in Directory.EnumerateFiles(paths.StripDirectory, prefix + "*")) TryDelete(strip);
+    }
+
     /// <summary>Indexes the strips on disk for <see cref="TryGet"/>, first deleting those of videos not in
     /// <paramref name="live"/>, empty ones and those in another format. Never throws: failures are traced.</summary>
     public Task LoadAsync(IReadOnlySet<Guid> live) => Task.Run(() =>

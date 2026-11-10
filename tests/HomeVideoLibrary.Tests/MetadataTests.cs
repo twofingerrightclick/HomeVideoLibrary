@@ -13,6 +13,81 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task AVideoNoImportWroteGetsOnlyItsMissingTitleAndDateAndKeepsEverythingAsWritten()
+    {
+        var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));
+        await catalog.InitializeAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var recorded = new DateTimeOffset(1997, 7, 3, 18, 30, 0, TimeSpan.Zero);
+        async Task<LibraryVideo> VideoAsync(string name, string? fingerprint, params (string Name, string Value)[] tags)
+        {
+            var id = Guid.NewGuid();
+            var video = new LibraryVideo(id, LibraryPaths.VideoRelativePath(id), name, TimeSpan.FromSeconds(2), DateTimeOffset.UtcNow, recorded)
+            {
+                SourceFingerprint = fingerprint,
+            };
+            var path = catalog.GetVideoPath(video.RelativePath);
+            await ToolAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-c:v", "libx264",
+                "-pix_fmt", "yuv420p", path]);
+            if (tags.Length > 0)
+            {
+                var xml = Path.Combine(_root, $"{id:N}.xml");
+                await File.WriteAllTextAsync(xml, "<Tags><Tag><Targets><TargetTypeValue>50</TargetTypeValue></Targets>" +
+                    string.Concat(tags.Select(tag => $"<Simple><Name>{tag.Name}</Name><String>{tag.Value}</String></Simple>")) + "</Tag></Tags>");
+                await ToolAsync(_tools.MkvPropEdit, [path, "--tags", "all:" + xml]);
+            }
+            await catalog.AddAsync(video);
+            return video;
+        }
+        var old = await VideoAsync("grandma visit", null, ("KEYWORDS", "summer, Beach"), ("DESCRIPTION", "Two  spaces stay"));
+        var imported = await VideoAsync("imported later", "v2:0123");
+        var clearedByUser = await VideoAsync("cleared", null, (VideoImporter.SourceFingerprintTag, "v1:4567"));
+
+        Assert.True(await service.FillMissingIdentityAsync(old));
+        Assert.False(await service.FillMissingIdentityAsync(old));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
+        Assert.False(await service.FillMissingIdentityAsync(clearedByUser));
+        File.Delete(catalog.GetVideoPath(imported.RelativePath));
+        Assert.False(await service.FillMissingIdentityAsync(imported));
+
+        var path = catalog.GetVideoPath(old.RelativePath);
+        var metadata = (await service.ReadTextAsync(path)).Metadata;
+        Assert.Equal(("grandma visit", recorded), (metadata.Title, metadata.RecordedAt));
+        var xml = await TagsXmlAsync(path);
+        Assert.Contains("<String>summer, Beach</String>", xml);
+        Assert.Contains("<String>Two  spaces stay</String>", xml);
+        Assert.DoesNotContain(VideoImporter.OriginalFileNameTag, xml);
+        Assert.Equal("", (await service.ReadTextAsync(catalog.GetVideoPath(clearedByUser.RelativePath))).Metadata.Title);
+    }
+
+    private async Task<string> TagsXmlAsync(string mkvPath)
+    {
+        var output = Path.Combine(_root, $"tags-{Guid.NewGuid():N}.xml");
+        await ToolAsync(_tools.MkvExtract, [mkvPath, "tags", output]);
+        return await File.ReadAllTextAsync(output);
+    }
+
+    [Fact]
+    public async Task AnExclusiveLeaseHoldsOffReadsAndSavesUntilItIsReleased()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var path = catalog.GetVideoPath(video.RelativePath);
+
+        var lease = await MatroskaMetadataService.AcquireExclusiveAsync(path);
+        var read = service.ReadTextAsync(path);
+        var save = service.SaveAsync(video, VideoMetadata.Empty with { Title = "after the lease" });
+        await Task.Delay(300);
+        Assert.False(read.IsCompleted);
+        Assert.False(save.IsCompleted);
+
+        lease.Dispose();
+        await read;
+        await save;
+        Assert.Equal("after the lease", (await service.ReadTextAsync(path)).Metadata.Title);
+    }
+
+    [Fact]
     public async Task RoundTripsEmbeddedMetadataAndJpegTimestampsAfterReopen()
     {
         var (catalog, video) = await CreateVideoAsync();

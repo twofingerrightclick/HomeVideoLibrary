@@ -10,8 +10,10 @@ using HomeVideoLibrary.UI.Logic;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-/// <summary>The per-library MKV services. Both are the same <see cref="MatroskaMetadataService"/> in the app.</summary>
-public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataService Metadata);
+/// <summary>The per-library MKV services. All are the same <see cref="MatroskaMetadataService"/> in the app.</summary>
+/// <param name="Identity">Writes missing titles and dates into older videos (the one-time <see cref="IdentityBackfill"/>);
+/// null skips the backfill.</param>
+public sealed record LibraryServices(IMatroskaFileEditor Files, IVideoMetadataService Metadata, IIdentityWriter? Identity = null);
 
 /// <summary>External services of <see cref="MainWindowViewModel"/>; the defaults are the real ones.</summary>
 public sealed record MainWindowDependencies
@@ -23,7 +25,7 @@ public sealed record MainWindowDependencies
     public Func<LibraryCatalog, LibraryServices> CreateServices { get; init; } = catalog =>
     {
         var service = new MatroskaMetadataService(catalog, MediaTools.Discover());
-        return new LibraryServices(service, service);
+        return new LibraryServices(service, service, service);
     };
     public Func<LibraryCatalog, IVideoImporter> CreateImporter { get; init; } = catalog => new VideoImporter(catalog, MediaTools.Discover());
     public Func<LibraryCatalog, IClipEditingService> CreateClipEditing { get; init; } = catalog => new ClipEditingService(catalog, MediaTools.Discover());
@@ -31,6 +33,7 @@ public sealed record MainWindowDependencies
         cancellationToken => MediaTools.Discover().FindUnavailableAsync(cancellationToken);
     public Func<LibraryLock, CancellationToken, Task> SweepScratch { get; init; } = ScratchSweeper.SweepAsync;
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
+    public IFileTrash Trash { get; init; } = FileTrash.ForCurrentPlatform();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
     /// <summary>The clock for toasts and job estimates.</summary>
@@ -81,6 +84,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
+        var holders = new ShellVideoHolders(() => _strips, () => _previews, dependencies.Post);
+        Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash, holders), Shelf, Jobs, dependencies.Interaction,
+            LeavePagesShowingAsync, () => IsSettled, message => Status = message, RefreshView);
+        Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
             OpenLibraryAsync, () => IsSettled && !Jobs.HasActive, () => Page is null && !Jobs.HasActive, message => Status = message);
         Settings.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(SettingsViewModel.IsIndexing)) _strips?.BusyChanged(); };
@@ -118,6 +125,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AlbumsViewModel Albums { get; }
     public ImportViewModel Import { get; }
     public SettingsViewModel Settings { get; }
+    public TrashViewModel Trash { get; }
     /// <summary>Background imports and edits, shown in the activity drawer.</summary>
     public JobQueue Jobs { get; }
 
@@ -223,6 +231,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         if (_model is not { } model || _services is not { } services || model.Snapshot.Find(video.Id) is not { } record)
             return Refuse($"“{video.Label}” is no longer in the library.");
         if (record.IsMissing) return Refuse($"The file for “{record.Label}” is missing, so it cannot play.");
+        if (Trash.Holds(record.Id)) return Refuse($"“{record.Label}” is being moved to the Trash.");
         return NavigateAsync(() =>
         {
             var indexed = new IndexedMetadataService(services.Metadata, model);
@@ -242,9 +251,13 @@ public sealed class MainWindowViewModel : ViewModelBase
                     if (await NavigateAsync(() => null)) Albums.Current = Albums.Rows.FirstOrDefault(row => row.Id == album.Id);
                 },
                 AddToAlbum = album => Albums.AddToAlbumAsync(album.Id, [record.Id]),
+                MoveToTrash = () => Trash.MoveToTrashAsync([record.Id]),
             });
         });
     }
+
+    private Task<bool> LeavePagesShowingAsync(IReadOnlyCollection<Guid> videoIds) =>
+        Page is { } page && videoIds.Any(page.Shows) ? NavigateAsync(() => null) : Task.FromResult(true);
 
     private Task Refuse(string reason)
     {
@@ -544,6 +557,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         Status = $"{load.Videos} videos in your library" + (load.Pending > 0 ? $" · reading {load.Pending} for the first time…" : "")
             + string.Concat(load.Issues.Select(issue => Environment.NewLine + issue));
         _ = Settings.RefreshIndexAsync();
+        if (services.Identity is { } identity && ToolsReady)
+            _ = BackfillJob.RunAsync(Jobs, new IdentityBackfill(model, identity), id => Volatile.Read(ref _page)?.Shows(id) == true,
+                () => ReferenceEquals(_model, model) && IsSettled);
     }
 
     private static int CountRecoverySnapshots(LibraryPaths paths)
@@ -601,6 +617,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         _shown = snapshot;
         Albums.Apply(snapshot);
         Shelf.Apply(snapshot, Albums.Filter);
+        Trash.UpdateCommands();
         (Page as VideoPageViewModel)?.OnLibraryChanged(snapshot);
         OnPropertyChanged(nameof(Tags)); OnPropertyChanged(nameof(TotalCount));
     }
@@ -615,6 +632,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         Import.UpdateCommands();
         Settings.UpdateCommands();
+        Trash.UpdateCommands();
         foreach (var command in new[] { PlaySelectedCommand, TrimSelectedCommand, MergeSelectedCommand, BackCommand })
             command.RaiseCanExecuteChanged();
         DeleteSelectedCommand.RaiseCanExecuteChanged();
@@ -635,11 +653,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         Play(ClickSoundKind.Rubber);
     }
 
-    /// <summary>One toast and one chime per batch of jobs, for example "Imported 48 · 2 failed".</summary>
+    /// <summary>One toast and one chime per batch of jobs, for example "Imported 48 · 2 failed". The render lane also
+    /// runs trash and metadata jobs, so its batches are counted as finished jobs, not renders.</summary>
     private void LaneDrained(JobBatch batch)
     {
         if (batch.Succeeded + batch.Failed == 0) return;
-        var done = (batch.Lane == JobLane.Import ? "Imported " : "Rendered ") + batch.Succeeded;
+        var done = (batch.Lane == JobLane.Import ? "Imported " : "Finished ") + batch.Succeeded;
         ShowToast(batch.Failed == 0 ? done : $"{done} · {batch.Failed} failed");
         if (batch.Succeeded > 0) Play(ClickSoundKind.Chime);
     }

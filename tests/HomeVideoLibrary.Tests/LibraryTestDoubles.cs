@@ -134,6 +134,15 @@ internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInt
 
     public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
 
+    /// <summary>Answers from <see cref="ConfirmAnswers"/>, declining when it runs out, so nothing is ever destroyed by default.</summary>
+    public Queue<bool> ConfirmAnswers { get; } = new();
+    public List<HomeVideoLibrary.Desktop.ViewModels.Confirmation> Confirmations { get; } = [];
+    public Task<bool> ConfirmAsync(HomeVideoLibrary.Desktop.ViewModels.Confirmation confirmation)
+    {
+        Confirmations.Add(confirmation);
+        return Task.FromResult(ConfirmAnswers.TryDequeue(out var answer) && answer);
+    }
+
     public HomeVideoLibrary.Desktop.ViewModels.CloseChoice CloseChoice { get; set; } = HomeVideoLibrary.Desktop.ViewModels.CloseChoice.CancelJobs;
     public int CloseAsked { get; private set; }
     public Task<HomeVideoLibrary.Desktop.ViewModels.CloseChoice> AskCloseWithJobsAsync(int activeJobs)

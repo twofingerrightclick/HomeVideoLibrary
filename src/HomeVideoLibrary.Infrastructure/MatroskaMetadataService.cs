@@ -12,7 +12,7 @@ namespace HomeVideoLibrary.Infrastructure;
 /// <summary>Reads and writes the metadata the MKV owns. Every operation on a file is serialized through a per-path gate
 /// shared by all instances. Writes are in place with mkvpropedit, which rewrites only metadata elements.</summary>
 public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, MediaTools tools, MediaProcess? process = null)
-    : IVideoMetadataService, IMatroskaFileEditor
+    : IVideoMetadataService, IMatroskaFileEditor, IIdentityWriter
 {
     private const string ManifestName = "home-video-library.thumbnails.v1.json";
     private const int MaxThumbnails = 20;
@@ -70,6 +70,49 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
             Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration);
             var plan = await PlanWriteAsync(original, metadata, null, keepThumbnails: false, scratch, cancellationToken);
             await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
+        }
+        finally { DeleteDirectory(scratch); }
+    }
+
+    /// <summary>Writes TITLE and DATE_RECORDED into a library video that no import of this app wrote them into (one
+    /// imported before imports did, or an edit of one), so the file says what it is on its own. Only an absent tag is
+    /// added, with the catalog's value: TITLE from the segment title, else the name the video was added under; DATE_RECORDED
+    /// from the catalog date. Nothing else in the file is rewritten or re-normalized. A file an import of this app wrote
+    /// (it carries a source fingerprint) is never changed: a tag missing there was cleared by the user. Written in place
+    /// like <see cref="SaveAsync"/>: verified, and rolled back on failure.</summary>
+    /// <returns>False, without writing, when nothing was missing.</returns>
+    public async Task<bool> FillMissingIdentityAsync(LibraryVideo video, CancellationToken cancellationToken = default)
+    {
+        if (video.SourceFingerprint is not null) return false;
+        var path = catalog.GetVideoPath(video.RelativePath);
+        using var _ = await EnterGateAsync(path, cancellationToken);
+        var scratch = CreateScratch();
+        try
+        {
+            var original = await ReadStateAsync(path, scratch, cancellationToken);
+            if (MatroskaMetadataXml.HasGlobal(original.Tags, VideoImporter.SourceFingerprintTag)) return false;
+            var additions = new Dictionary<string, string>();
+            var expected = original.Written;
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "TITLE") &&
+                MetadataText.NormalizeTitle(original.Metadata.Title.Length > 0 ? original.Metadata.Title : video.DisplayName) is { Length: > 0 } title)
+            {
+                additions["TITLE"] = title;
+                expected = expected with { Title = title };
+            }
+            if (!MatroskaMetadataXml.HasGlobal(original.Tags, "DATE_RECORDED"))
+            {
+                var date = video.RecordedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+                additions["DATE_RECORDED"] = date;
+                expected = expected with { RecordedAt = RecordedDate.TryParse(date, out var parsed) ? parsed : null, RecordedAtText = date };
+            }
+            if (additions.Count == 0) return false;
+            var tags = new XDocument(original.Tags);
+            MatroskaMetadataXml.AddGlobal(tags, additions);
+            var tagsPath = Path.Combine(scratch, "tags.xml");
+            await File.WriteAllTextAsync(tagsPath, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + tags, cancellationToken);
+            var plan = new WritePlan(["--tags", "all:" + tagsPath], original.Manifest, TouchesAttachments: false, additions);
+            await WriteWithRollbackAsync(path, original, expected, plan, scratch, cancellationToken);
+            return true;
         }
         finally { DeleteDirectory(scratch); }
     }
@@ -194,6 +237,13 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
 
     private string ThumbnailCachePath(Guid videoId, Guid thumbnailId) =>
         Path.Combine(catalog.Paths.ThumbnailCacheDirectory, videoId.ToString("N"), thumbnailId.ToString("N") + ".jpg");
+
+    /// <summary>Takes the per-path gate that every read and write of <paramref name="mkvPath"/> goes through: an
+    /// operation in progress finishes first, and none starts until the returned lease is disposed. For work that needs the
+    /// file to itself, such as moving it to the Trash. Not reentrant: do not use this service on the same file while
+    /// holding the lease.</summary>
+    public static Task<IDisposable> AcquireExclusiveAsync(string mkvPath, CancellationToken cancellationToken = default) =>
+        EnterGateAsync(Path.GetFullPath(mkvPath), cancellationToken);
 
     private static async Task<IDisposable> EnterGateAsync(string path, CancellationToken cancellationToken)
     {

@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using HomeVideoLibrary.Desktop.ViewModels;
@@ -8,12 +9,13 @@ using HomeVideoLibrary.UI.Controls;
 namespace HomeVideoLibrary.Desktop.Views;
 
 /// <summary>A modal question as a real window, so it shows above the native video surface. Each key closes the window
-/// with its answer; closing it any other way answers <c>dismissed</c>.</summary>
+/// with its answer; closing it any other way answers <c>dismissed</c>. Optional details (for example the videos an
+/// action affects) are listed under the message.</summary>
 public sealed class PromptWindow<TAnswer> : Window
 {
     public sealed record Option(string Label, TAnswer Answer, string? Classes = null, bool IsDefault = false, bool IsCancel = false);
 
-    public PromptWindow(string title, string message, TAnswer dismissed, IReadOnlyList<Option> keys)
+    public PromptWindow(string title, string message, TAnswer dismissed, IReadOnlyList<Option> keys, IReadOnlyList<string>? details = null)
     {
         Title = title;
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -36,12 +38,15 @@ public sealed class PromptWindow<TAnswer> : Window
             if (key.Classes is { } classes) button.Classes.Add(classes);
             footer.Children.Add(button);
         }
-        Content = new VcrDialog
+        var body = new StackPanel { Spacing = 10, Children = { new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 500 } } };
+        if (details is { Count: > 0 })
         {
-            Title = title,
-            Content = new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 500 },
-            Footer = footer,
-        };
+            var list = new ItemsControl { ItemsSource = details, MaxWidth = 500 };
+            list.ItemTemplate = new FuncDataTemplate<string>((line, _) =>
+                new TextBlock { Text = line, Classes = { "meta" }, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
+            body.Children.Add(new ScrollViewer { Content = list, MaxHeight = 220 });
+        }
+        Content = new VcrDialog { Title = title, Content = body, Footer = footer };
         Opened += (_, _) => (keys.Count > 0 ? footer.Children.OfType<Button>().FirstOrDefault(b => b.IsDefault) ?? footer.Children[0] : this)
             .Focus(NavigationMethod.Tab);
     }
