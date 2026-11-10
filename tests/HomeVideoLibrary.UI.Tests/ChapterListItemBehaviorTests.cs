@@ -70,9 +70,9 @@ public sealed class ChapterListItemBehaviorTests
     [AvaloniaFact]
     public void Expanded_content_shows_only_while_expanded_and_its_clicks_are_its_own()
     {
-        var jumps = new RecordingCommand();
+        var activations = new RecordingCommand();
         var inside = new Border { Height = 60, Background = Avalonia.Media.Brushes.Transparent };
-        var (window, row) = Host(new ChapterListItem { Title = "Cake", JumpCommand = jumps, ExpandedContent = inside });
+        var (window, row) = Host(new ChapterListItem { Title = "Cake", ActivateCommand = activations, ExpandedContent = inside });
         var expanded = row.GetVisualDescendants().OfType<Avalonia.Controls.Presenters.ContentPresenter>()
             .Single(presenter => presenter.Name == ChapterListItem.ExpandedPartName);
         Assert.False(expanded.IsVisible);
@@ -86,7 +86,7 @@ public sealed class ChapterListItemBehaviorTests
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
 
-        Assert.Empty(jumps.Calls);
+        Assert.Empty(activations.Calls);
     }
 
     [AvaloniaFact]
@@ -94,7 +94,7 @@ public sealed class ChapterListItemBehaviorTests
     {
         var row = new ChapterListItem { Title = "Cake" };
         var expand = new ExpandCommand(row);
-        row.JumpCommand = expand;
+        row.ActivateCommand = expand;
         var (window, _) = Host(row);
         var point = Headless.At(row, 0.5);
 
@@ -115,7 +115,7 @@ public sealed class ChapterListItemBehaviorTests
         var seeks = new RecordingCommand();
         var row = new ChapterListItem { Title = "Cake", Start = TimeSpan.FromSeconds(30), SeekCommand = seeks };
         var expand = new ExpandCommand(row);
-        row.JumpCommand = expand;
+        row.ActivateCommand = expand;
         var (window, _) = Host(row);
         var start = row.GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
         var point = Headless.At(start, 0.5);

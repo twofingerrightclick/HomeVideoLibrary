@@ -14,7 +14,7 @@ namespace HomeVideoLibrary.UI.Controls;
 
 /// <summary>
 /// One chapter row of the Chapters inspector: start time, title, and trailing host actions in
-/// <see cref="ContentControl.Content"/>. Clicking the row, or Enter on it, executes <see cref="JumpCommand"/>;
+/// <see cref="ContentControl.Content"/>. Clicking the row, or Enter on it, executes <see cref="ActivateCommand"/>;
 /// clicking its start time executes <see cref="SeekCommand"/> instead, when one is set. Double-click
 /// or F2 sets <see cref="IsEditing"/>; while editing, a title field is created for this edit only (so its
 /// undo history never reaches another chapter) and bound to <see cref="DraftTitle"/>. Enter or leaving
@@ -76,8 +76,10 @@ public class ChapterListItem : ContentControl
     public static readonly StyledProperty<IDataTemplate?> ExpandedContentTemplateProperty =
         AvaloniaProperty.Register<ChapterListItem, IDataTemplate?>(nameof(ExpandedContentTemplate));
 
-    public static readonly StyledProperty<ICommand?> JumpCommandProperty =
-        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(JumpCommand));
+    /// <summary>Executed by a click on the row outside the start time, or Enter or Space on it; the host decides what
+    /// activating a row does (the video page expands it).</summary>
+    public static readonly StyledProperty<ICommand?> ActivateCommandProperty =
+        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(ActivateCommand));
 
     /// <summary>Executed by a click on the start time.</summary>
     public static readonly StyledProperty<ICommand?> SeekCommandProperty =
@@ -173,10 +175,10 @@ public class ChapterListItem : ContentControl
         set => SetValue(ExpandedContentTemplateProperty, value);
     }
 
-    public ICommand? JumpCommand
+    public ICommand? ActivateCommand
     {
-        get => GetValue(JumpCommandProperty);
-        set => SetValue(JumpCommandProperty, value);
+        get => GetValue(ActivateCommandProperty);
+        set => SetValue(ActivateCommandProperty, value);
     }
 
     public ICommand? SeekCommand
@@ -254,7 +256,7 @@ public class ChapterListItem : ContentControl
         if (pressedHere && !e.Handled && !IsEditing && e.InitialPressMouseButton == MouseButton.Left)
         {
             e.Handled = true;
-            Execute(pressedStart && SeekCommand is { } seek ? seek : JumpCommand, null);
+            Execute(pressedStart && SeekCommand is { } seek ? seek : ActivateCommand, null);
         }
     }
 
@@ -274,7 +276,7 @@ public class ChapterListItem : ContentControl
         else if (e.Key is Key.Enter or Key.Space)
         {
             e.Handled = true;
-            Execute(JumpCommand, null);
+            Execute(ActivateCommand, null);
         }
     }
 

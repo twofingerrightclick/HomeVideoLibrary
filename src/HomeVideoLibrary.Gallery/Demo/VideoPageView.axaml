@@ -32,7 +32,7 @@
                                IsCurrent="{Binding IsCurrent}"
                                IsEditing="{Binding IsEditing, Mode=TwoWay}"
                                DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
-                               JumpCommand="{Binding ToggleExpanded}"
+                               ActivateCommand="{Binding ToggleExpanded}"
                                SeekCommand="{Binding Jump}"
                                CommitTitleCommand="{Binding CommitTitle}"
                                IsExpanded="{Binding IsExpanded}"
