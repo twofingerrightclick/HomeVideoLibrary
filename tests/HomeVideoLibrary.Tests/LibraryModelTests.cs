@@ -139,6 +139,87 @@ public sealed class LibraryModelTests : IDisposable
     }
 
     [Fact]
+    public async Task RemovingVideosDeletesTheirRowsMembershipsAndCacheAndPublishesOneDelta()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var removed = await AddVideoAsync(catalog, "removed");
+        var kept = await AddVideoAsync(catalog, "kept");
+        _files.Set(catalog.GetVideoPath(removed.RelativePath), VideoMetadata.Empty with { Tags = ["beach", "shared"] });
+        _files.Set(catalog.GetVideoPath(kept.RelativePath), VideoMetadata.Empty with { Tags = ["shared"] });
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.ReconcileAsync();
+        var album = await model.CreateAlbumAsync("Summer", [removed.Id, kept.Id]);
+        var deltas = new List<LibraryDelta>();
+        model.Changed += deltas.Add;
+
+        await model.RemoveVideosAsync([removed.Id, Guid.NewGuid()]);
+
+        var delta = Assert.Single(deltas);
+        Assert.Equal([removed.Id], delta.Removed);
+        Assert.True(delta.AlbumsChanged);
+        Assert.True(delta.TagsChanged);
+        Assert.Null(model.Snapshot.Find(removed.Id));
+        Assert.Equal([kept.Id], model.Snapshot.MembersOf(album.Id));
+        Assert.Null(model.Snapshot.Tags.Find("beach"));
+        Assert.Equal(1, model.Snapshot.Tags.Find("shared")!.VideoCount);
+        Assert.True(File.Exists(catalog.GetVideoPath(removed.RelativePath)));
+        var contents = await catalog.LoadContentsAsync();
+        Assert.Equal([kept.Id], contents.Videos.Select(video => video.Id));
+        Assert.Equal([(album.Id, kept.Id)], contents.Memberships);
+        Assert.Equal([kept.Id], contents.Cache.Keys);
+        Assert.Equal(1, await CountRowsAsync(catalog, "video_cache"));
+
+        var reloaded = new LibraryModel(catalog, _files);
+        await reloaded.LoadAsync();
+        Assert.Null(reloaded.Snapshot.Find(removed.Id));
+    }
+
+    [Fact]
+    public async Task ASaveFinishingAfterItsVideoWasRemovedDoesNotBringItBack()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "trashed");
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.RemoveVideosAsync([video.Id]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => model.UpsertFromFileAsync(video));
+        await model.ReconcileAsync();
+
+        Assert.Null(model.Snapshot.Find(video.Id));
+    }
+
+    [Fact]
+    public async Task AVideoWhoseFileWasTrashedButWhoseRowSurvivedACrashIsMissingAndCanBeRemoved()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var video = await AddVideoAsync(catalog, "half removed");
+        var trashed = Path.Combine(_root, "Trash", "half removed.mkv");
+        Directory.CreateDirectory(Path.GetDirectoryName(trashed)!);
+        File.Move(catalog.GetVideoPath(video.RelativePath), trashed);
+
+        var model = new LibraryModel(catalog, _files);
+        await model.LoadAsync();
+        await model.ReconcileAsync();
+        Assert.True(model.Snapshot.Find(video.Id)!.IsMissing);
+
+        await model.RemoveVideosAsync([video.Id]);
+        Assert.Empty(model.Snapshot.Videos);
+        Assert.Empty(await catalog.ListAsync());
+        Assert.True(File.Exists(trashed));
+    }
+
+    private static async Task<long> CountRowsAsync(LibraryCatalog catalog, string table)
+    {
+        await using var connection = new SqliteConnection($"Data Source={catalog.Paths.DatabasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {table}";
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    [Fact]
     public async Task AFileThatKeepsChangingWhileReadIsPublishedAsPendingNotAsStaleContent()
     {
         var catalog = await CreateCatalogAsync(_root);

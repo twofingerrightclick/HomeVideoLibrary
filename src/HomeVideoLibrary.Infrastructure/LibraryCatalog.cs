@@ -306,6 +306,23 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>Deletes video rows in one transaction; their album memberships and cache rows go with them (foreign-key
+    /// cascades). Ids without a row are ignored. Touches no file.</summary>
+    public async Task DeleteVideosAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return;
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        foreach (var id in ids)
+        {
+            await using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = "DELETE FROM videos WHERE id=$id";
+            command.Parameters.AddWithValue("$id", id.ToString());
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     /// <summary>Whether a video row with this id exists, without reading the row, so an unreadable row still counts.</summary>
     public async Task<bool> ContainsVideoAsync(Guid id, CancellationToken cancellationToken = default) =>
         await GetRelativePathAsync(id, cancellationToken) is not null;
