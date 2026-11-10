@@ -3,7 +3,7 @@ using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.ViewModels;
 
-/// <summary>Runs a library's one-time <see cref="IdentityBackfill"/> as render-lane jobs of <see cref="IdentityBackfill.SliceSize"/>
+/// <summary>Runs a library's one-time <see cref="IdentityBackfill"/> as background render-lane jobs of <see cref="IdentityBackfill.SliceSize"/>
 /// videos each: it rewrites MKV metadata in place, which must not overlap a trim, split or merge reading the same file,
 /// and slicing lets jobs the user queues meanwhile run between slices instead of after the whole pass. Each slice is queued
 /// when the previous one has finished. Videos open on a page are retried once after the rest; still open then, they wait for
@@ -34,7 +34,7 @@ public static class BackfillJob
                 {
                     result = await backfill.RunAsync(slice, isBusy, new JobProgressAdapter(progress, slice.Count), cancellationToken);
                     return JobOutcome.Done(Summarize(result));
-                });
+                }, background: true);
                 await job.Completion;
                 if (job.State != JobState.Succeeded || result is null || !canContinue()) return;
                 done += slice.Count;

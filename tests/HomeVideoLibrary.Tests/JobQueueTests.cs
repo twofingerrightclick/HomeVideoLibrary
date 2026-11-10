@@ -357,6 +357,30 @@ public sealed class JobQueueTests
         Assert.Equal([new JobBatch(JobLane.Import, Succeeded: 2, Failed: 1, Cancelled: 1)], batches);
     });
 
+    [Fact]
+    public Task BackgroundJobsCountInNoBatchAndLeaveTheDrawerWhenTheySucceed() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var batches = new List<JobBatch>();
+        queue.Drained += batches.Add;
+        var gate = new TaskCompletionSource<JobOutcome>();
+        queue.Enqueue("slice 1", JobLane.Render, (_, _) => gate.Task, background: true);
+        queue.Enqueue("trim", JobLane.Render, (_, _) => gate.Task);
+        var drainedAfterTrim = new TaskCompletionSource<int>();
+        queue.Drained += _ => drainedAfterTrim.TrySetResult(queue.Jobs.Count(job => !job.IsFinished));
+        queue.Enqueue("slice 2", JobLane.Render, (_, _) => gate.Task, background: true);
+        var failing = queue.Enqueue("slice 3", JobLane.Render, (_, _) => throw new IOException("disk"), background: true);
+
+        gate.SetResult(JobOutcome.Done("ok"));
+        await queue.WhenIdleAsync();
+        await UiThread.Settle();
+
+        Assert.Equal([new JobBatch(JobLane.Render, Succeeded: 1)], batches);
+        Assert.Equal(2, await drainedAfterTrim.Task);
+        Assert.Equal(["slice 3", "trim"], queue.Jobs.Select(job => job.Title).Order());
+        Assert.True(failing.HasFailed);
+    });
+
     /// <summary>Starts a render that hands out its progress sink and runs until released.</summary>
     private static (JobViewModel Job, Task<IProgress<JobProgress>> Progress, TaskCompletionSource Release) StartReporting(JobQueue queue)
     {
