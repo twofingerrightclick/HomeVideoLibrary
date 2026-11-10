@@ -218,21 +218,27 @@ public sealed class FileTrashTests : IDisposable
         Assert.Equal(accepts, WindowsTrashRules.BinAccepts(length, new RecycleBinPolicy(nukeOnDelete, capacity)));
 
     [Theory]
-    [InlineData(0, false, true, TrashResult.Trashed)]
-    [InlineData(0, false, false, TrashResult.Deleted)]
-    [InlineData(unchecked((int)0x800704C7), false, null, TrashResult.Unavailable)]
-    [InlineData(0x75, false, null, TrashResult.Unavailable)]
-    [InlineData(0, true, null, TrashResult.Unavailable)]
-    [InlineData(unchecked((int)0x80070020), false, null, TrashResult.Locked)]
-    [InlineData(unchecked((int)0x80270031), false, null, TrashResult.Locked)]
-    public void WindowsOutcomesMapToWhatHappenedToTheFile(int result, bool aborted, bool? recycled, TrashResult expected) =>
-        Assert.Equal(expected, WindowsTrashRules.Map(result, aborted, recycled, "a.mkv"));
+    [InlineData(0, 0, false, true, TrashResult.Trashed)]
+    [InlineData(0, 0, false, false, TrashResult.Deleted)]
+    [InlineData(unchecked((int)0x800704C7), 0, false, null, TrashResult.Unavailable)]
+    [InlineData(0x75, 0, false, null, TrashResult.Unavailable)]
+    [InlineData(0, 0, true, null, TrashResult.Unavailable)]
+    [InlineData(0, unchecked((int)0x80270000), true, null, TrashResult.Unavailable)]
+    [InlineData(unchecked((int)0x80070020), 0, false, null, TrashResult.Locked)]
+    [InlineData(unchecked((int)0x80270027), 0, false, null, TrashResult.Locked)]
+    [InlineData(0, unchecked((int)0x80270027), true, null, TrashResult.Locked)]
+    [InlineData(0, unchecked((int)0x80270028), true, null, TrashResult.Locked)]
+    [InlineData(0, unchecked((int)0x80070021), true, null, TrashResult.Locked)]
+    public void WindowsOutcomesMapToWhatHappenedToTheFile(int result, int itemResult, bool aborted, bool? recycled, TrashResult expected) =>
+        Assert.Equal(expected, WindowsTrashRules.Map(result, itemResult, aborted, recycled, "a.mkv"));
 
     [Fact]
     public void AFileDeletedOutrightIsNeverReportedAsTrashedAndOtherFailuresThrow()
     {
-        Assert.NotEqual(TrashResult.Trashed, WindowsTrashRules.Map(0, aborted: true, recycled: false, "a.mkv"));
-        Assert.Throws<IOException>(() => WindowsTrashRules.Map(unchecked((int)0x80070005), false, null, "a.mkv"));
+        Assert.NotEqual(TrashResult.Trashed, WindowsTrashRules.Map(0, 0, aborted: true, recycled: false, "a.mkv"));
+        Assert.Throws<IOException>(() => WindowsTrashRules.Map(unchecked((int)0x80070005), 0, false, null, "a.mkv"));
+        var itemFailure = Assert.Throws<IOException>(() => WindowsTrashRules.Map(0, unchecked((int)0x80070005), true, null, "a.mkv"));
+        Assert.Equal(unchecked((int)0x80070005), itemFailure.HResult);
     }
 
     [Fact]

@@ -29,23 +29,23 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
         var owner = ownerWindow?.Invoke() ?? 0;
         // Shell operations and the warning dialog they may show need a single-threaded apartment with a message loop.
         var outcome = DedicatedThread.Run(ApartmentState.STA, () => Recycle(full, owner));
-        return WindowsTrashRules.Map(outcome.Result, outcome.Aborted, outcome.Recycled, Path.GetFileName(full));
+        return WindowsTrashRules.Map(outcome.Result, outcome.ItemResult, outcome.Aborted, outcome.Recycled, Path.GetFileName(full));
     }
 
-    private static (int Result, bool Aborted, bool? Recycled) Recycle(string path, nint owner)
+    private static (int Result, int ItemResult, bool Aborted, bool? Recycled) Recycle(string path, nint owner)
     {
         var operation = (IFileOperation)Activator.CreateInstance(Type.GetTypeFromCLSID(FileOperationClass, throwOnError: true)!)!;
         try
         {
             var result = CreateItem(path, 0, typeof(IShellItem).GUID, out var item);
-            if (result < 0) return (result, false, null);
+            if (result < 0) return (result, 0, false, null);
             var sink = new DeleteSink();
             operation.SetOperationFlags(AllowUndo | NoConfirmation | Silent | NoErrorUi | WantNukeWarning | RecycleOnDelete);
             if (owner != 0) operation.SetOwnerWindow(owner);
             operation.DeleteItem(item, sink);
             result = operation.PerformOperations();
             operation.GetAnyOperationsAborted(out var aborted);
-            return (result, aborted, sink.Recycled);
+            return (result, sink.ItemResult, aborted, sink.Recycled);
         }
         finally { Marshal.ReleaseComObject(operation); }
     }
@@ -98,16 +98,20 @@ internal sealed class WindowsFileTrash(Func<nint>? ownerWindow = null) : IFileTr
     [DllImport("shell32.dll", EntryPoint = "SHCreateItemFromParsingName", CharSet = CharSet.Unicode)]
     private static extern int CreateItem(string path, nint bindContext, in Guid interfaceId, out IShellItem item);
 
-    /// <summary>Records whether the deleted item reappeared in the Recycle Bin: PostDeleteItem names the recycled item, or
-    /// none when the file was deleted outright.</summary>
+    /// <summary>Records what happened to the deleted item: PostDeleteItem names the recycled item, or none when the file
+    /// was deleted outright; or it reports why the item failed, which PerformOperations need not.</summary>
     [ComVisible(true)]
     private sealed class DeleteSink : IFileOperationProgressSink
     {
         public bool? Recycled { get; private set; }
 
+        /// <summary>The item's failure; 0 when it did not fail or was never reached.</summary>
+        public int ItemResult { get; private set; }
+
         public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newlyCreated)
         {
             if (result >= 0) Recycled = newlyCreated is not null;
+            else ItemResult = result;
             return 0;
         }
 
@@ -200,7 +204,9 @@ internal static class WindowsTrashRules
 {
     private const int Cancelled = 0x4C7, OperationCancelled = 0x75; // ERROR_CANCELLED, DE_OPCANCELLED
     private const int SharingViolation = 0x20, LockViolation = 0x21;
-    private const int CopyEngineSharingViolationSource = unchecked((int)0x80270031);
+    // COPYENGINE_E_* from the Windows SDK's sherrors.h.
+    private const int CopyEngineUserCancelled = unchecked((int)0x80270000),
+        CopyEngineSharingViolationSource = unchecked((int)0x80270027), CopyEngineSharingViolationDestination = unchecked((int)0x80270028);
 
     /// <summary>The root to ask about the drive of a final path (<c>\\?\C:\...</c>, <c>\\?\Volume{...}\...</c>), or null
     /// for a network path (<c>\\?\UNC\...</c>, <c>\\server\...</c>), which never has a Recycle Bin.</summary>
@@ -217,17 +223,26 @@ internal static class WindowsTrashRules
     public static bool BinAccepts(long length, RecycleBinPolicy policy) =>
         !policy.NukeOnDelete && (policy.MaxCapacity is not { } capacity || length <= capacity);
 
+    /// <param name="result">From PerformOperations, which can succeed while the item failed.</param>
+    /// <param name="itemResult">From the progress sink: the item's failure, or 0.</param>
+    /// <param name="aborted">From GetAnyOperationsAborted.</param>
     /// <param name="recycled">From the progress sink: whether a recycled item was created; null when no item was deleted.</param>
     /// <exception cref="IOException">The operation failed for another reason.</exception>
-    public static TrashResult Map(int result, bool aborted, bool? recycled, string name)
+    public static TrashResult Map(int result, int itemResult, bool aborted, bool? recycled, string name)
     {
         if (result >= 0 && recycled is { } created) return created ? TrashResult.Trashed : TrashResult.Deleted;
-        var code = result & 0xFFFF;
-        if (result == CopyEngineSharingViolationSource || IsWin32(result) && code is SharingViolation or LockViolation) return TrashResult.Locked;
+        if (IsLocked(result) || IsLocked(itemResult)) return TrashResult.Locked;
         // The user declined Windows' warning that the file would be deleted rather than recycled.
-        if (aborted || IsWin32(result) && code is Cancelled or OperationCancelled || result == OperationCancelled) return TrashResult.Unavailable;
-        throw new IOException($"Windows could not move {name} to the Recycle Bin (0x{result:X8}).", result < 0 ? result : unchecked((int)0x80004005));
+        if (IsCancel(result) || IsCancel(itemResult) || aborted && result >= 0 && itemResult >= 0) return TrashResult.Unavailable;
+        var failure = result < 0 ? result : itemResult < 0 ? itemResult : unchecked((int)0x80004005);
+        throw new IOException($"Windows could not move {name} to the Recycle Bin (0x{failure:X8}).", failure);
     }
+
+    private static bool IsLocked(int result) => result is CopyEngineSharingViolationSource or CopyEngineSharingViolationDestination ||
+        IsWin32(result) && (result & 0xFFFF) is SharingViolation or LockViolation;
+
+    private static bool IsCancel(int result) => result is OperationCancelled or CopyEngineUserCancelled ||
+        IsWin32(result) && (result & 0xFFFF) is Cancelled or OperationCancelled;
 
     private static bool IsWin32(int result) => (result & 0x1FFF0000) == 0x00070000;
 }
