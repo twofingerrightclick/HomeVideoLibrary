@@ -8,7 +8,11 @@ namespace HomeVideoLibrary.Tests;
 public sealed class FileTrashTests : IDisposable
 {
     private const uint Uid = 4242;
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-trash-" + Guid.NewGuid().ToString("N"));
+    // Symlink-free (on macOS the temp directory is under /var, a symlink), as the Trash resolves paths before using them.
+    private readonly string _root = Path.Combine(ResolvedTemp(), "hvl-trash-" + Guid.NewGuid().ToString("N"));
+
+    private static string ResolvedTemp() =>
+        OperatingSystem.IsWindows() ? Path.GetTempPath() : FreedesktopTrash.RealPath(Path.GetTempPath()) ?? Path.GetTempPath();
 
     /// <summary>Uses a disk image mounted inside the test directory, so the file lands in that volume's own
     /// <c>.Trashes</c> and the user's Trash is never touched; the image is detached afterwards.</summary>
@@ -116,6 +120,84 @@ public sealed class FileTrashTests : IDisposable
 
         Assert.Equal(TrashResult.Unavailable, trash.MoveToTrash(file));
         Assert.True(File.Exists(file));
+    }
+
+    [Fact]
+    public void AFileReachedThroughASymlinkIsTrashedOnTheDeviceItIsReallyOn()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var device = Path.Combine(_root, "external");
+        var file = CreateFile(Path.Combine(device, "Library", "Videos", "a.mkv"));
+        var link = Path.Combine(_root, "link");
+        Directory.CreateSymbolicLink(link, Path.Combine(device, "Library"));
+        var trash = new FreedesktopTrash(Path.Combine(_root, "home", "Trash"), path => path.StartsWith(device, StringComparison.Ordinal) ? device : "/", Uid);
+
+        Assert.Equal(TrashResult.Trashed, trash.MoveToTrash(Path.Combine(link, "Videos", "a.mkv")));
+
+        Assert.False(File.Exists(file));
+        Assert.Contains("Path=Library/Videos/a.mkv", File.ReadAllLines(Path.Combine(device, $".Trash-{Uid}", "info", "a.mkv.trashinfo")));
+    }
+
+    [Fact]
+    public void MountPointsAreDecodedAndTheLongestOneHoldingTheFileWins()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string[] mountInfo =
+        [
+            "22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw",
+            @"30 22 8:17 / /media/My\040Drive rw,nosuid - exfat /dev/sdb1 rw",
+            "31 22 8:1 /srv/videos /home/me/Videos rw,relatime shared:1 - ext4 /dev/sda1 rw",
+        ];
+
+        Assert.Equal("/media/My Drive", FreedesktopTrash.MountPointIn("/media/My Drive/Library/Videos", mountInfo));
+        Assert.Equal("/home/me/Videos", FreedesktopTrash.MountPointIn("/home/me/Videos/Library", mountInfo));
+        Assert.Equal("/", FreedesktopTrash.MountPointIn("/home/me/Videos2", mountInfo));
+        Assert.Equal("a b\\c", FreedesktopTrash.Unescape(@"a\040b\134c"));
+    }
+
+    [Fact]
+    public void AMoveTheKernelRefusesAcrossDevicesLeavesTheFileAndNoRecord()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var home = Path.Combine(_root, "home", "Trash");
+        var file = CreateFile(Path.Combine(_root, "Videos", "a.mkv"));
+        var trash = new FreedesktopTrash(home, _ => "/", Uid, rename: (_, _) => 18);
+
+        Assert.Equal(TrashResult.Unavailable, trash.MoveToTrash(file));
+
+        Assert.True(File.Exists(file));
+        Assert.Empty(Directory.GetFiles(Path.Combine(home, "info")));
+    }
+
+    [Fact]
+    public void AnUnusableSharedTrashFallsBackToTheUsersOwn()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var device = Path.Combine(_root, "device");
+        var shared = Directory.CreateDirectory(Path.Combine(device, ".Trash"));
+        File.SetUnixFileMode(shared.FullName, (UnixFileMode)0b1_111_111_111);
+        File.WriteAllText(Path.Combine(shared.FullName, Uid.ToString()), "not a directory");
+        var trash = new FreedesktopTrash(Path.Combine(_root, "home", "Trash"), path => path.StartsWith(device, StringComparison.Ordinal) ? device : "/", Uid);
+
+        Assert.Equal(TrashResult.Trashed, trash.MoveToTrash(CreateFile(Path.Combine(device, "a.mkv"))));
+
+        Assert.True(File.Exists(Path.Combine(device, $".Trash-{Uid}", "files", "a.mkv")));
+    }
+
+    [Fact]
+    public void NonAsciiNamesKeepTheirNameAndArePercentEncodedInTheRecord()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var home = Path.Combine(_root, "home", "Trash");
+        var name = "Grandma’s tape ✓.mkv";
+        var file = CreateFile(Path.Combine(_root, "Vidéos", name));
+
+        Assert.Equal(TrashResult.Trashed, new FreedesktopTrash(home, _ => "/", Uid).MoveToTrash(file));
+
+        Assert.True(File.Exists(Path.Combine(home, "files", name)));
+        var recorded = File.ReadAllLines(Path.Combine(home, "info", name + ".trashinfo"))[1];
+        Assert.EndsWith("/Vid%C3%A9os/Grandma%E2%80%99s%20tape%20%E2%9C%93.mkv", recorded);
+        Assert.All(recorded, character => Assert.True(character < 128));
     }
 
     [Theory]

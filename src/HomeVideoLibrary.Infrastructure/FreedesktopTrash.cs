@@ -18,67 +18,65 @@ internal sealed class FreedesktopTrash : IFileTrash
     private readonly string _homeTrash;
     private readonly Func<string, string?> _mountPointOf;
     private readonly uint _uid;
+    private readonly Func<string, string, int?> _rename;
 
     public FreedesktopTrash() : this(HomeTrash(), MountPointOf, GetUserId()) { }
 
-    /// <param name="mountPointOf">The mount point of the device holding an existing path; null when unknown.</param>
-    internal FreedesktopTrash(string homeTrash, Func<string, string?> mountPointOf, uint uid)
+    /// <param name="mountPointOf">The mount point of the device holding an existing, symlink-free path; null when unknown.</param>
+    /// <param name="rename">rename(2): null on success, else errno.</param>
+    internal FreedesktopTrash(string homeTrash, Func<string, string?> mountPointOf, uint uid, Func<string, string, int?>? rename = null)
     {
-        _homeTrash = Path.GetFullPath(homeTrash); _mountPointOf = mountPointOf; _uid = uid;
+        _homeTrash = Path.GetFullPath(homeTrash); _mountPointOf = mountPointOf; _uid = uid; _rename = rename ?? Rename;
     }
 
     public TrashResult MoveToTrash(string path)
     {
+        FileTrash.RequireFile(path);
+        // Resolved once: the device lookup and the trashinfo path must both describe where the file really is.
         var full = Path.GetFullPath(path);
-        FileTrash.RequireFile(full);
-        var device = _mountPointOf(Path.GetDirectoryName(full)!);
-        if (device == _mountPointOf(NearestExisting(_homeTrash)))
-            return Move(full, _homeTrash, relativeTo: null);
-        if (device is null || TopDirectoryTrash(device) is not { } trash) return TrashResult.Unavailable;
-        return Move(full, trash, relativeTo: device);
+        var directory = RealPath(Path.GetDirectoryName(full)!) ?? Path.GetDirectoryName(full)!;
+        var file = Path.Combine(directory, Path.GetFileName(full));
+        var device = _mountPointOf(directory);
+        var home = NearestExisting(_homeTrash);
+        if (device == _mountPointOf(RealPath(home) ?? home))
+            return Move(file, _homeTrash, relativeTo: null) ?? TrashResult.Unavailable;
+        if (device is null) return TrashResult.Unavailable;
+        foreach (var trash in TopDirectoryTrashes(device))
+            if (Move(file, trash, relativeTo: device) is { } result) return result;
+        return TrashResult.Unavailable;
     }
 
-    /// <summary>The device's own Trash: <c>$topdir/.Trash/$uid</c> when the administrator provided a sticky,
-    /// non-symlink <c>.Trash</c>, otherwise <c>$topdir/.Trash-$uid</c>. Null when neither can be used.</summary>
-    private string? TopDirectoryTrash(string topDirectory)
+    /// <summary>The device's own Trashes in the spec's order: <c>$topdir/.Trash/$uid</c> when the administrator provided a
+    /// sticky, non-symlink <c>.Trash</c>, then <c>$topdir/.Trash-$uid</c>.</summary>
+    private IEnumerable<string> TopDirectoryTrashes(string topDirectory)
     {
         var shared = new DirectoryInfo(Path.Combine(topDirectory, ".Trash"));
         if (shared.Exists && shared.LinkTarget is null && shared.UnixFileMode.HasFlag(UnixFileMode.StickyBit))
-        {
-            var mine = Path.Combine(shared.FullName, _uid.ToString(CultureInfo.InvariantCulture));
-            if (IsUsable(mine)) return mine;
-        }
-        var own = Path.Combine(topDirectory, ".Trash-" + _uid.ToString(CultureInfo.InvariantCulture));
-        return IsUsable(own) ? own : null;
+            yield return Path.Combine(shared.FullName, _uid.ToString(CultureInfo.InvariantCulture));
+        yield return Path.Combine(topDirectory, ".Trash-" + _uid.ToString(CultureInfo.InvariantCulture));
     }
 
-    /// <summary>Whether <paramref name="trash"/> is (or can be created as) a real directory; a symlink is refused.</summary>
-    private static bool IsUsable(string trash)
-    {
-        var directory = new DirectoryInfo(trash);
-        if (directory.Exists) return directory.LinkTarget is null;
-        if (File.Exists(trash)) return false;
-        try
-        {
-            Directory.CreateDirectory(trash, Private);
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return false; }
-    }
-
+    /// <summary>Moves <paramref name="file"/> into <paramref name="trash"/>. Null when this Trash cannot be used (it is a
+    /// symlink or cannot be created, or it is on another device after all), so the next one may be tried.</summary>
     /// <param name="relativeTo">The top directory the trashinfo path is relative to (so the device can be mounted
     /// elsewhere), or null for an absolute path.</param>
-    private static TrashResult Move(string file, string trash, string? relativeTo)
+    private TrashResult? Move(string file, string trash, string? relativeTo)
     {
-        var files = Directory.CreateDirectory(Path.Combine(trash, "files"), Private).FullName;
-        var info = Directory.CreateDirectory(Path.Combine(trash, "info"), Private).FullName;
+        string files, info;
+        try
+        {
+            if (new DirectoryInfo(trash) is { Exists: true, LinkTarget: not null } || File.Exists(trash)) return null;
+            files = Directory.CreateDirectory(Path.Combine(trash, "files"), Private).FullName;
+            info = Directory.CreateDirectory(Path.Combine(trash, "info"), Private).FullName;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return null; }
         var original = relativeTo is null ? file : Path.GetRelativePath(relativeTo, file);
         var (name, record) = Reserve(info, files, file, original);
-        if (Rename(file, Path.Combine(files, name)) is not { } errno) return TrashResult.Trashed;
+        if (_rename(file, Path.Combine(files, name)) is not { } errno) return TrashResult.Trashed;
         File.Delete(record);
         return errno switch
         {
-            CrossDevice => TrashResult.Unavailable,
+            CrossDevice => null,
             Busy => TrashResult.Locked,
             _ => throw new IOException($"Could not move {Path.GetFileName(file)} to the Trash (errno {errno})."),
         };
@@ -136,24 +134,22 @@ internal sealed class FreedesktopTrash : IFileTrash
         return Path.Combine(dataHome, "Trash");
     }
 
-    /// <summary>The longest mount point in <c>/proc/self/mountinfo</c> containing the real path of <paramref name="path"/>.</summary>
     private static string? MountPointOf(string path)
     {
-        string resolved;
-        string[] lines;
-        try
-        {
-            resolved = RealPath(path) ?? path;
-            lines = File.ReadAllLines("/proc/self/mountinfo");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or DllNotFoundException) { return null; }
-        return lines.Select(line => line.Split(' ')).Where(fields => fields.Length > 4).Select(fields => Unescape(fields[4]))
-            .Where(mount => mount == "/" || resolved == mount || resolved.StartsWith(mount + "/", StringComparison.Ordinal))
-            .MaxBy(mount => mount.Length);
+        try { return MountPointIn(path, File.ReadLines("/proc/self/mountinfo")); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return null; }
     }
 
+    /// <summary>The longest mount point in <paramref name="mountInfo"/> (lines of <c>/proc/self/mountinfo</c>, whose fifth
+    /// field is the mount point) that contains <paramref name="path"/>, which must be free of symlinks. A bind mount is its
+    /// own mount point, so a file under one goes to that mount's Trash.</summary>
+    internal static string? MountPointIn(string path, IEnumerable<string> mountInfo) =>
+        mountInfo.Select(line => line.Split(' ')).Where(fields => fields.Length > 4).Select(fields => Unescape(fields[4]))
+            .Where(mount => mount == "/" || path == mount || path.StartsWith(mount + "/", StringComparison.Ordinal))
+            .MaxBy(mount => mount.Length);
+
     /// <summary>Decodes mountinfo's octal escapes (<c>\040</c> for a space).</summary>
-    private static string Unescape(string field)
+    internal static string Unescape(string field)
     {
         var builder = new StringBuilder(field.Length);
         for (var index = 0; index < field.Length; index++)
@@ -168,7 +164,8 @@ internal sealed class FreedesktopTrash : IFileTrash
         return builder.ToString();
     }
 
-    private static string? RealPath(string path)
+    /// <summary>realpath(3): the path with every symlink resolved; null when it cannot be resolved.</summary>
+    internal static string? RealPath(string path)
     {
         var resolved = RealPathNative(path, 0);
         if (resolved == 0) return null;
