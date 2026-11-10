@@ -40,12 +40,79 @@ public sealed class MediaValidatorTests : IDisposable
         Assert.Equal(TimeSpan.FromSeconds(36), DecodeTolerance.ForImport(isMpegStream: false).For(TimeSpan.FromHours(2)));
     }
 
-    private async Task<string> CreateAsync(string name, IEnumerable<string> codecs)
+    // Excerpts of ffmpeg 9.0.2 `-v level+verbose` decode logs of the named files.
+    private const string GlitchedTransportStream = """
+        [in#0/mpegts @ 0xad7400000] [warning] PES packet size mismatch
+        [in#0/mpegts @ 0xad6810000] [warning] corrupt input packet in stream 1
+        [mp2 @ 0x929025f80] [error] Header missing
+        [aist#0:1/mp2 @ 0x928c24300] [dec:mp2 @ 0x928c2c3c0] [error] Error submitting packet to decoder: Invalid data found when processing input
+        [mpeg2video @ 0x929025500] [error] ac-tex damaged at 2 7
+        [mpeg2video @ 0x929025500] [error] Warning MVs not available
+        [vist#0:0/mpeg2video @ 0xad7000480] [dec:mpeg2video @ 0xad6810280] [warning] corrupt decoded frame
+        [in#0/mpegts @ 0xae1004000] [verbose]   Input stream #0:0 (video): 149 packets read (175739 bytes); 149 frames decoded; 0 decode errors;
+        [in#0/mpegts @ 0xae1004000] [verbose]   Input stream #0:1 (audio): 250 packets read (288018 bytes); 249 frames decoded; 1 decode errors (286848 samples);
+        """;
+
+    private const string WreckedCluster = """
+        [in#0/matroska,webm @ 0xb9b000000] [error] Element at 0x144a7e ending at 0x100144987 exceeds containing master element ending at 0x28521d
+        [in#0/matroska,webm @ 0xb9b000000] [error] 0x00 at pos 1329799 (0x144a87) invalid as first byte of an EBML number
+        [in#0/matroska,webm @ 0xb9ac2c000] [verbose]   Input stream #0:0 (video): 5975 packets read (430154 bytes); 5975 frames decoded; 0 decode errors;
+        [in#0/matroska,webm @ 0xb9ac2c000] [verbose]   Input stream #0:1 (audio): 11205 packets read (2076176 bytes); 11204 frames decoded; 0 decode errors (11472896 samples);
+        """;
+
+    // A 25 fps clip joined to a 30 fps clip, decoded with passthrough timing: nothing to report.
+    private const string MixedFrameRates = """
+        [in#0/matroska,webm @ 0xb10c2c000] [verbose]   Input stream #0:0 (video): 220 packets read (35963 bytes); 220 frames decoded; 0 decode errors;
+        """;
+
+    // ffmpeg before 7 printed the summary without a decode error count.
+    private const string OlderSummary = """
+        [verbose] Input stream #0:0 (video): 149 packets read (175739 bytes); 149 frames decoded;
+        """;
+
+    [Fact]
+    public void DecodeLogsCountDemuxerAndDecoderDamageButNotTiming()
+    {
+        Assert.Equal(new DecodeLog(4, 3, 398), DecodeLog.Parse(GlitchedTransportStream));
+        Assert.Equal(2, DecodeLog.Parse(WreckedCluster).Errors);
+        Assert.Equal(new DecodeLog(0, 0, 220), DecodeLog.Parse(MixedFrameRates));
+        Assert.Equal(new DecodeLog(0, 0, 149), DecodeLog.Parse(OlderSummary));
+        Assert.Equal(new DecodeLog(0, 0, null), DecodeLog.Parse(""));
+    }
+
+    [Fact]
+    public async Task ABrokenMatroskaClusterIsReportedEvenWhenNoDecoderComplains()
+    {
+        var path = await CreateAsync("long.mkv", ["-c:v", "libx264", "-g", "25", "-c:a", "aac"], seconds: 240, size: "64x48");
+        var bytes = await File.ReadAllBytesAsync(path);
+        var cluster = bytes.AsSpan(bytes.Length / 2).IndexOf(new byte[] { 0x1F, 0x43, 0xB6, 0x75 }) + bytes.Length / 2;
+        new byte[] { 0x08, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0 }.CopyTo(bytes, cluster + 4);
+        await File.WriteAllBytesAsync(path, bytes);
+
+        var report = await new MediaValidator(_tools, new MediaProcess())
+            .ValidateDecodedAsync(path, TimeSpan.FromSeconds(240), DecodeTolerance.ForImport(isMpegStream: false));
+
+        Assert.True(report.ErrorCount > 0);
+    }
+
+    [Theory]
+    [InlineData("ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers", 9, 0)]
+    [InlineData("ffmpeg version n6.1.1 Copyright (c) 2000-2023", 6, 1)]
+    [InlineData("mkvmerge v103.0 ('The Darkness') 64-bit", 103, 0)]
+    public void ToolVersionsAreReadFromTheirBanners(string banner, int major, int minor) =>
+        Assert.Equal(new Version(major, minor), MediaTools.ParseVersion(banner));
+
+    [Fact]
+    public void DevelopmentBuildsWithoutAVersionAreAccepted() =>
+        Assert.Null(MediaTools.ParseVersion("ffmpeg version N-112345-g0123abcd Copyright (c) 2000-2026"));
+
+    private async Task<string> CreateAsync(string name, IEnumerable<string> codecs, int seconds = 6, string size = "160x120")
     {
         Directory.CreateDirectory(_root);
         var path = Path.Combine(_root, name);
-        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25",
-            "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", "6", .. codecs, path], TimeSpan.FromSeconds(30));
+        var result = await new MediaProcess().RunAsync(_tools.Ffmpeg, ["-v", "error", "-n", "-f", "lavfi", "-i", $"testsrc=size={size}:rate=25",
+            "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture), .. codecs, path],
+            TimeSpan.FromSeconds(60));
         Assert.Equal(0, result.ExitCode);
         return path;
     }

@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Infrastructure.Editing;
 
@@ -38,7 +37,7 @@ public sealed record DecodeWindow(string Path, TimeSpan Start, TimeSpan Length);
 public sealed record EditBoundary(TimeSpan Position, IReadOnlyList<DecodeWindow> Sources);
 
 /// <summary>Checks decoded completeness rather than trusting potentially stale container headers.</summary>
-public sealed partial class MediaValidator(MediaTools tools, MediaProcess process)
+public sealed class MediaValidator(MediaTools tools, MediaProcess process)
 {
     private static readonly TimeSpan EdgeWindow = TimeSpan.FromSeconds(3);
     /// <summary>How far on each side of a boundary decoding is checked.</summary>
@@ -190,16 +189,15 @@ public sealed partial class MediaValidator(MediaTools tools, MediaProcess proces
     }
 
     /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
-    /// <summary>Decodes with ffmpeg and takes the error count from ffmpeg's own accounting rather than from the volume
-    /// of its log: the per-input-stream summary (<c>N decode errors</c>, packets the decoder rejected), the frames the
-    /// decoder flagged as corrupt (<c>corrupt decoded frame</c>, from the frame's error flags) and the packets the
-    /// demuxer flagged as corrupt. Frames go to the null sink with their own timestamps (<c>-fps_mode passthrough</c>,
-    /// demuxer time base) so variable frame rates, legitimate in Matroska, are not rounded onto one rate.</summary>
+    /// <summary>Decodes every video and audio stream to ffmpeg's null sink, the integrity check ffmpeg's documentation
+    /// describes, with frames passed on with their own timestamps (<c>-fps_mode passthrough</c>, demuxer time base) so
+    /// a variable frame rate, which Matroska allows, is not re-timed by the sink. See <see cref="DecodeLog"/> for how the
+    /// log is read.</summary>
     /// <param name="seek">An ffmpeg input seek, from <see cref="MediaTimeline.Seek"/>.</param>
     private async Task<DecodeReport> DecodeAsync(string path, string? seek, TimeSpan? length, TimeSpan expected,
         IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "verbose" };
+        var arguments = new List<string> { "-hide_banner", "-nostdin", "-v", "level+verbose" };
         if (seek is not null) arguments.AddRange(["-ss", seek]);
         arguments.AddRange(["-i", path]);
         if (length is { } duration) arguments.AddRange(["-t", MediaProbe.Seconds(duration)]);
@@ -215,30 +213,13 @@ public sealed partial class MediaValidator(MediaTools tools, MediaProcess proces
                 progress?.Report(Math.Clamp(microseconds / (double)(expected.Ticks / 10), 0, 1));
         });
         var result = await process.RunAsync(tools.Ffmpeg, arguments, TimeSpan.FromHours(24), cancellationToken, lines.Append);
-        var errors = CountDecodeErrors(result.StandardError);
-        if (errors > 0)
-            Trace.TraceWarning($"Decoding {path} found {errors} damaged packet(s) or frame(s): {result.StandardError}");
-        if (result.ExitCode != 0 && decodedMicroseconds == 0)
+        var log = DecodeLog.Parse(result.StandardError);
+        if (log.Errors > 0)
+            Trace.TraceWarning($"Decoding {path} found {log.Errors} damaged packet(s) or frame(s): {result.StandardError}");
+        if (result.ExitCode != 0 && (decodedMicroseconds == 0 || log.FramesDecoded == 0))
             throw new InvalidDataException("The video could not be decoded. " + MediaErrors.Summarize(result.StandardError));
-        return new DecodeReport(TimeSpan.FromTicks(decodedMicroseconds * 10), errors);
+        return new DecodeReport(TimeSpan.FromTicks(decodedMicroseconds * 10), log.Errors);
     }
-
-    /// <summary>Damaged packets and frames in an ffmpeg <c>-v verbose</c> decode log; see <see cref="DecodeAsync"/>.
-    /// Per-frame and per-packet lines are a lower bound when the log was truncated.</summary>
-    internal static int CountDecodeErrors(string verboseLog) =>
-        DecodeErrorSummary().Matches(verboseLog).Sum(match => int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture)) +
-        CountOccurrences(verboseLog, "corrupt decoded frame") + CountOccurrences(verboseLog, "corrupt input packet in stream");
-
-    private static int CountOccurrences(string text, string value)
-    {
-        var count = 0;
-        for (var index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
-            count++;
-        return count;
-    }
-
-    [GeneratedRegex(@"Input stream #\d+:\d+ \([a-z]+\): [^\n]*?(\d+) decode errors")]
-    private static partial Regex DecodeErrorSummary();
 
     private static string Key(ExpectedTrack track) => $"{track.Type} {track.Codec} ({track.Language})";
     private static TimeSpan Max(TimeSpan first, TimeSpan second) => first > second ? first : second;
