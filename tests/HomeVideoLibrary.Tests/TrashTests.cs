@@ -133,6 +133,24 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
+    public async Task TrashingAVideoDeletesItsHoverStripAndPreviewFrames()
+    {
+        var (vm, videos) = await OpenAsync("first");
+        var paths = vm.Model!.Catalog.Paths;
+        Directory.CreateDirectory(paths.StripDirectory);
+        var strip = Path.Combine(paths.StripDirectory, $"{videos[0].Id:N}.00ff.v1.jpg");
+        await File.WriteAllTextAsync(strip, "strip");
+        var frames = Directory.CreateDirectory(Path.Combine(paths.PreviewDirectory, videos[0].Id.ToString("N"))).FullName;
+        Select(vm, videos[0]);
+        _interaction.ConfirmAnswers.Enqueue(true);
+
+        await (await vm.Trash.MoveToTrashAsync(vm.Shelf.VisibleSelectedIds()))!.Completion;
+
+        Assert.False(File.Exists(strip));
+        Assert.False(Directory.Exists(frames));
+    }
+
+    [Fact]
     public async Task OneLockedFileFailsAloneAndKeepsItsVideo()
     {
         var (vm, videos) = await OpenAsync("first", "second");

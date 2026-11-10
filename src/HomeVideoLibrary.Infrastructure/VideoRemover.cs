@@ -2,14 +2,15 @@ using System.Diagnostics;
 
 namespace HomeVideoLibrary.Infrastructure;
 
-/// <summary>Whatever outside the library model reads a video's file or keeps files made from it (hover previews, frame
-/// strips). Both members are called from a background job, never on the UI thread.</summary>
+/// <summary>Whatever outside the library model reads a video's file or keeps files made from it (hover strips, scrub
+/// previews). Both members are called from a background job, never on the UI thread.</summary>
 public interface IVideoHolders
 {
-    /// <summary>Stops every reader of the video's file and completes once they have let go of it.</summary>
-    Task ReleaseAsync(Guid videoId, CancellationToken cancellationToken);
+    /// <summary>Stops every reader of the video's file, completing once they have let go of it, and keeps new ones off
+    /// until the returned hold is disposed.</summary>
+    Task<IAsyncDisposable> HoldAsync(Guid videoId, CancellationToken cancellationToken);
 
-    /// <summary>Forgets whatever is cached for a video that has left the library.</summary>
+    /// <summary>Forgets whatever is cached for a video that has left the library, deleting its files.</summary>
     void Forget(Guid videoId);
 }
 
@@ -105,10 +106,24 @@ public sealed class VideoRemover
     {
         if (_model.Snapshot.Find(videoId) is not { } record)
             return new VideoRemoval(videoId, "", RemovalResult.Failed, "It is no longer in the library.");
+        IAsyncDisposable hold;
+        try { hold = await _holders.HoldAsync(videoId, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            Trace.TraceWarning($"Could not stop the readers of video {videoId}: {exception}");
+            return new VideoRemoval(videoId, record.Label, RemovalResult.Failed, exception.Message);
+        }
+        // Held until the row is gone, so nothing starts reading the file again in between.
+        await using (hold) return await RemoveHeldAsync(record, remove, cancellationToken);
+    }
+
+    private async Task<VideoRemoval> RemoveHeldAsync(VideoRecord record, Func<string, RemovalResult> remove, CancellationToken cancellationToken)
+    {
+        var videoId = record.Id;
         RemovalResult result;
         try
         {
-            await _holders.ReleaseAsync(videoId, cancellationToken);
             var path = _model.GetVideoPath(record);
             using (await MatroskaMetadataService.AcquireExclusiveAsync(path, cancellationToken))
             {
@@ -151,29 +166,26 @@ public sealed class VideoRemover
         return result;
     }
 
-    /// <summary>Deletes the files the app derived from the video (extracted thumbnails, hover frames) and tells the
-    /// holders to forget it. These are caches, so a failure is only traced.</summary>
+    /// <summary>Deletes the thumbnails extracted from the video's MKV and tells the holders to forget it (they own their
+    /// own caches). These are caches, so a failure is only traced.</summary>
     private void Forget(Guid videoId)
     {
-        var paths = _model.Catalog.Paths;
-        foreach (var directory in new[] { paths.ThumbnailCacheDirectory, paths.PreviewDirectory })
+        var cache = Path.Combine(_model.Catalog.Paths.ThumbnailCacheDirectory, videoId.ToString("N"));
+        try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            var cache = Path.Combine(directory, videoId.ToString("N"));
-            try { if (Directory.Exists(cache)) Directory.Delete(cache, recursive: true); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                Trace.TraceWarning($"Could not delete {cache}: {exception.Message}");
-            }
+            Trace.TraceWarning($"Could not delete {cache}: {exception.Message}");
         }
         _holders.Forget(videoId);
     }
 
     private static bool IsSharingViolation(IOException exception) => (exception.HResult & 0xFFFF) is 32 or 33;
 
-    private sealed class NoHolders : IVideoHolders
+    private sealed class NoHolders : IVideoHolders, IAsyncDisposable
     {
         public static NoHolders Instance { get; } = new();
-        public Task ReleaseAsync(Guid videoId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<IAsyncDisposable> HoldAsync(Guid videoId, CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         public void Forget(Guid videoId) { }
     }
 }

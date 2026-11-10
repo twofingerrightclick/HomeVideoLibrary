@@ -22,7 +22,7 @@ public sealed class VideoRemoverTests : IDisposable
     }
 
     [Fact]
-    public async Task TrashingReleasesTheHoldersMovesTheFileThenForgetsTheVideoAndItsCaches()
+    public async Task TrashingHoldsTheReadersOffMovesTheFileThenForgetsTheVideoAndItsCaches()
     {
         var (model, video, trash) = await OpenAsync();
         var path = model.Catalog.GetVideoPath(video.RelativePath);
@@ -39,8 +39,8 @@ public sealed class VideoRemoverTests : IDisposable
         Assert.Null(model.Snapshot.Find(video.Id));
         Assert.Empty(await model.Catalog.ListAsync());
         Assert.False(Directory.Exists(thumbnails));
-        Assert.False(Directory.Exists(previews));
-        Assert.Equal(["release " + video.Id, "forget " + video.Id], holders.Calls);
+        Assert.True(Directory.Exists(previews)); // The preview cache owns these; its holder forgets them.
+        Assert.Equal(["hold " + video.Id, "forget " + video.Id, "release " + video.Id], holders.Calls);
     }
 
     [Fact]
@@ -204,11 +204,20 @@ public sealed class VideoRemoverTests : IDisposable
         public List<string> Calls { get; } = [];
         public Action? OnRelease { get; set; }
 
-        public Task ReleaseAsync(Guid videoId, CancellationToken cancellationToken)
+        public Task<IAsyncDisposable> HoldAsync(Guid videoId, CancellationToken cancellationToken)
         {
             OnRelease?.Invoke();
-            Calls.Add("release " + videoId);
-            return Task.CompletedTask;
+            Calls.Add("hold " + videoId);
+            return Task.FromResult<IAsyncDisposable>(new Hold(() => Calls.Add("release " + videoId)));
+        }
+
+        private sealed class Hold(Action released) : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync()
+            {
+                released();
+                return ValueTask.CompletedTask;
+            }
         }
 
         public void Forget(Guid videoId) => Calls.Add("forget " + videoId);

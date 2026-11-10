@@ -55,6 +55,31 @@ public sealed class HoverStripSchedulerTests : IDisposable
     });
 
     [Fact]
+    public Task AHeldTapeStopsItsBuildIsNotBuiltWhileHeldAndIsQueuedAgainAfter() => UiThread.Run(async () =>
+    {
+        var (store, scheduler) = Create();
+        var tape = (await TapesAsync(1))[0];
+        var never = new TaskCompletionSource();
+        Hold(tape, never.Task);
+        scheduler.Enqueue([tape]);
+        await WaitUntilAsync(() => Builds.Length == 1);
+
+        var hold = await scheduler.HoldAsync(tape.Id);
+        Assert.Null(await scheduler.RequestAsync(tape, default));
+        Assert.Null(store.TryGet(tape));
+        Assert.Empty(Directory.GetFileSystemEntries(Paths.ScratchDirectory));
+
+        _frames.BeforeKeyframe = (_, _) => Task.CompletedTask;
+        await hold.DisposeAsync();
+        await WaitUntilAsync(() => store.TryGet(tape) is not null);
+
+        scheduler.Forget(tape.Id);
+        Assert.Null(store.TryGet(tape));
+        Assert.Empty(Directory.GetFiles(Paths.StripDirectory));
+        await scheduler.DisposeAsync();
+    });
+
+    [Fact]
     public Task AHoverShorterThanTheDwellBuildsNothing() => UiThread.Run(async () =>
     {
         var (_, scheduler) = Create();

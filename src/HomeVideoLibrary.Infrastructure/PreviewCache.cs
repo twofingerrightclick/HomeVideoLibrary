@@ -78,6 +78,23 @@ public sealed class PreviewCache
         return target;
     }
 
+    /// <summary>Forgets a video that has left the library, deleting its frames.</summary>
+    public void Forget(Guid videoId)
+    {
+        lock (_lock)
+        {
+            foreach (var key in _entries.Keys.Where(key => key.Item1 == videoId).ToArray())
+                if (_entries.Remove(key, out var node)) _recent.Remove(node);
+            _failed.Remove(videoId);
+        }
+        var directory = Path.Combine(_paths.PreviewDirectory, videoId.ToString("N"));
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning($"Could not remove the previews in {directory}: {exception.Message}");
+        }
+    }
+
     private static void Delete(string path)
     {
         try { File.Delete(path); }

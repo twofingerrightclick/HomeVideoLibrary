@@ -84,9 +84,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
         Import = new ImportViewModel(() => _model, dependencies.CreateImporter, dependencies.Interaction, Jobs, () => ToolsReady && IsSettled,
             message => Status = message);
-        // TODO(strips): pass the hover previews and frame strips as IVideoHolders once the strip scheduler lands, so a
-        // trash waits for their reads and drops their caches.
-        Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash), Shelf, Jobs, dependencies.Interaction,
+        var holders = new ShellVideoHolders(() => _strips, () => _previews, dependencies.Post);
+        Trash = new TrashViewModel(() => _model, model => new VideoRemover(model, dependencies.Trash, holders), Shelf, Jobs, dependencies.Interaction,
             LeavePagesShowingAsync, () => IsSettled, message => Status = message, RefreshView);
         Shelf.MoveToTrashCommand = Trash.MoveSelectedToTrashCommand;
         Settings = new SettingsViewModel(dependencies.Settings, dependencies.Sounds, dependencies.Interaction, () => _model, () => ToolsReady,
