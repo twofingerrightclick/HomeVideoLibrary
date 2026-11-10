@@ -22,7 +22,8 @@ internal sealed class MediaCommands(MediaTools tools, MediaProcess process)
             else if (line.StartsWith("#GUI#warning ", StringComparison.Ordinal))
                 warnings.Add(line[13..]);
         });
-        var result = await process.RunAsync(tools.MkvMerge, ["--gui-mode", .. arguments], LongRunning, cancellationToken, lines.Append);
+        // English messages, because the append refusal is recognized by its text.
+        var result = await process.RunAsync(tools.MkvMerge, ["--ui-language", "en_US", "--gui-mode", .. arguments], LongRunning, cancellationToken, lines.Append);
         lines.Append("\n");
         if (result.ExitCode > 1)
         {
