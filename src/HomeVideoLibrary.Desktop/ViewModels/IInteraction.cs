@@ -22,7 +22,9 @@ public sealed record Confirmation(string Title, string Message, IReadOnlyList<st
 public interface IInteraction
 {
     /// <summary>Asks what to do with unsaved changes to <paramref name="title"/> before leaving it.</summary>
-    Task<LeaveChoice> AskLeaveAsync(string title);
+    /// <param name="cannotSave">Why the changes cannot be saved now, or null. When set, the prompt says so and offers no
+    /// save.</param>
+    Task<LeaveChoice> AskLeaveAsync(string title, string? cannotSave);
 
     Task ShowErrorAsync(string title, string message);
 

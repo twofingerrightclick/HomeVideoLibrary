@@ -324,14 +324,17 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// <summary>Leaves the current page (asking about unsaved changes) and shows <paramref name="next"/>'s page, or the
     /// shelf when it returns null. Returns false when the current page stays. Navigations run one at a time, so two
     /// prompts never stack; a page must not navigate from its own <see cref="PageViewModel.LoadAsync"/>.</summary>
-    public async Task<bool> NavigateAsync(Func<PageViewModel?> next)
+    public Task<bool> NavigateAsync(Func<PageViewModel?> next) => NavigateAsync(next, cancelJobs: null);
+
+    /// <param name="cancelJobs">See <see cref="PageViewModel.CanLeaveAsync"/>.</param>
+    private async Task<bool> NavigateAsync(Func<PageViewModel?> next, Func<Task>? cancelJobs)
     {
         await _navigation.WaitAsync();
         try
         {
             if (Page is { } current)
             {
-                if (!await current.CanLeaveAsync(_dependencies.Interaction)) return false;
+                if (!await current.CanLeaveAsync(_dependencies.Interaction, cancelJobs)) return false;
                 Page = null;
                 await current.DisposeAsync();
             }
@@ -351,8 +354,9 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     /// <summary>Everything that must happen before the window closes, in order: waits for a library switch; asks whether
     /// to wait for or cancel background jobs (only a question, so keeping the app open there changes nothing); settles
-    /// the page (finishing a save) and leaves it, asking about unsaved changes; cancels or waits for the jobs; then stops
-    /// the library refresh and releases the library. Returns false when the user keeps the app open, including by
+    /// the page (finishing a save) and leaves it, asking about unsaved changes (when the jobs are to be cancelled, saving
+    /// there cancels them first if they block the save); cancels or waits for the jobs; then stops the library refresh and
+    /// releases the library. Returns false when the user keeps the app open, including by
     /// <see cref="CancelQuitCommand"/> while waiting for jobs. Repeated calls while one is running share it; new work is
     /// refused meanwhile.</summary>
     public Task<bool> RequestCloseAsync()
@@ -378,18 +382,20 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Status = "Finishing the current operation, then closing…";
                 await page.SettleForCloseAsync();
             }
-            if (!await NavigateAsync(() => null)) return false;
-            if (jobs == CloseChoice.CancelJobs)
-            {
-                Status = "Cancelling imports and edits, then closing…";
-                await Jobs.CancelAllAndWaitAsync();
-            }
+            if (!await NavigateAsync(() => null, jobs == CloseChoice.CancelJobs ? CancelJobsAsync : null)) return false;
+            if (jobs == CloseChoice.CancelJobs) await CancelJobsAsync();
             else if (!await WaitForJobsAsync()) return false;
             status = Status;
             await ReleaseLibraryAsync();
             return true;
         }
         finally { Status = status; }
+    }
+
+    private Task CancelJobsAsync()
+    {
+        Status = "Cancelling imports and edits, then closing…";
+        return Jobs.CancelAllAndWaitAsync();
     }
 
     /// <summary>Waits for the active jobs to end; false when the user cancels the quit meanwhile.</summary>

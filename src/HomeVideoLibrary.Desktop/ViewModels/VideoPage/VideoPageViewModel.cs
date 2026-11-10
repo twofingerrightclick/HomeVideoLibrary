@@ -135,6 +135,11 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
     /// <summary>Why SAVE is unavailable even with changes: an edit job is reading this video's file. Null otherwise.</summary>
     public string? SaveBlocker => _dependencies.Jobs?.Holds(Id) == true ? HeldBySaveMessage : null;
 
+    /// <summary>Why the changes cannot be saved now, as a sentence, or null.</summary>
+    /// <param name="jobsEnd">The jobs are about to be cancelled, so they block nothing.</param>
+    private string? CannotSave(bool jobsEnd) => !jobsEnd && SaveBlocker is { } blocker ? blocker + "."
+        : Details.RecordedDateError is { } error ? "Recorded date: " + error : null;
+
     LibraryVideo IEditHost.Source => (_snapshot.Find(Id) ?? _dependencies.Record).ToLibraryVideo();
     TimeSpan IEditHost.Playhead => Player.Position;
     bool IEditHost.IsPlayheadResting => !Player.IsPlaying;
@@ -249,18 +254,21 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
         OnPropertyChanged(nameof(IEditHost.Source));
     }
 
-    /// <summary>Waits for a running save, then asks about unsaved changes. Save leaves only when the save succeeded.</summary>
-    public override async Task<bool> CanLeaveAsync(IInteraction interaction)
+    /// <summary>Waits for a running save, then asks about unsaved changes; the question offers no save that cannot
+    /// happen, and says why. Save leaves only when the save succeeded.</summary>
+    public override async Task<bool> CanLeaveAsync(IInteraction interaction, Func<Task>? cancelJobs = null)
     {
         await Details.SaveCommand.Completion;
         Details.CommitOpenEdits();
         if (!Details.IsDirty) return true;
-        switch (await interaction.AskLeaveAsync(DisplayTitle))
+        switch (await interaction.AskLeaveAsync(DisplayTitle, CannotSave(jobsEnd: cancelJobs is not null)))
         {
             case LeaveChoice.Save:
-                if (Details.RecordedDateError is { } error)
+                if (cancelJobs is not null && SaveBlocker is not null) await cancelJobs();
+                // A job may have started holding the video while the question was open.
+                if (CannotSave(jobsEnd: false) is { } reason)
                 {
-                    await interaction.ShowErrorAsync("NOT SAVED", "Recorded date: " + error);
+                    await interaction.ShowErrorAsync("NOT SAVED", reason);
                     return false;
                 }
                 await Details.SaveCommand.ExecuteAsync();

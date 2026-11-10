@@ -110,4 +110,27 @@ public sealed class VideoPageEditTests
         Assert.Null(page.SaveBlocker);
         Assert.True(changes >= 2);
     }
+
+    [Fact]
+    public async Task TheLeaveQuestionOffersNoSaveAnEditJobBlocksAndSaysWhy()
+    {
+        var jobs = new JobQueue(_ => Task.CompletedTask);
+        var metadata = new FakeMetadata();
+        await using var page = Create(metadata, new FakePlayback(), configure: dependencies => dependencies with { Jobs = jobs });
+        await page.LoadAsync();
+        page.Details.Title = "Renamed";
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var job = jobs.Enqueue("Trim", JobLane.Render, async (_, _) => { await release.Task; return JobOutcome.Done("Saved."); }, [page.Id]);
+        var interaction = new FakeInteraction();
+        interaction.Answers.Enqueue(LeaveChoice.Save);
+
+        Assert.False(await page.CanLeaveAsync(interaction));
+
+        var reason = VideoPageViewModel.HeldBySaveMessage + ".";
+        Assert.Equal([reason], interaction.CannotSave);
+        Assert.Equal([reason], interaction.Errors);
+        Assert.True(page.Details.IsDirty);
+        release.SetResult();
+        await job.Completion;
+    }
 }

@@ -124,15 +124,23 @@ internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInt
     public Queue<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> Answers { get; } = new();
     public TaskCompletionSource<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice>? Pending { get; set; }
     public int Asked { get; private set; }
+    /// <summary>The reasons the leave questions gave for offering no save, in order (null when they offered one).</summary>
+    public List<string?> CannotSave { get; } = [];
 
-    public Task<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> AskLeaveAsync(string title)
+    public Task<HomeVideoLibrary.Desktop.ViewModels.LeaveChoice> AskLeaveAsync(string title, string? cannotSave)
     {
         Asked++;
+        CannotSave.Add(cannotSave);
         if (Pending is { } pending) { Pending = null; return pending.Task; }
         return Task.FromResult(Answers.TryDequeue(out var answer) ? answer : HomeVideoLibrary.Desktop.ViewModels.LeaveChoice.KeepEditing);
     }
 
-    public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
+    public List<string> Errors { get; } = [];
+    public Task ShowErrorAsync(string title, string message)
+    {
+        Errors.Add(message);
+        return Task.CompletedTask;
+    }
 
     /// <summary>Answers from <see cref="ConfirmAnswers"/>, declining when it runs out, so nothing is ever destroyed by default.</summary>
     public Queue<bool> ConfirmAnswers { get; } = new();
