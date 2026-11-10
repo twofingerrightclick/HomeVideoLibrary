@@ -1,8 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="using:HomeVideoLibrary.UI.Controls"
-             xmlns:core="using:HomeVideoLibrary.Core"
              xmlns:views="using:HomeVideoLibrary.Desktop.Views"
              xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             xmlns:jobs="using:HomeVideoLibrary.Desktop.ViewModels"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.Editing"
              x:Class="HomeVideoLibrary.Desktop.Views.Editing.MergePageView" x:DataType="vm:MergePageViewModel">
  <UserControl.Styles>
   <Style Selector="TextBlock.pending">
@@ -31,7 +32,7 @@
     </c:SectionHeader>
     <Border Classes="well">
      <ListBox x:Name="SourceList" Classes="vcr" ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
-      IsEnabled="{Binding !IsBusy}" AutomationProperties.Name="Clips in play order">
+      AutomationProperties.Name="Clips in play order">
       <ListBox.ItemTemplate>
        <DataTemplate x:DataType="vm:MergeSource">
         <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
@@ -49,7 +50,7 @@
     <TextBlock Text="{Binding Plan.Summary}" TextWrapping="Wrap" Classes.pending="{Binding Plan.IsPending}"/>
 
     <TextBlock Classes="legend" Text="NEW VIDEO TITLE"/>
-    <TextBox Text="{Binding OutputTitle}" IsEnabled="{Binding !IsBusy}" Watermark="Merged home video"
+    <TextBox Text="{Binding OutputTitle}" Watermark="Merged home video"
      AutomationProperties.Name="New video title"/>
 
     <StackPanel Orientation="Horizontal" Spacing="10">
@@ -63,28 +64,14 @@
        </Flyout>
       </c:PlasticButton.Flyout>
      </c:PlasticButton>
-     <c:PlasticButton Content="CANCEL" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}"/>
     </StackPanel>
-    <ProgressBar Value="{Binding Run.Progress}" IsIndeterminate="{Binding Run.IsProgressIndeterminate}" Minimum="0" Maximum="100"
-     IsVisible="{Binding IsBusy}"/>
-    <TextBlock Classes="meta" Text="{Binding Run.Status}" TextWrapping="Wrap"/>
-
-    <Border Classes="bezel" IsVisible="{Binding Run.HasOutputs}">
-     <StackPanel Spacing="8">
-      <TextBlock Classes="legend" Text="{Binding Run.SavedLabel}"/>
-      <ItemsControl ItemsSource="{Binding Run.Outputs}">
-       <ItemsControl.ItemTemplate>
-        <DataTemplate x:DataType="core:LibraryVideo">
-         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-          <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-          <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="OPEN" CommandParameter="{Binding}"
-           Command="{Binding $parent[ItemsControl].((vm:MergePageViewModel)DataContext).OpenOutputCommand}"/>
-         </Grid>
-        </DataTemplate>
-       </ItemsControl.ItemTemplate>
-      </ItemsControl>
-     </StackPanel>
-    </Border>
+    <TextBlock Classes="meta" Text="Arrange the clips in the order they should play. The merge runs in the background; the originals stay as they are." TextWrapping="Wrap"
+     IsVisible="{Binding Job, Converter={x:Static ObjectConverters.IsNull}}"/>
+    <ContentControl Content="{Binding Job}">
+     <ContentControl.DataTemplates>
+      <DataTemplate DataType="jobs:JobViewModel"><local:EditJobView/></DataTemplate>
+     </ContentControl.DataTemplates>
+    </ContentControl>
    </StackPanel>
   </ScrollViewer>
  </Grid>

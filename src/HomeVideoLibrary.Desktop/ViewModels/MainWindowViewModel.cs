@@ -194,13 +194,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         if (!CanEditClips || _model is not { } model || Shelf.SelectedCount < 2) return Task.CompletedTask;
         var sources = Shelf.SelectedRecords.Select(record => record.ToLibraryVideo()).ToArray();
-        return NavigateAsync(() => new MergePageViewModel(sources, _dependencies.CreateClipEditing(model.Catalog),
-            outputs => PublishOutputsAsync(model, outputs), OpenNewVideoAsync, () => NavigateAsync(() => null)));
+        return NavigateAsync(() => new MergePageViewModel(sources, _dependencies.CreateClipEditing(model.Catalog), Jobs,
+            outputs => PublishOutputsAsync(model, outputs), () => NavigateAsync(() => null)));
     }
-
-    /// <summary>Opens a video an edit just created, from its catalog record once the library has published it.</summary>
-    private Task OpenNewVideoAsync(LibraryVideo video) =>
-        _model?.Snapshot.Find(video.Id) is { } record ? OpenVideoAsync(record) : Task.CompletedTask;
 
     private static async Task PublishOutputsAsync(LibraryModel model, IReadOnlyList<LibraryVideo> videos)
     {

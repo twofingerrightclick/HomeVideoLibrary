@@ -93,7 +93,7 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
-    public async Task MergeOpensItsPageAndClosingTheWindowCancelsARunningMerge()
+    public async Task MergeOpensItsPageAndItsJobOutlivesThePageUntilTheWindowCloses()
     {
         var catalog = await CreateCatalogAsync(Library.RootDirectory);
         await AddVideoAsync(catalog, "first");
@@ -106,14 +106,15 @@ public sealed class EditorNavigationTests : IDisposable
         await viewModel.MergeSelectedCommand.ExecuteAsync();
         var merge = Assert.IsType<MergePageViewModel>(viewModel.Page);
         Assert.Equal(2, merge.Sources.Count);
-        var run = merge.SaveCommand.ExecuteAsync();
-        Assert.True(merge.IsBusy);
-        Assert.False(await viewModel.NavigateAsync(() => null)); // Back keeps a running merge.
+        merge.SaveCommand.Execute(null);
+        var job = merge.Job!;
+        Assert.True(await viewModel.NavigateAsync(() => null)); // The merge keeps running in the activity drawer.
+        Assert.Null(viewModel.Page);
+        Assert.True(job.IsRunning);
 
         Assert.True(await viewModel.RequestCloseAsync());
-        await run;
-        Assert.Null(viewModel.Page);
-        Assert.Equal(ClipEditRun.CancelledStatus, merge.Run.Status);
+        Assert.Equal(1, _interaction.CloseAsked);
+        Assert.Equal(JobState.Cancelled, job.State);
     }
 
     [Fact]

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.UI.Logic;
 
@@ -15,33 +14,31 @@ public sealed record MergeSource(LibraryVideo Video)
     public string AccentKey => SpineStyle.For(Video.Id).AccentKey;
 }
 
-/// <summary>Joins two or more videos, in an order the user arranges, into one new video.</summary>
+/// <summary>Joins two or more videos, in an order the user arranges, into one new video made by a render job.</summary>
 public sealed class MergePageViewModel : PageViewModel
 {
     private readonly IClipEditingService _editing;
+    private readonly JobQueue _jobs;
+    private readonly Func<IReadOnlyList<LibraryVideo>, Task> _outputsCreated;
     private MergeSource? _selectedSource;
     private string _outputTitle = "Merged home video";
+    private JobViewModel? _job;
 
-    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditRun"/>).</param>
-    /// <param name="open">Opens the new video (navigates away from this page).</param>
+    /// <param name="jobs">Runs the merge; it keeps running if the page closes.</param>
+    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditJob"/>).</param>
     /// <param name="back">Returns to the library.</param>
     /// <param name="time">Clock for the plan delay; tests pass a fake.</param>
-    public MergePageViewModel(IReadOnlyList<LibraryVideo> sources, IClipEditingService editing,
-        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<LibraryVideo, Task> open, Func<Task> back,
-        TimeProvider? time = null)
+    public MergePageViewModel(IReadOnlyList<LibraryVideo> sources, IClipEditingService editing, JobQueue jobs,
+        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<Task> back, TimeProvider? time = null)
     {
         if (sources.Count < 2) throw new ArgumentException("Select at least two videos to merge.", nameof(sources));
-        _editing = editing;
+        _editing = editing; _jobs = jobs; _outputsCreated = outputsCreated;
         Sources = new ObservableCollection<MergeSource>(sources.Select(video => new MergeSource(video)));
         Plan = new PlanReadout(time ?? TimeProvider.System);
-        Run = new ClipEditRun("Arrange the clips in the order they should play. The originals stay as they are.", outputsCreated);
         MoveUpCommand = new RelayCommand(() => MoveSelected(-1), () => CanMove(-1));
         MoveDownCommand = new RelayCommand(() => MoveSelected(1), () => CanMove(1));
-        SaveCommand = new AsyncCommand(SaveAsync, context: "Merge");
-        CancelCommand = new RelayCommand(SaveCommand.Cancel, () => IsBusy);
-        OpenOutputCommand = new AsyncCommand<LibraryVideo>((video, _) => open(video), _ => !IsBusy, context: "Open video");
+        SaveCommand = new RelayCommand(Save);
         BackCommand = new AsyncCommand(_ => back(), context: "Back to library");
-        SaveCommand.PropertyChanged += OnSaveChanged;
     }
 
     /// <summary>The clips in output order. Reordering moves items, so rows and the selection survive it.</summary>
@@ -65,15 +62,14 @@ public sealed class MergePageViewModel : PageViewModel
     /// <summary>Whether the merge is lossless or which clips it re-encodes, refreshed after reordering pauses.</summary>
     public PlanReadout Plan { get; }
 
-    public ClipEditRun Run { get; }
-
-    public bool IsBusy => SaveCommand.IsRunning;
+    /// <summary>The latest merge started here, shown with its progress, CANCEL and OPEN; null until one starts.</summary>
+    public JobViewModel? Job { get => _job; private set => SetProperty(ref _job, value); }
 
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
-    public AsyncCommand SaveCommand { get; }
-    public RelayCommand CancelCommand { get; }
-    public AsyncCommand<LibraryVideo> OpenOutputCommand { get; }
+
+    /// <summary>Queues a render job for the current order; another edit may already be running or queued.</summary>
+    public RelayCommand SaveCommand { get; }
     public AsyncCommand BackCommand { get; }
 
     public override Task LoadAsync()
@@ -82,27 +78,14 @@ public sealed class MergePageViewModel : PageViewModel
         return Task.CompletedTask;
     }
 
-    public override Task<bool> CanLeaveAsync(IInteraction interaction)
-    {
-        if (IsBusy) Run.Notify("The merge is still running. Cancel it or wait for it to finish before leaving.");
-        return Task.FromResult(!IsBusy);
-    }
-
-    public override Task SettleForCloseAsync()
-    {
-        SaveCommand.Cancel();
-        return SaveCommand.Completion;
-    }
-
     public override ValueTask DisposeAsync()
     {
-        SaveCommand.Cancel();
         Plan.Dispose();
         return ValueTask.CompletedTask;
     }
 
     private bool CanMove(int direction) =>
-        !IsBusy && SelectedSource is { } source && Sources.IndexOf(source) + direction is var target && target >= 0 && target < Sources.Count;
+        SelectedSource is { } source && Sources.IndexOf(source) + direction is var target && target >= 0 && target < Sources.Count;
 
     private void MoveSelected(int direction)
     {
@@ -120,19 +103,11 @@ public sealed class MergePageViewModel : PageViewModel
     private Func<CancellationToken, Task<PlanDescription>> PlanAsync(IReadOnlyList<LibraryVideo> order) =>
         async token => PlanDescription.Merge(await _editing.PlanMergeAsync(order, token), order);
 
-    private Task SaveAsync(CancellationToken cancellationToken)
+    private void Save()
     {
+        // Captured now: the job may start later, and runs on the thread pool.
         var (order, title) = (Sources.Select(source => source.Video).ToArray(), OutputTitle);
-        return Run.RunAsync((progress, token) => _editing.MergeAsync(order, title, progress, token), cancellationToken);
-    }
-
-    private void OnSaveChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName != nameof(AsyncCommandBase.IsRunning)) return;
-        OnPropertyChanged(nameof(IsBusy));
-        MoveUpCommand.RaiseCanExecuteChanged();
-        MoveDownCommand.RaiseCanExecuteChanged();
-        CancelCommand.RaiseCanExecuteChanged();
-        OpenOutputCommand.RaiseCanExecuteChanged();
+        Job = ClipEditJob.Enqueue(_jobs, $"Merge {order.Length} videos",
+            (progress, token) => _editing.MergeAsync(order, title, progress, token), _outputsCreated);
     }
 }

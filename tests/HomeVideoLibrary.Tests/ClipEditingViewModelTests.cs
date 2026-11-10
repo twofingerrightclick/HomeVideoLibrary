@@ -1,4 +1,5 @@
 using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -10,9 +11,12 @@ public sealed class ClipEditingViewModelTests
 {
     private readonly FakeTimeProvider _time = new();
     private readonly ScriptedEditing _editing = new();
+    private readonly JobQueue _jobs;
     private readonly List<LibraryVideo> _published = [];
     private TimeSpan _playhead;
     private bool _dirty;
+
+    public ClipEditingViewModelTests() => _jobs = new JobQueue(_ => Task.CompletedTask, _time);
 
     [Fact]
     public async Task SettingInAndOutFromThePlayheadPlansOncePerPause()
@@ -155,16 +159,14 @@ public sealed class ClipEditingViewModelTests
         var panel = Panel();
         panel.InText = "1:00";
 
-        var run = panel.TrimCommand.ExecuteAsync();
+        panel.TrimCommand.Execute(null);
+        var job = Assert.IsType<JobViewModel>(panel.Job);
         await started.Task;
-        Assert.True(panel.IsBusy);
-        panel.CancelCommand.Execute(null);
-        await run;
+        job.CancelCommand.Execute(null);
+        await job.Completion;
 
-        Assert.Equal(ClipEditRun.CancelledStatus, panel.Run.Status);
-        Assert.False(panel.Run.HasOutputs);
+        Assert.Equal(JobState.Cancelled, job.State);
         Assert.Empty(_published);
-        Assert.False(panel.IsBusy);
     }
 
     [Fact]
@@ -178,15 +180,17 @@ public sealed class ClipEditingViewModelTests
         var panel = Panel();
         panel.InText = "1:00";
 
-        var run = panel.TrimCommand.ExecuteAsync();
+        panel.TrimCommand.Execute(null);
+        var job = panel.Job!;
         await started.Task;
-        panel.CancelCommand.Execute(null);
+        job.Cancel();
         committed.SetResult();
-        await run;
+        await job.Completion;
 
         Assert.Equal([output], _published);
-        Assert.Equal([output], panel.Run.Outputs);
-        Assert.StartsWith("Saved 1 new video in the library.", panel.Run.Status, StringComparison.Ordinal);
+        Assert.Equal(JobState.Succeeded, job.State);
+        Assert.Equal([output.Id], job.Outcome!.Outputs);
+        Assert.StartsWith("Saved 1 new video.", job.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -197,27 +201,34 @@ public sealed class ClipEditingViewModelTests
         panel.OutText = "0:02:00.500";
         panel.IsPrecise = false;
 
-        await panel.TrimCommand.ExecuteAsync();
+        panel.TrimCommand.Execute(null);
+        await panel.Job!.Completion;
 
         Assert.Equal((TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(120.5), ClipCutMode.Fast), _editing.LastTrim);
-        Assert.Equal(100, panel.Run.Progress);
-        Assert.False(panel.Run.IsProgressIndeterminate);
-        Assert.Contains("Cuts snapped.", panel.Run.Status, StringComparison.Ordinal);
+        Assert.Equal(JobState.Succeeded, panel.Job.State);
+        Assert.Contains("Cuts snapped.", panel.Job.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task OpeningANewClipPassesItToTheNavigator()
+    public async Task ASecondEditWaitsInTheRenderQueue()
     {
-        var opened = new List<LibraryVideo>();
-        var output = Video("Trimmed", TimeSpan.FromMinutes(2));
-        _editing.Trim = (_, _) => Task.FromResult<IReadOnlyList<LibraryVideo>>([output]);
-        var panel = Panel(video => { opened.Add(video); return Task.CompletedTask; });
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _editing.Trim = async (_, _) => { await release.Task; return []; };
+        var panel = Panel();
         panel.InText = "1:00";
-        await panel.TrimCommand.ExecuteAsync();
 
-        await panel.OpenOutputCommand.ExecuteAsync(panel.Run.Outputs[0]);
+        panel.TrimCommand.Execute(null);
+        var first = panel.Job!;
+        _playhead = TimeSpan.FromMinutes(5);
+        panel.PlayheadMoved();
+        panel.SplitCommand.Execute(null);
+        var second = panel.Job!;
 
-        Assert.Equal([output], opened);
+        Assert.NotSame(first, second);
+        Assert.Equal("Queued (#1)", second.StatusText);
+        release.SetResult();
+        await first.Completion;
+        Assert.Equal(JobState.Succeeded, first.State);
     }
 
     [Fact]
@@ -243,31 +254,31 @@ public sealed class ClipEditingViewModelTests
     }
 
     [Fact]
-    public async Task AMergeKeepsThePageUntilItIsCancelledAndSettled()
+    public async Task LeavingTheMergePageLeavesItsJobRunning()
     {
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _editing.Merge = async (_, token) => { started.SetResult(); await Task.Delay(Timeout.Infinite, token); return []; };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = Video("Merged", TimeSpan.FromMinutes(3));
+        _editing.Merge = async (_, _) => { await release.Task; return [output]; };
         var page = Merge(2);
 
-        _ = page.SaveCommand.ExecuteAsync();
-        await started.Task;
-        Assert.False(await page.CanLeaveAsync(new FakeInteraction()));
-        Assert.Contains("still running", page.Run.Status, StringComparison.Ordinal);
-        Assert.False(page.MoveUpCommand.CanExecute(null));
-
-        await page.SettleForCloseAsync();
-        Assert.False(page.IsBusy);
-        Assert.Equal(ClipEditRun.CancelledStatus, page.Run.Status);
+        page.SaveCommand.Execute(null);
+        var job = page.Job!;
         Assert.True(await page.CanLeaveAsync(new FakeInteraction()));
+        await page.DisposeAsync();
+        Assert.False(job.IsFinished);
+
+        release.SetResult();
+        await job.Completion;
+        Assert.Equal([output], _published);
+        Assert.True(job.CanOpen);
     }
 
-    private TrimPanelViewModel Panel(Func<LibraryVideo, Task>? open = null) =>
-        new(Video("Source", TimeSpan.FromMinutes(10)), _editing, () => _playhead, Publish, open ?? (_ => Task.CompletedTask),
-            () => _dirty, _time);
+    private TrimPanelViewModel Panel() =>
+        new(Video("Source", TimeSpan.FromMinutes(10)), _editing, () => _playhead, _jobs, Publish, () => _dirty, _time);
 
     private MergePageViewModel Merge(int count) =>
-        new(Enumerable.Range(1, count).Select(index => Video($"Clip {index}", TimeSpan.FromMinutes(index))).ToArray(), _editing,
-            Publish, _ => Task.CompletedTask, () => Task.CompletedTask, _time);
+        new(Enumerable.Range(1, count).Select(index => Video($"Clip {index}", TimeSpan.FromMinutes(index))).ToArray(), _editing, _jobs,
+            Publish, () => Task.CompletedTask, _time);
 
     private Task Publish(IReadOnlyList<LibraryVideo> outputs)
     {
@@ -323,6 +334,7 @@ public sealed class ClipEditingViewModelTests
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LibraryVideo>>([]);
     }
 }

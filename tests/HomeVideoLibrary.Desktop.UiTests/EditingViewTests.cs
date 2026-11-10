@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using HomeVideoLibrary.Core;
+using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Desktop.Views.Editing;
 using Xunit;
@@ -41,8 +42,8 @@ public sealed class EditingViewTests
     [AvaloniaFact]
     public void Enter_commits_a_typed_in_point()
     {
-        var panel = new TrimPanelViewModel(Video("Source", TimeSpan.FromMinutes(10)), new NoEditing(), () => TimeSpan.Zero,
-            _ => Task.CompletedTask, _ => Task.CompletedTask, () => false);
+        var panel = new TrimPanelViewModel(Video("Source", TimeSpan.FromMinutes(10)), new NoEditing(), () => TimeSpan.Zero, Jobs(),
+            _ => Task.CompletedTask, () => false);
         var window = new Window { Content = new EditTab { DataContext = panel }, Width = 340, Height = 900 };
         window.Show();
         var field = window.GetVisualDescendants().OfType<TextBox>().First(box => box.Name == "InField");
@@ -67,7 +68,9 @@ public sealed class EditingViewTests
 
     private static MergePageViewModel Merge() =>
         new([Video("Christmas '91", TimeSpan.FromMinutes(42)), Video("Lake Tahoe", TimeSpan.FromMinutes(12)), Video("Little league", TimeSpan.FromMinutes(7))],
-            new NoEditing(), _ => Task.CompletedTask, _ => Task.CompletedTask, () => Task.CompletedTask);
+            new NoEditing(), Jobs(), _ => Task.CompletedTask, () => Task.CompletedTask);
+
+    private static JobQueue Jobs() => new(_ => Task.CompletedTask);
 
     private static LibraryVideo Video(string name, TimeSpan duration) =>
         new(Guid.NewGuid(), $"Videos/{name}.mkv", name, duration, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);

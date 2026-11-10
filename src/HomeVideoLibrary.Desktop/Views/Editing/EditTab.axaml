@@ -1,8 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="using:HomeVideoLibrary.UI.Controls"
-             xmlns:core="using:HomeVideoLibrary.Core"
              xmlns:sys="using:System"
              xmlns:vm="using:HomeVideoLibrary.Desktop.ViewModels.Editing"
+             xmlns:jobs="using:HomeVideoLibrary.Desktop.ViewModels"
+             xmlns:local="using:HomeVideoLibrary.Desktop.Views.Editing"
              x:Class="HomeVideoLibrary.Desktop.Views.Editing.EditTab" x:DataType="vm:TrimPanelViewModel">
  <UserControl.Styles>
   <Style Selector="TextBlock.pending">
@@ -35,9 +36,9 @@
     ToolTip.Tip="Start the kept range at the playhead (I)"/>
    <c:PlasticButton Grid.Row="1" Grid.Column="1" Content="SET OUT" HorizontalAlignment="Stretch" Command="{Binding SetOutCommand}"
     ToolTip.Tip="End the kept range at the playhead (O)"/>
-   <TextBox Grid.Row="2" x:Name="InField" Text="{Binding InText, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding !IsBusy}" Watermark="h:mm:ss.fff"
+   <TextBox Grid.Row="2" x:Name="InField" Text="{Binding InText, UpdateSourceTrigger=LostFocus}" Watermark="h:mm:ss.fff"
     AutomationProperties.Name="In point"/>
-   <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutField" Text="{Binding OutText, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding !IsBusy}" Watermark="h:mm:ss.fff"
+   <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutField" Text="{Binding OutText, UpdateSourceTrigger=LostFocus}" Watermark="h:mm:ss.fff"
     AutomationProperties.Name="Out point"/>
    <TextBlock Grid.Row="3" Classes="legend error" Text="{Binding InTextError}" TextWrapping="Wrap"
     IsVisible="{Binding InTextError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
@@ -46,7 +47,7 @@
   </Grid>
   <TextBlock Classes="legend error" Text="{Binding RangeError}" TextWrapping="Wrap"
    IsVisible="{Binding RangeError, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-  <StackPanel Orientation="Horizontal" Spacing="10" IsEnabled="{Binding !IsBusy}">
+  <StackPanel Orientation="Horizontal" Spacing="10">
    <c:LatchButton Classes="toolbar" Content="PRECISE" IsChecked="{Binding IsPrecise}" VerticalAlignment="Center"
     ToolTip.Tip="Cut at the exact frames, re-encoding a fraction of a second at each cut. Off: cuts snap to keyframes."/>
    <TextBlock Classes="meta" Text="Frame-accurate cuts" VerticalAlignment="Center"/>
@@ -84,30 +85,15 @@
   </StackPanel>
 
   <c:SectionHeader Title="NEW VIDEO" Margin="0,8,0,0"/>
-  <TextBox Text="{Binding OutputTitle}" IsEnabled="{Binding !IsBusy}" Watermark="Title for the new clips" AutomationProperties.Name="New video title"/>
+  <TextBox Text="{Binding OutputTitle}" Watermark="Title for the new clips" AutomationProperties.Name="New video title"/>
   <TextBlock Classes="legend error" Text="{Binding UnsavedDetailsHint}"
    IsVisible="{Binding UnsavedDetailsHint, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" IsVisible="{Binding IsBusy}">
-   <ProgressBar Value="{Binding Run.Progress}" IsIndeterminate="{Binding Run.IsProgressIndeterminate}" Minimum="0" Maximum="100"
-    VerticalAlignment="Center"/>
-   <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="CANCEL" Command="{Binding CancelCommand}"/>
-  </Grid>
-  <TextBlock Classes="meta" Text="{Binding Run.Status}" TextWrapping="Wrap"/>
-  <Border Classes="bezel" IsVisible="{Binding Run.HasOutputs}">
-   <StackPanel Spacing="8">
-    <TextBlock Classes="legend" Text="{Binding Run.SavedLabel}"/>
-    <ItemsControl ItemsSource="{Binding Run.Outputs}">
-     <ItemsControl.ItemTemplate>
-      <DataTemplate x:DataType="core:LibraryVideo">
-       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-        <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-        <c:PlasticButton Grid.Column="1" Classes="toolbar" Content="OPEN" CommandParameter="{Binding}"
-         Command="{Binding $parent[ItemsControl].((vm:TrimPanelViewModel)DataContext).OpenOutputCommand}"/>
-       </Grid>
-      </DataTemplate>
-     </ItemsControl.ItemTemplate>
-    </ItemsControl>
-   </StackPanel>
-  </Border>
+  <TextBlock Classes="meta" Text="Every save makes new videos in the background; the original stays as it is." TextWrapping="Wrap"
+   IsVisible="{Binding Job, Converter={x:Static ObjectConverters.IsNull}}"/>
+  <ContentControl Content="{Binding Job}">
+   <ContentControl.DataTemplates>
+    <DataTemplate DataType="jobs:JobViewModel"><local:EditJobView/></DataTemplate>
+   </ContentControl.DataTemplates>
+  </ContentControl>
  </StackPanel>
 </UserControl>

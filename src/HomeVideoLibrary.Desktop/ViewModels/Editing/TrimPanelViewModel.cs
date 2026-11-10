@@ -1,15 +1,16 @@
-using System.ComponentModel;
 using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Desktop.ViewModels.Editing;
 
-/// <summary>The video page's EDIT tab: trim to an in/out range or split at the playhead, each saved as new videos.
-/// Times are absolute Matroska timestamps, which equal the displayed playback time for imported videos.</summary>
+/// <summary>The video page's EDIT tab: trim to an in/out range or split at the playhead, each saved as new videos by a
+/// render job. Times are absolute Matroska timestamps, which equal the displayed playback time for imported videos.</summary>
 public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
 {
     public const string UnsavedDetailsMessage = "Save or revert your changes first";
 
     private readonly IClipEditingService _editing;
+    private readonly JobQueue _jobs;
+    private readonly Func<IReadOnlyList<LibraryVideo>, Task> _outputsCreated;
     private readonly Func<TimeSpan> _playhead;
     private readonly Func<bool> _hasUnsavedDetails;
     private TimeSpan? _in, _out;
@@ -18,31 +19,27 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
     private TimeSpan _splitAt;
     private bool _isPrecise = true;
     private string _outputTitle;
+    private JobViewModel? _job;
 
     /// <param name="playhead">The player's current position, read when I/O is pressed and when the page reports a move.</param>
-    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditRun"/>).</param>
-    /// <param name="open">Opens one of the new videos (navigates away from this page).</param>
+    /// <param name="jobs">Runs the edits; they keep running if the page closes.</param>
+    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditJob"/>).</param>
     /// <param name="hasUnsavedDetails">Whether the page has unsaved metadata edits. New clips copy the file's saved
     /// metadata, so edits are blocked until they are saved or reverted. Call <see cref="DetailsDirtyChanged"/> when it changes.</param>
     /// <param name="time">Clock for the plan delay; tests pass a fake.</param>
-    public TrimPanelViewModel(LibraryVideo source, IClipEditingService editing, Func<TimeSpan> playhead,
-        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<LibraryVideo, Task> open, Func<bool> hasUnsavedDetails,
-        TimeProvider? time = null)
+    public TrimPanelViewModel(LibraryVideo source, IClipEditingService editing, Func<TimeSpan> playhead, JobQueue jobs,
+        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<bool> hasUnsavedDetails, TimeProvider? time = null)
     {
-        Source = source; _editing = editing; _playhead = playhead; _hasUnsavedDetails = hasUnsavedDetails;
+        Source = source; _editing = editing; _playhead = playhead; _jobs = jobs; _outputsCreated = outputsCreated;
+        _hasUnsavedDetails = hasUnsavedDetails;
         _outputTitle = source.Title.Length > 0 ? source.Title : source.DisplayName;
         TrimPlan = new PlanReadout(time ?? TimeProvider.System);
         SplitPlan = new PlanReadout(time ?? TimeProvider.System);
-        Run = new ClipEditRun("Every save creates new videos; the original stays as it is.", outputsCreated);
-        SetInCommand = new RelayCommand(() => SetInPoint(_playhead(), null), () => !IsBusy);
-        SetOutCommand = new RelayCommand(() => SetOutPoint(_playhead(), null), () => !IsBusy);
-        ClearCommand = new RelayCommand(Clear, () => !IsBusy && (HasRange || _rejectedIn is not null || _rejectedOut is not null));
-        TrimCommand = new AsyncCommand(TrimAsync, () => CanTrim, context: "Trim");
-        SplitCommand = new AsyncCommand(SplitAsync, () => CanSplit, context: "Split");
-        CancelCommand = new RelayCommand(() => { TrimCommand.Cancel(); SplitCommand.Cancel(); }, () => IsBusy);
-        OpenOutputCommand = new AsyncCommand<LibraryVideo>((video, _) => open(video), _ => !IsBusy, context: "Open video");
-        TrimCommand.PropertyChanged += OnRunChanged;
-        SplitCommand.PropertyChanged += OnRunChanged;
+        SetInCommand = new RelayCommand(() => SetInPoint(_playhead(), null));
+        SetOutCommand = new RelayCommand(() => SetOutPoint(_playhead(), null));
+        ClearCommand = new RelayCommand(Clear, () => HasRange || _rejectedIn is not null || _rejectedOut is not null);
+        TrimCommand = new RelayCommand(Trim, () => CanTrim);
+        SplitCommand = new RelayCommand(Split, () => CanSplit);
         _splitAt = playhead();
         RefreshTrimPlan();
         RefreshSplitPlan();
@@ -116,9 +113,8 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
 
     public PlanReadout SplitPlan { get; }
 
-    public ClipEditRun Run { get; }
-
-    public bool IsBusy => TrimCommand.IsRunning || SplitCommand.IsRunning;
+    /// <summary>The latest edit started here, shown with its progress, CANCEL and OPEN; null until one starts.</summary>
+    public JobViewModel? Job { get => _job; private set => SetProperty(ref _job, value); }
 
     /// <summary>Why saving is blocked by the page's metadata edits, or null.</summary>
     public string? UnsavedDetailsHint => _hasUnsavedDetails() ? UnsavedDetailsMessage : null;
@@ -126,13 +122,12 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
     public RelayCommand SetInCommand { get; }
     public RelayCommand SetOutCommand { get; }
     public RelayCommand ClearCommand { get; }
-    public AsyncCommand TrimCommand { get; }
-    public AsyncCommand SplitCommand { get; }
-    public RelayCommand CancelCommand { get; }
-    public AsyncCommand<LibraryVideo> OpenOutputCommand { get; }
+    /// <summary>Queues a render job for the kept range; another edit may already be running or queued.</summary>
+    public RelayCommand TrimCommand { get; }
+    public RelayCommand SplitCommand { get; }
 
-    private bool CanTrim => !IsBusy && !_hasUnsavedDetails() && HasRange && RangeError is null && _rejectedIn is null && _rejectedOut is null;
-    private bool CanSplit => !IsBusy && !_hasUnsavedDetails() && IsInside(SplitAt);
+    private bool CanTrim => !_hasUnsavedDetails() && HasRange && RangeError is null && _rejectedIn is null && _rejectedOut is null;
+    private bool CanSplit => !_hasUnsavedDetails() && IsInside(SplitAt);
     private ClipCutMode Mode => IsPrecise ? ClipCutMode.Precise : ClipCutMode.Fast;
 
     /// <summary>The page calls this when the playhead moves; the split plan follows once it rests.</summary>
@@ -145,17 +140,8 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         UpdateCommands();
     }
 
-    /// <summary>Cancels a running edit and waits for it to finish, including publishing anything already committed.</summary>
-    public Task SettleAsync()
-    {
-        CancelCommand.Execute(null);
-        return Task.WhenAll(TrimCommand.Completion, SplitCommand.Completion);
-    }
-
     public void Dispose()
     {
-        TrimCommand.Cancel();
-        SplitCommand.Cancel();
         TrimPlan.Dispose();
         SplitPlan.Dispose();
     }
@@ -211,37 +197,28 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         SplitPlan.Request(async token => PlanDescription.Split(await _editing.PlanSplitAsync(Source, position, token)));
     }
 
-    private Task TrimAsync(CancellationToken cancellationToken)
+    private void Trim()
     {
-        // Read on the UI thread: the operation runs on the thread pool.
+        // Captured now: the job may start later, and runs on the thread pool.
         var (start, end, title, mode) = (RangeStart!.Value, RangeEnd!.Value, OutputTitle, Mode);
-        return Run.RunAsync((progress, token) => _editing.TrimAsync(Source, start, end, title, progress, token, mode), cancellationToken);
+        Job = ClipEditJob.Enqueue(_jobs, $"Trim {Source.Label}",
+            (progress, token) => _editing.TrimAsync(Source, start, end, title, progress, token, mode), _outputsCreated);
     }
 
-    private Task SplitAsync(CancellationToken cancellationToken)
+    private void Split()
     {
         var (position, title) = (SplitAt, OutputTitle);
-        return Run.RunAsync((progress, token) => _editing.SplitAsync(Source, position, title, progress, token), cancellationToken);
+        Job = ClipEditJob.Enqueue(_jobs, $"Split {Source.Label}",
+            (progress, token) => _editing.SplitAsync(Source, position, title, progress, token), _outputsCreated);
     }
 
     private bool IsInside(TimeSpan position) => position > TimeSpan.Zero && position < Source.Duration;
 
-    private void OnRunChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName != nameof(AsyncCommandBase.IsRunning)) return;
-        OnPropertyChanged(nameof(IsBusy));
-        UpdateCommands();
-    }
-
     private void UpdateCommands()
     {
-        SetInCommand.RaiseCanExecuteChanged();
-        SetOutCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         TrimCommand.RaiseCanExecuteChanged();
         SplitCommand.RaiseCanExecuteChanged();
-        CancelCommand.RaiseCanExecuteChanged();
-        OpenOutputCommand.RaiseCanExecuteChanged();
     }
 
     private static string Format(TimeSpan? time) => time is { } value ? Timecode.Format(value) : "";
