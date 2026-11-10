@@ -201,8 +201,11 @@
     <StackPanel IsVisible="{Binding Shelf.IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440" Spacing="16" Margin="24">
      <TextBlock Classes="title" Text="{Binding EmptyTitle}" TextAlignment="Center" TextWrapping="Wrap"/>
      <TextBlock Classes="meta" Text="{Binding EmptyMessage}" TextWrapping="Wrap" TextAlignment="Center"/>
-     <c:PlasticButton Classes="primary" Content="CHOOSE LIBRARY FOLDER…" HorizontalAlignment="Center"
-      Command="{Binding Settings.ChooseFolderCommand}" IsVisible="{Binding !HasLibrary}"/>
+     <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" IsVisible="{Binding !HasLibrary}">
+      <c:PlasticButton Classes="primary" Content="CREATE LIBRARY" Command="{Binding Settings.CreateLibraryCommand}"
+       ToolTip.Tip="Choose where to put a new HomeVideoLibrary folder"/>
+      <c:PlasticButton Content="OPEN LIBRARY" Command="{Binding Settings.ChooseFolderCommand}" ToolTip.Tip="Choose an existing library folder"/>
+     </StackPanel>
     </StackPanel>
    </Grid>
 

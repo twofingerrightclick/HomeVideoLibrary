@@ -36,6 +36,7 @@ public sealed class SettingsViewModel : ViewModelBase
         _settings = settings; _sounds = sounds; _interaction = interaction; _model = model; _toolsReady = toolsReady;
         _openLibrary = openLibrary; _canOpenLibrary = canOpenLibrary; _nothingHoldsAVideo = nothingHoldsAVideo; _status = status;
         ChooseFolderCommand = new AsyncCommand(_ => ChooseFolderAsync(), () => _canOpenLibrary(), context: "Choose library");
+        CreateLibraryCommand = new AsyncCommand(_ => CreateLibraryAsync(), () => _canOpenLibrary(), context: "Create library");
         RefreshCommand = new AsyncCommand(_ => RefreshIndexAsync(), () => CanRefresh, context: "Refresh library");
         RebuildCommand = new AsyncCommand(_ => RefreshIndexAsync(force: true), () => CanRefresh, context: "Rebuild library");
         CancelIndexCommand = new RelayCommand(CancelIndex, () => IsIndexing);
@@ -43,6 +44,9 @@ public sealed class SettingsViewModel : ViewModelBase
 
     /// <summary>Picks and opens another library; disabled while one is opening, the app is closing or jobs run.</summary>
     public AsyncCommand ChooseFolderCommand { get; }
+    /// <summary>Picks a folder and opens a new <see cref="LibraryFolder.DefaultName"/> library in it (see
+    /// <see cref="LibraryFolder.ForNewLibrary"/>); enabled like <see cref="ChooseFolderCommand"/>.</summary>
+    public AsyncCommand CreateLibraryCommand { get; }
     public AsyncCommand RefreshCommand { get; }
     /// <summary>Re-reads every MKV, not only changed ones.</summary>
     public AsyncCommand RebuildCommand { get; }
@@ -92,9 +96,22 @@ public sealed class SettingsViewModel : ViewModelBase
         if (await _interaction.PickFolderAsync("Choose your video library folder") is { } path) await _openLibrary(path);
     }
 
+    private async Task CreateLibraryAsync()
+    {
+        if (await _interaction.PickFolderAsync("Choose where to create your library") is not { } parent) return;
+        string root;
+        try { root = await Task.Run(() => LibraryFolder.ForNewLibrary(parent)); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _status("The library could not be created: " + exception.Message);
+            return;
+        }
+        await _openLibrary(root);
+    }
+
     public void UpdateCommands()
     {
-        ChooseFolderCommand.RaiseCanExecuteChanged();
+        ChooseFolderCommand.RaiseCanExecuteChanged(); CreateLibraryCommand.RaiseCanExecuteChanged();
         RefreshCommand.RaiseCanExecuteChanged(); RebuildCommand.RaiseCanExecuteChanged(); CancelIndexCommand.RaiseCanExecuteChanged();
     }
 

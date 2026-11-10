@@ -162,6 +162,12 @@ internal sealed class FakeInteraction : HomeVideoLibrary.Desktop.ViewModels.IInt
     public HomeVideoLibrary.Desktop.ViewModels.PickedFiles Picked { get; set; } = HomeVideoLibrary.Desktop.ViewModels.PickedFiles.None;
     public Task<HomeVideoLibrary.Desktop.ViewModels.PickedFiles> PickVideosAsync() => Task.FromResult(Picked);
     public string? Folder { get; set; }
-    public Task<string?> PickFolderAsync(string title) => Task.FromResult(Folder);
+    /// <summary>The titles of the folder pickers shown, in order.</summary>
+    public List<string> FolderTitles { get; } = [];
+    public Task<string?> PickFolderAsync(string title)
+    {
+        FolderTitles.Add(title);
+        return Task.FromResult(Folder);
+    }
     public Task ShowSettingsAsync(HomeVideoLibrary.Desktop.ViewModels.SettingsViewModel settings) => Task.CompletedTask;
 }

@@ -55,6 +55,8 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - A month divider precedes the first tape of each month. A paper pill pinned at the top shows the month at the
     viewport top.
   - A search that matched a chapter adds a "▸ 12:34 · title" line that opens the tape at that chapter.
+  - With no library open, it shows CREATE LIBRARY (primary) and OPEN LIBRARY under one line of context, naming the
+    saved library's folder when that could not be found or opened.
 - **Spine:** VhsSpine.
   - Its printed sticker art runs vertically, as on a real spine label; the handwritten label reads horizontally.
   - Sticker stock, accent and brand mark are a stable pick per video.
