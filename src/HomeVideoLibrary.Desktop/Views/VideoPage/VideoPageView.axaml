@@ -11,17 +11,10 @@
              Focusable="True">
   <!--
     Nothing Avalonia draws may overlap the native video surface in this window: it would be hidden under it. What has
-    to appear over the video (the fullscreen controls, the double-click target) lives in the VideoView's Content, which
-    LibVLCSharp shows in a transparent window that tracks the video's bounds. Prompts are real windows.
+    to appear over the video (the fullscreen controls, the double-click target) lives in VideoOverlayWindow, a transparent
+    window the page keeps over the visible part of the video. Prompts are real windows.
   -->
-  <UserControl.Resources>
-    <!-- Nearly clear, so the overlay window receives pointer input over the video instead of passing it through. -->
-    <SolidColorBrush x:Key="Page.Brush.HitSurface" Color="{StaticResource Vcr.Color.Chassis.Deep}" Opacity="0.01"/>
-  </UserControl.Resources>
   <UserControl.Styles>
-    <Style Selector="Panel#Overlay.idle">
-      <Setter Property="Cursor" Value="None"/>
-    </Style>
     <!-- Tab headers are clicked, not focused: focus stays on the page so arrows keep seeking. Cmd+1..5 switch tabs. -->
     <Style Selector="TabControl.inspector TabItem">
       <Setter Property="Focusable" Value="False"/>
@@ -68,18 +61,7 @@
     <Grid x:Name="Body" Grid.Row="1" ColumnDefinitions="*,Auto,Auto">
       <Grid RowDefinitions="*,Auto,Auto">
         <Border Background="{DynamicResource Vcr.Brush.Chassis.Deep}" MinHeight="160">
-          <vlc:VideoView x:Name="Video" MediaPlayer="{Binding Player.Surface.MediaPlayer, Mode=OneWay}">
-            <Panel x:Name="Overlay" Background="{StaticResource Page.Brush.HitSurface}" Classes.idle="{Binding Fullscreen.IsIdle}">
-              <Border x:Name="FullscreenControls" Classes="chassis" VerticalAlignment="Bottom" Padding="16,12,16,14"
-                      IsVisible="{Binding Fullscreen.AreControlsShown}">
-                <StackPanel Spacing="6">
-                  <local:TransportDeck/>
-                  <TextBlock Classes="meta" Text="{Binding Status}" TextTrimming="CharacterEllipsis"
-                             IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                </StackPanel>
-              </Border>
-            </Panel>
-          </vlc:VideoView>
+          <vlc:VideoView x:Name="Video" MediaPlayer="{Binding Player.Surface.MediaPlayer, Mode=OneWay}"/>
         </Border>
         <Border Grid.Row="1" Classes="chassis" Padding="12,10,12,8" IsVisible="{Binding !Fullscreen.IsFullscreen}">
           <local:TransportDeck/>
