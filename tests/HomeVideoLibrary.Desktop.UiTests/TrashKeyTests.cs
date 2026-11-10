@@ -189,6 +189,10 @@ public sealed class TrashKeyTests : IDisposable
             throw new NotSupportedException();
         public Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+        public Task CaptureKeyframeAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task TileAsync(IReadOnlyList<string> images, string outputPath, int columns, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoMetadata : IVideoMetadataService

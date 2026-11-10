@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using Xunit;
@@ -74,21 +75,54 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
-    public async Task ClosingTheWindowCancelsARunningClipEditThenReleasesTheLibrary()
+    public async Task TrimOpensTheEditTabAndClosingTheWindowCancelsItsJobThenReleasesTheLibrary()
     {
         var (viewModel, _) = await OpenLibraryAsync();
         viewModel.Shelf.Tapes.Single().IsSelected = true;
-        await viewModel.OpenClipEditorAsync();
-        var clips = Assert.IsType<ClipEditorPage>(viewModel.Page).Editor;
-        var trim = clips.TrimAsync();
-        Assert.True(clips.IsBusy);
-        Assert.False(await viewModel.NavigateAsync(() => null)); // Back keeps a running edit.
+        await viewModel.TrimSelectedCommand.ExecuteAsync();
+        var page = Assert.IsType<VideoPageViewModel>(viewModel.Page);
+        Assert.Equal((int)InspectorTab.Edit, page.SelectedTab);
+
+        var edit = page.Edit!;
+        edit.InText = "1";
+        edit.OutText = "5";
+        await edit.TrimPlan.Completion;
+        edit.TrimCommand.Execute(null);
+        var job = Assert.IsType<JobViewModel>(edit.Job);
+        Assert.True(await viewModel.NavigateAsync(() => null)); // The trim keeps running in the activity drawer.
+        Assert.True(job.IsRunning);
 
         Assert.True(await viewModel.RequestCloseAsync());
-        await trim;
+        Assert.Equal(JobState.Cancelled, job.State);
         Assert.Null(viewModel.Page);
         using var released = LibraryLock.TryAcquire(Library);
         Assert.NotNull(released);
+    }
+
+    [Fact]
+    public async Task MergeOpensItsPageAndItsJobOutlivesThePageUntilTheWindowCloses()
+    {
+        var catalog = await CreateCatalogAsync(Library.RootDirectory);
+        await AddVideoAsync(catalog, "first");
+        await AddVideoAsync(catalog, "second");
+        var viewModel = NewViewModel();
+        await viewModel.OpenLibraryAsync(catalog.Paths.RootDirectory);
+        await viewModel.Settings.RefreshIndexAsync();
+        foreach (var tape in viewModel.Shelf.Tapes) tape.IsSelected = true;
+
+        await viewModel.MergeSelectedCommand.ExecuteAsync();
+        var merge = Assert.IsType<MergePageViewModel>(viewModel.Page);
+        Assert.Equal(2, merge.Sources.Count);
+        await merge.Plan.Completion;
+        merge.SaveCommand.Execute(null);
+        var job = merge.Job!;
+        Assert.True(await viewModel.NavigateAsync(() => null)); // The merge keeps running in the activity drawer.
+        Assert.Null(viewModel.Page);
+        Assert.True(job.IsRunning);
+
+        Assert.True(await viewModel.RequestCloseAsync());
+        Assert.Equal(1, _interaction.CloseAsked);
+        Assert.Equal(JobState.Cancelled, job.State);
     }
 
     [Fact]
@@ -260,8 +294,6 @@ public sealed class EditorNavigationTests : IDisposable
     private sealed class BlockingClipEditing : IClipEditingService
     {
         private static readonly ClipCutPlan Plan = new(TimeSpan.Zero, TimeSpan.FromSeconds(10), true, "");
-        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ClipOutputFormat(160, 120, "10", "1:1"));
         public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
             CancellationToken cancellationToken = default) => Task.FromResult(Plan);
         public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
@@ -276,8 +308,12 @@ public sealed class EditorNavigationTests : IDisposable
         }
         public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
             IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public async Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
+            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return [];
+        }
     }
 
     private sealed class Metadata : IVideoMetadataService

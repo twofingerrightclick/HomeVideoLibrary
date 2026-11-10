@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure.Editing;
 
@@ -157,24 +158,16 @@ internal sealed record MediaTimeline(TimeSpan StartTime, TimeSpan ContainerEnd, 
 /// <param name="Timeline">Absolute times; see <see cref="MediaTimeline"/>.</param>
 internal sealed record EditSource(string Path, MkvInfo Mkv, VideoStreamInfo Video, MediaTimeline Timeline)
 {
-    private static readonly TimeSpan MinimumLength = TimeSpan.FromMilliseconds(100);
-
     public MkvTrack VideoTrack => Mkv.Tracks.First(track => track.Type == "video");
     public IReadOnlyList<MkvTrack> AudioTracks => Mkv.Tracks.Where(track => track.Type == "audio").ToArray();
     public TimeSpan VideoEnd => Timeline.VideoEnd;
     public TimeSpan FrameDuration => VideoTrack.DefaultDurationNanoseconds > 0
         ? TimeSpan.FromTicks(VideoTrack.DefaultDurationNanoseconds / 100) : Timeline.FrameDuration;
 
-    /// <summary>The one rule for editable ranges: positions inside the video, where any end at or past the video's last
-    /// frame means "to the end". Catalog and container durations include audio that outlasts the picture, so a
-    /// whole-video range typed from them still resolves to the video's end.</summary>
-    public (TimeSpan Start, TimeSpan End) ResolveRange(TimeSpan start, TimeSpan end)
-    {
-        var resolved = end >= VideoEnd - CutPlanner.Epsilon ? VideoEnd : end;
-        if (start < TimeSpan.Zero || resolved <= start || resolved - start < MinimumLength)
-            throw new ArgumentOutOfRangeException(nameof(start), "Choose an ordered range inside the video, at least 0.1 seconds long.");
-        return (start, resolved);
-    }
+    /// <summary>The range to edit, by <see cref="ClipRange"/>'s rule over the video's own length: any end at or past
+    /// the last frame means "to the end".</summary>
+    /// <exception cref="ClipRangeException">The range cannot be kept.</exception>
+    public (TimeSpan Start, TimeSpan End) ResolveRange(TimeSpan start, TimeSpan end) => ClipRange.Validate(start, end, VideoEnd);
 }
 
 /// <summary>Reads what editing needs to know about library MKVs. Source probes are cached per file content.</summary>
