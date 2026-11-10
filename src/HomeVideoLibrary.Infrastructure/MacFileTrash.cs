@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -16,6 +17,15 @@ internal sealed class MacFileTrash : IFileTrash
 
     public TrashResult MoveToTrash(string path)
     {
+        var result = MoveToTrash(path, out var location);
+        if (location is not null) Trace.TraceInformation($"Moved {path} to the Trash at {location}.");
+        return result;
+    }
+
+    /// <param name="location">Where the file now is (the volume's own Trash), when it was trashed.</param>
+    internal TrashResult MoveToTrash(string path, out string? location)
+    {
+        location = null;
         var full = Path.GetFullPath(path);
         FileTrash.RequireFile(full);
         // Whether a share keeps a Trash depends on its server; treating every network volume as having none means a file
@@ -27,8 +37,11 @@ internal sealed class MacFileTrash : IFileTrash
         {
             var manager = Send(Class("NSFileManager"), Selector("defaultManager"));
             var url = Send(Class("NSURL"), Selector("fileURLWithPath:"), String(full));
-            if (SendTrash(manager, Selector("trashItemAtURL:resultingItemURL:error:"), url, IntPtr.Zero, out var error) != 0)
+            if (SendTrash(manager, Selector("trashItemAtURL:resultingItemURL:error:"), url, out var resulting, out var error) != 0)
+            {
+                if (resulting != 0) location = Marshal.PtrToStringUTF8(Send(Send(resulting, Selector("path")), Selector("UTF8String")));
                 return TrashResult.Trashed;
+            }
             switch (SendInteger(error, Selector("code")))
             {
                 case FeatureUnsupportedError: return TrashResult.Unavailable;
@@ -73,5 +86,5 @@ internal sealed class MacFileTrash : IFileTrash
 
     /// <summary>Returns the Objective-C BOOL, which is one byte on every Apple ABI.</summary>
     [DllImport(ObjectiveC, EntryPoint = "objc_msgSend")]
-    private static extern byte SendTrash(nint receiver, nint selector, nint url, nint resultingUrl, out nint error);
+    private static extern byte SendTrash(nint receiver, nint selector, nint url, out nint resultingUrl, out nint error);
 }

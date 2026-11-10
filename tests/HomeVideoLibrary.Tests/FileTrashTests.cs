@@ -10,15 +10,35 @@ public sealed class FileTrashTests : IDisposable
     private const uint Uid = 4242;
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-trash-" + Guid.NewGuid().ToString("N"));
 
+    /// <summary>Uses a disk image mounted inside the test directory, so the file lands in that volume's own
+    /// <c>.Trashes</c> and the user's Trash is never touched; the image is detached afterwards.</summary>
     [Fact]
-    public void TheMacTrashTakesATemporaryFile()
+    public async Task TheMacTrashMovesAFileIntoItsVolumesOwnTrash()
     {
         if (!OperatingSystem.IsMacOS()) return;
-        var file = CreateFile(Path.Combine(_root, $"hvl-trash-test-{Guid.NewGuid():N}.txt"));
+        var image = Path.Combine(_root, "volume.dmg");
+        var mount = Directory.CreateDirectory(Path.Combine(_root, "volume")).FullName;
+        await HdiutilAsync("create", "-size", "8m", "-fs", "APFS", "-volname", "HVLTrashTest", image);
+        await HdiutilAsync("attach", "-nobrowse", "-noautoopen", "-mountpoint", mount, image);
+        try
+        {
+            var file = CreateFile(Path.Combine(mount, "Videos", "tape.mkv"));
 
-        Assert.Equal(TrashResult.Trashed, FileTrash.ForCurrentPlatform().MoveToTrash(file));
+            Assert.Equal(TrashResult.Trashed, new MacFileTrash().MoveToTrash(file, out var location));
 
-        Assert.False(File.Exists(file));
+            Assert.False(File.Exists(file));
+            Assert.NotNull(location);
+            // The location is the real path (/private/var/... for /var/...).
+            Assert.Contains($"/{Path.GetFileName(_root)}/volume/.Trashes/", location);
+            Assert.True(File.Exists(location));
+        }
+        finally { await HdiutilAsync("detach", "-force", mount); }
+    }
+
+    private static async Task HdiutilAsync(params string[] arguments)
+    {
+        var result = await new MediaProcess().RunAsync("/usr/bin/hdiutil", arguments, TimeSpan.FromMinutes(1));
+        Assert.True(result.ExitCode == 0, $"hdiutil {arguments[0]}: {result.StandardError}{result.StandardOutput}");
     }
 
     [Fact]
