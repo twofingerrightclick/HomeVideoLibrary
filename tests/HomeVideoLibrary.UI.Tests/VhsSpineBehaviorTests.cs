@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Layout;
 using HomeVideoLibrary.UI.Controls;
 using Xunit;
 using static HomeVideoLibrary.UI.Tests.Headless;
@@ -47,5 +48,20 @@ public sealed class VhsSpineBehaviorTests
         window.KeyPressQwerty(PhysicalKey.Enter, RawInputModifiers.None);
 
         Assert.Empty(open.Calls);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(800, 300)]
+    [InlineData(300, 800)]
+    [InlineData(1200, 60)]
+    public void The_spine_keeps_real_VHS_proportions_in_any_space(double width, double height)
+    {
+        var spine = new VhsSpine { Label = "Christmas 1991", HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        var window = new Window { Width = width, Height = height, Content = spine };
+        window.Show();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(VhsSpine.AspectRatio, spine.Bounds.Width / spine.Bounds.Height, precision: 2);
+        Assert.True(spine.Bounds.Width <= width + 0.5 && spine.Bounds.Height <= height + 0.5);
     }
 }
