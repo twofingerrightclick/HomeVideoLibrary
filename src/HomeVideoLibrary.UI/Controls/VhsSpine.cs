@@ -30,7 +30,7 @@ public enum SpineSticker
 /// handwritten <see cref="Label"/> reads horizontally and truncates with an ellipsis. The spine keeps a
 /// real VHS spine's proportions (187 x 25 mm) at any size: it takes the available width and the height
 /// that ratio implies (or the reverse when only a height is given), and its face scales uniformly. Hover
-/// lights an LED on the shell end; the tape never moves. As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
+/// brings the tape slightly forward (scale and shadow only; it never shifts). As a <see cref="Button"/> it opens the tape through <c>Command</c> (or
 /// <c>Click</c>) on a single click, Enter, or Space. Double-clicks open it once, and modifier clicks are
 /// left to the host list for selection; selection itself is the host's and is only displayed via
 /// <see cref="IsSelected"/>.

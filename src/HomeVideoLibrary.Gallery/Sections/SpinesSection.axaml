@@ -18,7 +18,7 @@
 
     <Border Classes="gallery-plate">
       <StackPanel Spacing="12">
-        <TextBlock Classes="gallery-note" Text="States: hover (comes forward, end LED lit), selected, keyboard focus, selected + focus; host check box via LeadingContent"/>
+        <TextBlock Classes="gallery-note" Text="States: hover (comes forward), selected, keyboard focus, selected + focus; host check box via LeadingContent"/>
         <Grid ColumnDefinitions="*,24,*" RowDefinitions="Auto,14,Auto,14,Auto">
           <StackPanel>
             <c:VhsSpine Sticker="Cream" ShellText="T-120" Accent="#E35A44" Label="First steps" g:ForcedState.States=":pointerover"/>
