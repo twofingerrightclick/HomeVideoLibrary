@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -74,13 +75,50 @@ public sealed class VhsSpineBehaviorTests
 
         window.MouseDown(At(spine, 0.5), MouseButton.Left);
         window.MouseUp(At(spine, 0.5), MouseButton.Left);
-        for (var frame = 0; frame < 30; frame++)
-        {
-            AvaloniaHeadlessPlatform.ForceRenderTimerTick(16);
-            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        }
+        window.MouseDown(At(spine, 0.5), MouseButton.Left);
+        window.MouseUp(At(spine, 0.5), MouseButton.Left);
+        PumpFrames(until: () => open.Calls.Count > 0);
+        PumpFrames(until: () => false, timeout: TimeSpan.FromMilliseconds(100));
 
         Assert.Single(open.Calls);
+    }
+
+    [AvaloniaFact]
+    public void The_open_transition_grows_and_fades_the_tape_then_opens_it_and_leaves_it_at_rest()
+    {
+        var open = new RecordingCommand();
+        var (window, spine) = Host(new VhsSpine { Command = open, OpenTransition = true, Width = 600 });
+        var face = spine.GetVisualDescendants().OfType<Viewbox>().Single();
+        double fadedTo = 1, grewTo = 1;
+
+        window.MouseDown(At(spine, 0.5), MouseButton.Left);
+        window.MouseUp(At(spine, 0.5), MouseButton.Left);
+        PumpFrames(until: () =>
+        {
+            fadedTo = Math.Min(fadedTo, face.Opacity);
+            grewTo = Math.Max(grewTo, Scale(face));
+            return open.Calls.Count > 0;
+        });
+
+        Assert.Single(open.Calls);
+        Assert.True(fadedTo < 0.9, $"faded only to {fadedTo}");
+        Assert.True(grewTo > 1.01, $"grew only to {grewTo}");
+        Assert.Equal(1, face.Opacity);
+        Assert.Equal(1, Scale(face), precision: 3);
+
+        static double Scale(Visual visual) => visual.RenderTransform?.Value.M11 ?? 1;
+    }
+
+    // Animations run on the wall clock, so frames are pumped in real time.
+    private static void PumpFrames(Func<bool> until, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (!until() && DateTime.UtcNow < deadline)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Thread.Sleep(5);
+        }
     }
 
     // 704 px wide is the full shelf stack: about 1.57x the design face, so the 24 px floor is about 15.3 design units.

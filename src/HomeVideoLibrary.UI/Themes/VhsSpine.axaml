@@ -45,8 +45,10 @@
         <Panel>
           <!-- The spine is drawn on a fixed design face with a real VHS spine's 187:25 proportions and scaled
                uniformly, so label, sticker art and molding stay in proportion at any size. -->
-          <!-- Viewbox clips by default, which would cut the forward-scaled shell and its shadow. -->
-          <Viewbox Stretch="Uniform" ClipToBounds="False">
+          <!-- Viewbox clips by default, which would cut the forward-scaled shell and its shadow. Its ScaleTransform is
+               the open transition's; the shell's TransformOperations belong to hover. -->
+          <Viewbox Name="PART_Face" Stretch="Uniform" ClipToBounds="False">
+          <Viewbox.RenderTransform><ScaleTransform/></Viewbox.RenderTransform>
           <Border Name="PART_Shell"
                   Width="{x:Static c:VhsSpine.DesignWidth}"
                   Height="{x:Static c:VhsSpine.DesignHeight}"

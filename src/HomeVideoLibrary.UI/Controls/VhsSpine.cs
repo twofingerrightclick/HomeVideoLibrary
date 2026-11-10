@@ -79,14 +79,18 @@ public class VhsSpine : Button
     public static readonly StyledProperty<bool> OpenTransitionProperty =
         AvaloniaProperty.Register<VhsSpine, bool>(nameof(OpenTransition));
 
+    // Avalonia has no keyframe animator for RenderTransform, so the come-out scales the face's ScaleTransform; on top of
+    // hover's 1.025 on the shell that takes the tape to 1.12.
+    private const double ComeOutScale = 1.12 / 1.025;
+
     private static readonly Animation ComeOut = new()
     {
         Duration = TimeSpan.FromMilliseconds(180),
         Easing = new CubicEaseIn(),
         Children =
         {
-            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 1d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.025)")) } },
-            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 0d), new Setter(RenderTransformProperty, TransformOperations.Parse("scale(1.12)")) } },
+            new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 1d), new Setter(ScaleTransform.ScaleXProperty, 1d), new Setter(ScaleTransform.ScaleYProperty, 1d) } },
+            new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 0d), new Setter(ScaleTransform.ScaleXProperty, ComeOutScale), new Setter(ScaleTransform.ScaleYProperty, ComeOutScale) } },
         },
     };
 
@@ -95,7 +99,7 @@ public class VhsSpine : Button
     private static readonly Dictionary<LabelSlot, LabelFit> LabelFits = [];
     private const int MaxLabelFits = 4096;
 
-    private Border? _shell;
+    private Viewbox? _face;
     private TextBlock? _label;
     private LabelSlot? _fittedSlot;
     private Task _opening = Task.CompletedTask;
@@ -199,7 +203,7 @@ public class VhsSpine : Button
     protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
         base.OnApplyTemplate(e);
-        _shell = e.NameScope.Find<Border>("PART_Shell");
+        _face = e.NameScope.Find<Viewbox>("PART_Face");
         _label = e.NameScope.Find<TextBlock>("PART_Label");
         _fittedSlot = null;
     }
@@ -207,7 +211,7 @@ public class VhsSpine : Button
     // The open waits for the short come-out animation; a click during it is part of the same open.
     protected override void OnClick()
     {
-        if (!OpenTransition || _shell is null)
+        if (!OpenTransition || _face is null)
         {
             base.OnClick();
             return;
@@ -215,15 +219,15 @@ public class VhsSpine : Button
 
         if (_opening.IsCompleted)
         {
-            _opening = ComeOutThenOpenAsync(_shell);
+            _opening = ComeOutThenOpenAsync(_face);
         }
     }
 
-    private async Task ComeOutThenOpenAsync(Border shell)
+    private async Task ComeOutThenOpenAsync(Viewbox face)
     {
         try
         {
-            await ComeOut.RunAsync(shell);
+            await ComeOut.RunAsync(face);
         }
         finally
         {
