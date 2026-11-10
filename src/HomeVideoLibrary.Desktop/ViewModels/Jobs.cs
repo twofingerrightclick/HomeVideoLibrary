@@ -8,7 +8,8 @@ public enum JobLane { Import, Render }
 
 public enum JobState { Queued, Running, Succeeded, Failed, Cancelled }
 
-/// <summary>A progress report from a running job: what it is doing and, when known, how far along it is (0..1).</summary>
+/// <summary>A progress report from a running job: what it is doing and, when known, how far along it is (0..1). A
+/// report without a fraction changes only the stage.</summary>
 public readonly record struct JobProgress(string Stage, double? Fraction = null);
 
 /// <summary>How a job ended: a one-line summary and the videos it produced (offered as OPEN).</summary>
@@ -17,31 +18,47 @@ public sealed record JobOutcome(string Summary, IReadOnlyList<Guid> Outputs)
     public static JobOutcome Done(string summary) => new(summary, []);
 }
 
+/// <summary>What a lane finished between two idle moments, reported once when it drains.</summary>
+public readonly record struct JobBatch(JobLane Lane, int Succeeded = 0, int Failed = 0, int Cancelled = 0)
+{
+    internal JobBatch Add(JobState state) => state switch
+    {
+        JobState.Succeeded => this with { Succeeded = Succeeded + 1 },
+        JobState.Failed => this with { Failed = Failed + 1 },
+        _ => this with { Cancelled = Cancelled + 1 },
+    };
+}
+
 /// <summary>The work a job runs, on the thread pool. Report progress through the given sink; observe the token. A
 /// job that has already committed its results should finish publishing them even when cancelled late.</summary>
 public delegate Task<JobOutcome> JobWork(IProgress<JobProgress> progress, CancellationToken cancellationToken);
 
-/// <summary>Background jobs (imports, renders) shown in the activity drawer. Jobs in the same lane run one at a time,
-/// first in first out; others show as "Queued (#n)". All state changes happen on the UI thread: the queue is created
-/// there, progress is marshalled back through <see cref="Progress{T}"/>, and awaits resume there.</summary>
+/// <summary>Background jobs (imports, renders) shown in the activity drawer. Each lane is drained by one loop that runs
+/// its jobs one at a time, first in first out; the others show as "Queued (#n)". All state changes happen on the UI
+/// thread: the queue is created there, progress is marshalled back through <see cref="Progress{T}"/>, and awaits
+/// resume there.</summary>
 public sealed class JobQueue : ViewModelBase
 {
-    private readonly Dictionary<JobLane, List<JobViewModel>> _waiting = new() { [JobLane.Import] = [], [JobLane.Render] = [] };
-    private readonly Dictionary<JobLane, JobViewModel?> _running = new() { [JobLane.Import] = null, [JobLane.Render] = null };
+    private readonly Dictionary<JobLane, Lane> _lanes = Enum.GetValues<JobLane>().ToDictionary(lane => lane, lane => new Lane(lane));
     private readonly Func<JobViewModel, Task> _open;
-    private readonly TimeProvider _time;
+    private long _sequence;
 
     /// <param name="open">Opens a finished job's output (its OPEN key).</param>
+    /// <param name="time">The clock for progress estimates.</param>
     public JobQueue(Func<JobViewModel, Task> open, TimeProvider? time = null)
     {
-        _open = open; _time = time ?? TimeProvider.System;
+        _open = open; Time = time ?? TimeProvider.System;
         ClearFinishedCommand = new RelayCommand(ClearFinished, () => Jobs.Any(job => job.IsFinished));
     }
 
-    /// <summary>Raised when a job ends (succeeded, failed or cancelled), for notifications.</summary>
+    /// <summary>Raised once per job when it ends (succeeded, failed or cancelled), after its <see cref="JobViewModel.Completion"/>.</summary>
     public event Action<JobViewModel>? Finished;
 
-    /// <summary>Every job, newest first; finished ones stay until cleared.</summary>
+    /// <summary>Raised when a lane has no job left to run, with what it finished since it last drained.</summary>
+    public event Action<JobBatch>? Drained;
+
+    /// <summary>Running jobs, then queued ones in the order they will run, then finished ones newest first. A job
+    /// moves within the list when its state changes; the list is never rebuilt.</summary>
     public ObservableCollection<JobViewModel> Jobs { get; } = [];
 
     public RelayCommand ClearFinishedCommand { get; }
@@ -50,35 +67,46 @@ public sealed class JobQueue : ViewModelBase
     public int ActiveCount => Jobs.Count(job => !job.IsFinished);
     public bool HasActive => ActiveCount > 0;
 
-    /// <summary>One line for the activity key: the running job and how many wait, or the last result.</summary>
+    /// <summary>Failed jobs still in the list; they stay until dismissed or cleared.</summary>
+    public int FailedCount => Jobs.Count(job => job.HasFailed);
+    public bool HasFailures => FailedCount > 0;
+    public string FailedLabel => $"{FailedCount} FAILED";
+
+    /// <summary>One line for the activity key: a running job and how many wait, or the latest result.</summary>
     public string Summary
     {
         get
         {
-            var running = _running.Values.OfType<JobViewModel>().FirstOrDefault();
-            var queued = _waiting.Values.Sum(lane => lane.Count);
+            // A render is the long job the user waits on, so it names the activity when both lanes run.
+            var running = Jobs.Where(job => job.IsRunning).OrderBy(job => job.Lane == JobLane.Render ? 0 : 1).FirstOrDefault();
+            var queued = Jobs.Count(job => job.IsQueued);
             if (running is not null) return $"{running.Title} · {running.StatusText}" + (queued > 0 ? $" · {queued} queued" : "");
-            return Jobs.FirstOrDefault() is { } last ? $"{last.Title} · {last.StatusText}" : "No activity";
+            return Jobs.FirstOrDefault(job => job.IsFinished) is { } latest ? $"{latest.Title} · {latest.StatusText}" : "No activity";
         }
     }
+
+    internal TimeProvider Time { get; }
 
     /// <summary>Adds a job to the end of <paramref name="lane"/>; it starts when the lane is free.</summary>
     public JobViewModel Enqueue(string title, JobLane lane, JobWork work)
     {
-        var job = new JobViewModel(title, lane, work, this);
-        Jobs.Insert(0, job);
-        _waiting[lane].Add(job);
-        Changed(lane);
-        Pump(lane);
+        var job = new JobViewModel(title, lane, work, this) { Order = ++_sequence };
+        var state = _lanes[lane];
+        state.Waiting.Add(job);
+        Place(job);
+        state.Renumber();
+        Notify();
+        if (state.Drain.IsCompleted) state.Drain = DrainAsync(state);
         return job;
     }
 
-    /// <summary>Cancels every queued and running job and waits until all have ended.</summary>
-    public async Task CancelAllAndWaitAsync()
+    /// <summary>Cancels every queued and running job and waits until all have ended. Queued jobs are cancelled first,
+    /// so a lane freed by a cancelled running job finds nothing left to start.</summary>
+    public Task CancelAllAndWaitAsync()
     {
-        var active = Jobs.Where(job => !job.IsFinished).ToArray();
+        var active = Jobs.Where(job => !job.IsFinished).OrderBy(job => job.IsRunning).ToArray();
         foreach (var job in active) job.Cancel();
-        await Task.WhenAll(active.Select(job => job.Completion));
+        return Task.WhenAll(active.Select(job => job.Completion));
     }
 
     /// <summary>Waits until every job that is active now has ended.</summary>
@@ -86,48 +114,76 @@ public sealed class JobQueue : ViewModelBase
 
     internal Task OpenAsync(JobViewModel job) => _open(job);
 
-    internal DateTimeOffset Now => _time.GetUtcNow();
-
-    internal void Remove(JobViewModel job)
-    {
-        if (_waiting[job.Lane].Remove(job)) Changed(job.Lane);
-    }
-
     internal void Dismiss(JobViewModel job)
     {
         if (job.IsFinished && Jobs.Remove(job)) Notify();
     }
 
-    internal void Ended(JobViewModel job)
+    /// <summary>Ends a job that is still waiting: it is marked cancelled now, and its lane's loop skips it.</summary>
+    internal void Withdraw(JobViewModel job)
     {
-        if (ReferenceEquals(_running[job.Lane], job)) _running[job.Lane] = null;
-        Changed(job.Lane);
-        Finished?.Invoke(job);
-        Pump(job.Lane);
+        try { job.EndQueued(); }
+        finally { job.Complete(); }
+        Announce(job);
     }
 
-    internal void ProgressChanged() => OnPropertyChanged(nameof(Summary));
-
-    private void Pump(JobLane lane)
+    internal void StateChanged(JobViewModel job)
     {
-        if (_running[lane] is not null || _waiting[lane] is not { Count: > 0 } waiting) return;
-        var next = waiting[0];
-        waiting.RemoveAt(0);
-        _running[lane] = next;
-        Changed(lane);
-        next.Start();
-    }
-
-    private void Changed(JobLane lane)
-    {
-        var waiting = _waiting[lane];
-        for (var index = 0; index < waiting.Count; index++) waiting[index].QueuePosition = index + 1;
+        job.Order = ++_sequence;
+        Place(job);
+        _lanes[job.Lane].Renumber();
         Notify();
+    }
+
+    internal void StatusChanged() => OnPropertyChanged(nameof(Summary));
+
+    private async Task DrainAsync(Lane lane)
+    {
+        while (lane.Next() is { } job)
+        {
+            try { await job.RunAsync(); }
+            catch (Exception exception) { AppErrors.Report(exception, "Background job"); }
+            finally { job.Complete(); }
+            Announce(job);
+            // Raised inside the loop, so a job a handler enqueues is picked up by this loop rather than stranded.
+            if (!lane.HasWaiting) Raise(Drained, lane.TakeBatch(), "Jobs drained");
+        }
+    }
+
+    private void Announce(JobViewModel job)
+    {
+        _lanes[job.Lane].Count(job.State);
+        Raise(Finished, job, "Job finished");
+    }
+
+    private static void Raise<T>(Action<T>? handler, T value, string context)
+    {
+        try { handler?.Invoke(value); }
+        catch (Exception exception) { AppErrors.Report(exception, context); }
+    }
+
+    /// <summary>Moves (or inserts) <paramref name="job"/> to its place in <see cref="Jobs"/>; only its key changed, so one
+    /// move restores the order.</summary>
+    private void Place(JobViewModel job)
+    {
+        var target = Jobs.Count(other => !ReferenceEquals(other, job) && Precedes(other, job));
+        var current = Jobs.IndexOf(job);
+        if (current < 0) Jobs.Insert(target, job);
+        else if (current != target) Jobs.Move(current, target);
+    }
+
+    private static bool Precedes(JobViewModel first, JobViewModel second)
+    {
+        int Group(JobViewModel job) => job.IsRunning ? 0 : job.IsQueued ? 1 : 2;
+        var (a, b) = (Group(first), Group(second));
+        if (a != b) return a < b;
+        return a == 2 ? first.Order > second.Order : first.Order < second.Order;
     }
 
     private void Notify()
     {
-        OnPropertyChanged(nameof(ActiveCount)); OnPropertyChanged(nameof(HasActive)); OnPropertyChanged(nameof(Summary));
+        foreach (var name in new[] { nameof(ActiveCount), nameof(HasActive), nameof(FailedCount), nameof(HasFailures), nameof(FailedLabel), nameof(Summary) })
+            OnPropertyChanged(name);
         ClearFinishedCommand.RaiseCanExecuteChanged();
     }
 
@@ -136,13 +192,52 @@ public sealed class JobQueue : ViewModelBase
         foreach (var job in Jobs.Where(job => job.IsFinished).ToArray()) Jobs.Remove(job);
         Notify();
     }
+
+    /// <summary>One lane's waiting jobs in FIFO order, the loop draining them and what it has finished since it last
+    /// drained. A job cancelled while waiting stays in <see cref="Waiting"/> until the loop reaches and skips it.</summary>
+    private sealed class Lane(JobLane kind)
+    {
+        private JobBatch _batch = new(kind);
+
+        public List<JobViewModel> Waiting { get; } = [];
+        public Task Drain { get; set; } = Task.CompletedTask;
+        public bool HasWaiting => Waiting.Any(job => job.IsQueued);
+
+        public JobViewModel? Next()
+        {
+            while (Waiting.Count > 0)
+            {
+                var job = Waiting[0];
+                Waiting.RemoveAt(0);
+                if (job.IsQueued) return job;
+            }
+            return null;
+        }
+
+        public void Renumber()
+        {
+            var position = 0;
+            foreach (var job in Waiting.Where(job => job.IsQueued)) job.QueuePosition = ++position;
+        }
+
+        public void Count(JobState state) => _batch = _batch.Add(state);
+
+        public JobBatch TakeBatch()
+        {
+            var batch = _batch;
+            _batch = new JobBatch(kind);
+            return batch;
+        }
+    }
 }
 
 /// <summary>One job in the activity drawer. Its state only moves forward: Queued, Running, then one of Succeeded,
 /// Failed or Cancelled.</summary>
 public sealed class JobViewModel : ViewModelBase
 {
-    private static readonly TimeSpan MinimumElapsedForEta = TimeSpan.FromSeconds(2);
+    // An estimate from the first few percent or seconds jumps around too much to be useful.
+    private const double MinimumFractionForEta = 0.05;
+    private static readonly TimeSpan MinimumElapsedForEta = TimeSpan.FromSeconds(3);
     private readonly JobWork _work;
     private readonly JobQueue _queue;
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -159,39 +254,45 @@ public sealed class JobViewModel : ViewModelBase
     internal JobViewModel(string title, JobLane lane, JobWork work, JobQueue queue)
     {
         Title = title; Lane = lane; _work = work; _queue = queue;
-        CancelCommand = new RelayCommand(Cancel, () => !IsFinished);
+        CancelCommand = new RelayCommand(Cancel, () => IsQueued || IsRunning && !IsCancelling);
         OpenCommand = new AsyncCommand(_ => _queue.OpenAsync(this), () => CanOpen, context: "Open");
         DismissCommand = new RelayCommand(() => _queue.Dismiss(this), () => IsFinished);
     }
 
     public string Title { get; }
     public JobLane Lane { get; }
-    public JobState State { get => _state; private set { if (SetProperty(ref _state, value)) StateChanged(); } }
+    public JobState State => _state;
     public bool IsQueued => State == JobState.Queued;
     public bool IsRunning => State == JobState.Running;
     public bool IsFinished => State is JobState.Succeeded or JobState.Failed or JobState.Cancelled;
     public bool HasFailed => State == JobState.Failed;
+    /// <summary>Cancel was requested and the running work has not stopped yet.</summary>
+    public bool IsCancelling => IsRunning && _cancellation.IsCancellationRequested;
 
     /// <summary>1-based place in its lane's queue while queued; null otherwise.</summary>
     public int? QueuePosition { get => _queuePosition; internal set { if (SetProperty(ref _queuePosition, value)) OnPropertyChanged(nameof(StatusText)); } }
 
-    public string Stage { get => _stage; private set { if (SetProperty(ref _stage, value)) OnPropertyChanged(nameof(StatusText)); } }
+    public string Stage => _stage;
 
-    /// <summary>0..1 when known; never goes backwards while running.</summary>
-    public double? Fraction { get => _fraction; private set { if (SetProperty(ref _fraction, value)) { OnPropertyChanged(nameof(Percent)); OnPropertyChanged(nameof(IsIndeterminate)); } } }
+    /// <summary>0..1 once known; never goes backwards and is kept through stages that report no fraction.</summary>
+    public double? Fraction => _fraction;
     public double Percent => (Fraction ?? 0) * 100;
     public bool IsIndeterminate => IsRunning && Fraction is null;
 
-    /// <summary>Estimated time left, from progress so far; null until enough progress is known.</summary>
-    public TimeSpan? Remaining { get => _remaining; private set { if (SetProperty(ref _remaining, value)) OnPropertyChanged(nameof(StatusText)); } }
+    /// <summary>Estimated time left, recomputed at each progress report; null until enough progress is known.</summary>
+    public TimeSpan? Remaining => _remaining;
 
-    public JobOutcome? Outcome { get => _outcome; private set => SetProperty(ref _outcome, value); }
-    public string? Error { get => _error; private set => SetProperty(ref _error, value); }
+    public JobOutcome? Outcome => _outcome;
+    public string? Error => _error;
     public bool CanOpen => State == JobState.Succeeded && Outcome is { Outputs.Count: > 0 };
+
+    /// <summary>A queued job is removed from its queue; a running one is asked to stop.</summary>
+    public string CancelLabel => IsQueued ? "REMOVE" : "CANCEL";
 
     public string StatusText => State switch
     {
         JobState.Queued => $"Queued (#{QueuePosition})",
+        JobState.Running when IsCancelling => "Cancelling…",
         JobState.Running => string.Join(" · ", new[] { Stage, Fraction is { } f ? $"{f:0%}" : null, Remaining is { } left ? $"about {FormatRemaining(left)} left" : null }
             .Where(part => !string.IsNullOrEmpty(part))),
         JobState.Succeeded => Outcome?.Summary ?? "Done",
@@ -203,73 +304,95 @@ public sealed class JobViewModel : ViewModelBase
     public AsyncCommand OpenCommand { get; }
     public RelayCommand DismissCommand { get; }
 
-    /// <summary>Completes when the job reaches a final state; never faults.</summary>
+    /// <summary>Completes when the job has ended; never faults.</summary>
     public Task Completion => _completion.Task;
 
-    /// <summary>Removes a queued job, or asks a running one to stop.</summary>
+    /// <summary>The queue's sort key within the job's state group: when the job last changed state.</summary>
+    internal long Order { get; set; }
+
+    /// <summary>Withdraws a queued job, or asks a running one to stop (it shows "Cancelling…" until its work observes it).</summary>
     public void Cancel()
     {
-        if (State == JobState.Queued)
+        if (IsQueued) _queue.Withdraw(this);
+        else if (IsRunning && !_cancellation.IsCancellationRequested)
         {
-            _queue.Remove(this);
-            Finish(JobState.Cancelled);
+            _cancellation.Cancel();
+            if (!IsRunning) return; // The work observed the token inline and has already ended.
+            OnPropertyChanged(nameof(IsCancelling)); OnPropertyChanged(nameof(StatusText));
+            CancelCommand.RaiseCanExecuteChanged();
+            _queue.StatusChanged();
         }
-        else if (State == JobState.Running) _cancellation.Cancel();
     }
 
-    internal async void Start()
+    /// <summary>Runs the work and leaves the job in a final state. The work's own failures end the job; only a throwing
+    /// subscriber to the job's notifications can make this throw, and the state is final even then.</summary>
+    internal async Task RunAsync()
     {
-        // async void is confined here: RunAsync catches everything, so nothing escapes to the dispatcher.
-        await RunAsync();
-    }
-
-    private async Task RunAsync()
-    {
-        _startedAt = _queue.Now;
-        State = JobState.Running;
-        var progress = new Progress<JobProgress>(Report);
+        var (state, outcome, error) = (JobState.Failed, (JobOutcome?)null, (string?)null);
         try
         {
-            var token = _cancellation.Token;
-            Outcome = await Task.Run(() => _work(progress, token), CancellationToken.None);
-            Fraction = 1;
-            Finish(JobState.Succeeded);
+            _startedAt = _queue.Time.GetUtcNow();
+            _stage = "Starting…";
+            ChangeState(JobState.Running);
+            (state, outcome, error) = await RunWorkAsync();
         }
-        catch (OperationCanceledException) { Finish(JobState.Cancelled); }
-        catch (Exception exception)
-        {
-            Error = exception.Message;
-            Finish(JobState.Failed);
-        }
+        finally { Finish(state, outcome, error); }
+    }
+
+    internal void EndQueued() => Finish(JobState.Cancelled, null, null);
+
+    /// <summary>Completes <see cref="Completion"/>; the job is final by now.</summary>
+    internal void Complete()
+    {
+        _cancellation.Dispose();
+        _completion.TrySetResult();
+    }
+
+    private async Task<(JobState, JobOutcome?, string?)> RunWorkAsync()
+    {
+        var progress = new Progress<JobProgress>(Report);
+        var token = _cancellation.Token;
+        try { return (JobState.Succeeded, await Task.Run(() => _work(progress, token), CancellationToken.None), null); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return (JobState.Cancelled, null, null); }
+        catch (Exception exception) { return (JobState.Failed, null, exception.Message); }
     }
 
     private void Report(JobProgress update)
     {
-        if (State != JobState.Running) return;
-        Stage = update.Stage;
-        if (update.Fraction is { } fraction) Fraction = Math.Max(Fraction ?? 0, Math.Clamp(fraction, 0, 1));
-        else Fraction = null;
-        var elapsed = _queue.Now - _startedAt;
-        Remaining = Fraction is > 0.02 and < 1 && elapsed >= MinimumElapsedForEta ? elapsed * ((1 - Fraction.Value) / Fraction.Value) : null;
-        _queue.ProgressChanged();
+        if (!IsRunning) return;
+        _stage = update.Stage;
+        if (update.Fraction is { } fraction)
+        {
+            _fraction = Math.Max(_fraction ?? 0, Math.Clamp(fraction, 0, 1));
+            _remaining = EstimateRemaining(_fraction.Value, _queue.Time.GetUtcNow() - _startedAt);
+        }
+        foreach (var name in new[] { nameof(Stage), nameof(Fraction), nameof(Percent), nameof(IsIndeterminate), nameof(Remaining), nameof(StatusText) })
+            OnPropertyChanged(name);
+        _queue.StatusChanged();
     }
 
-    private void Finish(JobState state)
+    private static TimeSpan? EstimateRemaining(double done, TimeSpan elapsed) =>
+        done is >= MinimumFractionForEta and < 1 && elapsed >= MinimumElapsedForEta ? elapsed * ((1 - done) / done) : null;
+
+    private void Finish(JobState state, JobOutcome? outcome, string? error)
     {
-        if (IsFinished) return;
-        Remaining = null;
-        State = state;
-        _cancellation.Dispose();
-        _queue.Ended(this);
-        _completion.TrySetResult();
+        _outcome = outcome; _error = error; _remaining = null;
+        if (state == JobState.Succeeded) _fraction = 1;
+        ChangeState(state);
     }
 
-    private void StateChanged()
+    /// <summary>Moves to <paramref name="state"/>. Every field is set before any notification, so a throwing subscriber
+    /// cannot leave the job half changed.</summary>
+    private void ChangeState(JobState state)
     {
-        foreach (var name in new[] { nameof(IsQueued), nameof(IsRunning), nameof(IsFinished), nameof(HasFailed), nameof(IsIndeterminate),
-                     nameof(CanOpen), nameof(StatusText) })
+        _state = state;
+        _queuePosition = null;
+        foreach (var name in new[] { nameof(State), nameof(IsQueued), nameof(IsRunning), nameof(IsFinished), nameof(HasFailed), nameof(IsCancelling),
+                     nameof(QueuePosition), nameof(Stage), nameof(Fraction), nameof(Percent), nameof(IsIndeterminate), nameof(Remaining),
+                     nameof(Outcome), nameof(Error), nameof(CanOpen), nameof(CancelLabel), nameof(StatusText) })
             OnPropertyChanged(name);
         CancelCommand.RaiseCanExecuteChanged(); OpenCommand.RaiseCanExecuteChanged(); DismissCommand.RaiseCanExecuteChanged();
+        _queue.StateChanged(this);
     }
 
     private static string FormatRemaining(TimeSpan left) => left.TotalMinutes >= 1 ? $"{Math.Ceiling(left.TotalMinutes):0} min" : $"{Math.Max(1, Math.Ceiling(left.TotalSeconds)):0} s";

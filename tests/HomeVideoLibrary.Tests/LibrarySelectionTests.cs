@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -180,7 +181,7 @@ public sealed class LibrarySelectionTests : IDisposable
         _interaction.Picked = new PickedFiles(["/somewhere/new clip.mov", "/somewhere/duplicate.mov", "/somewhere/broken.mov"], 0);
 
         await vm.Import.ImportCommand.ExecuteAsync();
-        Assert.Equal(["Queued (#2)", "Queued (#1)"], vm.Jobs.Jobs.Take(2).Select(job => job.StatusText));
+        Assert.Equal(["Queued (#1)", "Queued (#2)"], vm.Jobs.Jobs.Skip(1).Select(job => job.StatusText));
         await vm.Jobs.WhenIdleAsync();
 
         Assert.Equal(2, vm.Shelf.Tapes.Count);
@@ -219,12 +220,102 @@ public sealed class LibrarySelectionTests : IDisposable
 
         _interaction.CloseChoice = CloseChoice.CancelJobs;
         var close = vm.RequestCloseAsync();
-        Assert.Same(close, vm.RequestCloseAsync());
+        var again = vm.RequestCloseAsync();
         Assert.True(await close);
+        Assert.True(await again);
         Assert.Equal(2, _interaction.CloseAsked);
         Assert.Equal(JobState.Cancelled, Assert.Single(vm.Jobs.Jobs).State);
         Assert.False(vm.Import.IsImporting);
     }
+
+    [Fact]
+    public async Task ImportEnabledAgainAfterSwitchAndAfterKeepOpen()
+    {
+        var started = new TaskCompletionSource();
+        _importer = _ => new BlockingImporter(started);
+        var (vm, _) = await OpenAsync("existing");
+        bool? announced = null;
+        vm.Import.ImportCommand.CanExecuteChanged += (_, _) => announced = vm.Import.ImportCommand.CanExecute(null);
+
+        await vm.OpenLibraryAsync(vm.Settings.LibraryRoot);
+        Assert.True(announced);
+
+        vm.Import.Enqueue(["/somewhere/slow.mov"]);
+        await started.Task;
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await vm.RequestCloseAsync());
+        Assert.True(announced);
+        await vm.Jobs.CancelAllAndWaitAsync();
+    }
+
+    [Fact]
+    public async Task ChoosingAnotherLibraryWaitsForJobs()
+    {
+        var (vm, _) = await OpenAsync("first");
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var job = vm.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
+
+        Assert.False(vm.Settings.ChooseFolderCommand.CanExecute(null));
+        gate.SetResult(JobOutcome.Done("ok"));
+        await job.Completion;
+        Assert.True(vm.Settings.ChooseFolderCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task OpeningAJobOutputThatIsGoneSaysSo()
+    {
+        var (vm, _) = await OpenAsync("first");
+        var job = vm.Jobs.Enqueue("Trim", JobLane.Render, (_, _) => Task.FromResult(new JobOutcome("Saved.", [Guid.NewGuid()])));
+        await job.Completion;
+
+        await job.OpenCommand.ExecuteAsync();
+        Assert.Equal("The video from “Trim” is no longer in the library.", vm.Status);
+        Assert.Null(vm.Page);
+    }
+
+    [Fact]
+    public Task ImportsNotifyOnceWhenTheLaneDrainsAndFailuresAtOnce() => UiThread.Run(async () =>
+    {
+        _importer = catalog => new FakeImporter(catalog, _files);
+        var (vm, _) = await OpenAsync("existing");
+        var toasts = new List<string>();
+        vm.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(MainWindowViewModel.Toast) && vm.HasToast) toasts.Add(vm.Toast); };
+
+        vm.Import.Enqueue(["/somewhere/a.mov", "/somewhere/broken.mov", "/somewhere/b.mov"]);
+        await vm.Jobs.WhenIdleAsync();
+        await UiThread.Settle();
+
+        Assert.Equal(["Import broken.mov: bad header", "Imported 2 · 1 failed"], toasts);
+        Assert.True(vm.Jobs.HasFailures);
+        Assert.Equal("1 FAILED", vm.Jobs.FailedLabel);
+        vm.Jobs.ClearFinishedCommand.Execute(null);
+        Assert.False(vm.Jobs.HasFailures);
+    });
+
+    [Fact]
+    public Task NewerToastNotClearedByOlderTimer() => UiThread.Run(async () =>
+    {
+        var time = new FakeTimeProvider();
+        var vm = new MainWindowViewModel(new MainWindowDependencies
+        {
+            Interaction = _interaction,
+            Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
+            Time = time,
+            Post = action => action(),
+        });
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []); // Toasts "Select videos first…".
+
+        // The older toast's delay ends off the UI thread; its continuation is queued behind the newer toast.
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []);
+        await UiThread.Settle();
+        Assert.True(vm.HasToast);
+
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await UiThread.Settle();
+        Assert.False(vm.HasToast);
+    });
 
     [Fact]
     public async Task EscapeInAnAlbumRenameKeepsTheOldName()
@@ -280,6 +371,24 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
         await vm.Albums.AddSelectedHereCommand.ExecuteAsync();
         Assert.Contains("Added 1 video to “Beach”.", vm.Status);
+    }
+
+    [Fact]
+    public async Task DeleteInAddModeIsDisabled()
+    {
+        var (vm, videos) = await OpenAsync("first", "second");
+        var album = await vm.Model!.CreateAlbumAsync("Beach", [videos[0].Id]);
+        vm.Albums.Current = vm.Albums.Rows.Single(row => row.Id == album.Id);
+        Tape(vm, videos[0]).IsSelected = true;
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+        bool? announced = null;
+        vm.DeleteSelectedCommand.CanExecuteChanged += (_, _) => announced = vm.DeleteSelectedCommand.CanExecute(null);
+
+        vm.Albums.StartAddingCommand.Execute(null);
+        Tape(vm, videos[1]).IsSelected = true; // Shown in add mode, so it is a visible selection.
+        Assert.Equal("ADD 1", vm.Albums.AddHereLabel);
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+        Assert.False(announced);
     }
 
     private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter

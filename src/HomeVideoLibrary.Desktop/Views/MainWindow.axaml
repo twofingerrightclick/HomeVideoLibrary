@@ -210,45 +210,51 @@
     <TextBlock Grid.Column="1" Classes="meta" Text="Click to play · check, ⌘/Ctrl- or Shift-click to select" IsVisible="{Binding IsShelfShown}"
      VerticalAlignment="Center"/>
     <!-- Activity: background imports and edits. The flyout is a native popup, so it also opens over a playing video. -->
-    <c:PlasticButton x:Name="ActivityButton" Grid.Column="2" Classes="toolbar" MaxWidth="420" AutomationProperties.Name="Activity">
-     <StackPanel Orientation="Horizontal" Spacing="8">
-      <Ellipse Width="7" Height="7" Classes="led" Classes.lit="{Binding Jobs.HasActive}" VerticalAlignment="Center"/>
-      <TextBlock Text="{Binding Jobs.Summary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-     </StackPanel>
-     <c:PlasticButton.Flyout>
-      <Flyout Placement="TopEdgeAlignedRight" ShowMode="Standard">
-       <StackPanel Width="440" Spacing="10">
-        <c:SectionHeader Title="ACTIVITY">
-         <c:PlasticButton Classes="toolbar" Content="CLEAR FINISHED" Command="{Binding Jobs.ClearFinishedCommand}"/>
-        </c:SectionHeader>
-        <TextBlock Classes="meta" Text="No imports or edits yet." IsVisible="{Binding !Jobs.Jobs.Count}"/>
-        <ScrollViewer MaxHeight="420">
-         <ItemsControl ItemsSource="{Binding Jobs.Jobs}">
-          <ItemsControl.ItemTemplate>
-           <DataTemplate x:DataType="vm:JobViewModel">
-            <Border Classes="well" Margin="0,0,0,6">
-             <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
-              <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Grid.Row="1" Classes="meta" Classes.error="{Binding HasFailed}" Text="{Binding StatusText}" TextWrapping="Wrap"/>
-              <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
-               Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
-              <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-               <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"/>
-               <c:PlasticButton Classes="toolbar" Content="{Binding IsQueued, Converter={x:Static views:JobCancelLabel.Instance}}"
-                Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
-               <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"
-                IsVisible="{Binding IsFinished}" ToolTip.Tip="Remove from the list" AutomationProperties.Name="Remove from the list"/>
-              </StackPanel>
-             </Grid>
-            </Border>
-           </DataTemplate>
-          </ItemsControl.ItemTemplate>
-         </ItemsControl>
-        </ScrollViewer>
-       </StackPanel>
-      </Flyout>
-     </c:PlasticButton.Flyout>
-    </c:PlasticButton>
+    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+     <c:PlasticButton Classes="toolbar destructive" Content="CANCEL QUIT" Command="{Binding CancelQuitCommand}" IsVisible="{Binding IsWaitingToQuit}"
+      ToolTip.Tip="Keep the app open instead of quitting when the jobs finish"/>
+     <c:PlasticButton x:Name="ActivityButton" Classes="toolbar" MaxWidth="420" AutomationProperties.Name="Activity">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+       <Ellipse Width="7" Height="7" Classes="led" Classes.lit="{Binding Jobs.HasActive}" VerticalAlignment="Center"/>
+       <TextBlock Text="{Binding Jobs.Summary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+       <TextBlock Classes="meta error" Text="{Binding Jobs.FailedLabel}" IsVisible="{Binding Jobs.HasFailures}" VerticalAlignment="Center"/>
+      </StackPanel>
+      <c:PlasticButton.Flyout>
+       <Flyout Placement="TopEdgeAlignedRight" ShowMode="Standard">
+        <StackPanel Width="440" Spacing="10">
+         <c:SectionHeader Title="ACTIVITY">
+          <c:PlasticButton Classes="toolbar" Content="CLEAR FINISHED" Command="{Binding Jobs.ClearFinishedCommand}"/>
+         </c:SectionHeader>
+         <TextBlock Classes="meta" Text="No imports or edits yet." IsVisible="{Binding !Jobs.Jobs.Count}"/>
+         <ScrollViewer MaxHeight="420">
+          <ItemsControl ItemsSource="{Binding Jobs.Jobs}">
+           <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:JobViewModel">
+             <Border Classes="well" Margin="0,0,0,6">
+              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
+               <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+               <TextBlock Grid.Row="1" Classes="meta" Classes.error="{Binding HasFailed}" Text="{Binding StatusText}" TextWrapping="Wrap"/>
+               <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
+                Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
+               <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"
+                 Click="CloseActivity"/>
+                <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"
+                 Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
+                <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"
+                 IsVisible="{Binding IsFinished}" ToolTip.Tip="Remove from the list" AutomationProperties.Name="Remove from the list"/>
+               </StackPanel>
+              </Grid>
+             </Border>
+            </DataTemplate>
+           </ItemsControl.ItemTemplate>
+          </ItemsControl>
+         </ScrollViewer>
+        </StackPanel>
+       </Flyout>
+      </c:PlasticButton.Flyout>
+     </c:PlasticButton>
+    </StackPanel>
    </Grid>
   </Grid>
 

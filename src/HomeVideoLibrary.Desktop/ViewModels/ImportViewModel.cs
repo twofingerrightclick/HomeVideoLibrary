@@ -56,8 +56,7 @@ public sealed class ImportViewModel : ViewModelBase
     private static async Task<JobOutcome> ImportOneAsync(LibraryModel model, IVideoImporter importer, string source,
         IProgress<JobProgress> progress, CancellationToken cancellationToken)
     {
-        var report = new Progress<ImportProgress>(update => progress.Report(new JobProgress(update.Stage, update.Fraction)));
-        var result = await importer.ImportAsync(source, report, cancellationToken);
+        var result = await importer.ImportAsync(source, new JobProgressAdapter(progress), cancellationToken);
         var warnings = string.Concat(result.Warnings.Select(warning => " " + warning));
         if (result.Outcome == ImportOutcome.AlreadyInLibrary)
             return new JobOutcome("Already in the library." + warnings, [result.Video.Id]);
@@ -65,5 +64,12 @@ public sealed class ImportViewModel : ViewModelBase
         var record = await model.UpsertFromFileAsync(result.Video, CancellationToken.None);
         return new JobOutcome((record.State == VideoRecordState.Ok ? "Imported." : $"Imported; details could not be read yet ({record.Error}).")
             + warnings, [record.Id]);
+    }
+
+    /// <summary>Forwards each import report straight to the job's sink, which marshals it once. A
+    /// <see cref="Progress{T}"/> made here, on the pool, would have no context to keep the reports in order.</summary>
+    private sealed class JobProgressAdapter(IProgress<JobProgress> job) : IProgress<ImportProgress>
+    {
+        public void Report(ImportProgress value) => job.Report(new JobProgress(value.Stage, value.Fraction));
     }
 }

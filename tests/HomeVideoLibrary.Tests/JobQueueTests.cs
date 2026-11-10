@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using HomeVideoLibrary.Desktop.ViewModels;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace HomeVideoLibrary.Tests;
@@ -112,6 +113,263 @@ public sealed class JobQueueTests
         await job.OpenCommand.ExecuteAsync();
         Assert.Same(job, Assert.Single(opened));
     });
+
+    [Fact]
+    public Task SummaryNamesTheRunningJobImmediately() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var summaries = new List<string>();
+        queue.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.Summary)) summaries.Add(queue.Summary); };
+
+        queue.Enqueue("Import a.mov", JobLane.Import, (_, _) => gate.Task);
+        Assert.Equal("Import a.mov · Starting…", queue.Summary);
+        Assert.Equal("Import a.mov · Starting…", summaries[^1]);
+        queue.Enqueue("Import b.mov", JobLane.Import, (_, _) => gate.Task);
+        Assert.Equal("Import a.mov · Starting… · 1 queued", queue.Summary);
+        queue.Enqueue("Trim", JobLane.Render, (_, _) => gate.Task);
+        Assert.Equal("Trim · Starting… · 1 queued", queue.Summary);
+
+        gate.SetResult(JobOutcome.Done("ok"));
+        await queue.WhenIdleAsync();
+        await UiThread.Settle();
+        Assert.Equal(queue.Summary, summaries[^1]);
+        Assert.EndsWith("· ok", queue.Summary);
+    });
+
+    [Fact]
+    public Task ThrowingFinishedHandlerStillCompletesTheJobAndStartsTheNext() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        queue.Finished += _ => throw new InvalidOperationException("handler bug");
+        var first = queue.Enqueue("first", JobLane.Render, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+        var second = queue.Enqueue("second", JobLane.Render, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+
+        await Task.WhenAll(first.Completion, second.Completion).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(JobState.Succeeded, second.State);
+        Assert.False(queue.HasActive);
+    });
+
+    [Fact]
+    public Task FinishedRaisedExactlyOncePerJob() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var finished = new List<JobViewModel>();
+        queue.Finished += finished.Add;
+        var gate = new TaskCompletionSource();
+        var running = queue.Enqueue("running", JobLane.Render, async (_, token) => { await gate.Task.WaitAsync(token); return JobOutcome.Done("ok"); });
+        var queued = queue.Enqueue("queued", JobLane.Render, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+        var failing = queue.Enqueue("failing", JobLane.Render, (_, _) => throw new IOException("disk"));
+        var succeeding = queue.Enqueue("succeeding", JobLane.Render, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+
+        queued.Cancel();
+        queued.Cancel();
+        running.Cancel();
+        running.Cancel();
+        await queue.WhenIdleAsync();
+        await UiThread.Settle();
+
+        Assert.Equal([queued, running, failing, succeeding], finished);
+    });
+
+    [Fact]
+    public Task QueuePositionIsNullOnceRunningOrFinished() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var jobs = Enumerable.Range(0, 3).Select(index => queue.Enqueue($"job {index}", JobLane.Import, (_, _) => gate.Task)).ToArray();
+        Assert.Equal(new int?[] { null, 1, 2 }, jobs.Select(job => job.QueuePosition));
+
+        jobs[1].Cancel();
+        Assert.Equal(new int?[] { null, null, 1 }, jobs.Select(job => job.QueuePosition));
+        gate.SetResult(JobOutcome.Done("ok"));
+        await queue.WhenIdleAsync();
+        Assert.All(jobs, job => Assert.Null(job.QueuePosition));
+    });
+
+    [Fact]
+    public Task CancelOnRunningJobStaysRunningUntilWorkObservesToken() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var observe = new TaskCompletionSource();
+        var job = queue.Enqueue("render", JobLane.Render, async (_, token) =>
+        {
+            await observe.Task;
+            token.ThrowIfCancellationRequested();
+            return JobOutcome.Done("ok");
+        });
+
+        job.CancelCommand.Execute(null);
+        Assert.Equal(JobState.Running, job.State);
+        Assert.True(job.IsCancelling);
+        Assert.Equal("Cancelling…", job.StatusText);
+        Assert.Equal("render · Cancelling…", queue.Summary);
+        Assert.False(job.CancelCommand.CanExecute(null));
+
+        observe.SetResult();
+        await job.Completion;
+        Assert.Equal(JobState.Cancelled, job.State);
+        Assert.False(job.IsCancelling);
+    });
+
+    [Fact]
+    public Task ForeignOperationCanceledIsFailed() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var job = queue.Enqueue("render", JobLane.Render, (_, _) => throw new OperationCanceledException("The tool timed out."));
+
+        await job.Completion;
+        Assert.Equal(JobState.Failed, job.State);
+        Assert.Equal("The tool timed out.", job.StatusText);
+    });
+
+    [Fact]
+    public Task ProgressWithNullFractionKeepsLastFraction() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var (job, progress, release) = StartReporting(queue);
+
+        (await progress).Report(new JobProgress("Copying", 0.5));
+        await UiThread.Settle();
+        (await progress).Report(new JobProgress("Verifying"));
+        await UiThread.Settle();
+
+        Assert.Equal("Verifying", job.Stage);
+        Assert.Equal(0.5, job.Fraction);
+        Assert.False(job.IsIndeterminate);
+        Assert.Equal("Verifying · 50%", job.StatusText);
+        release.SetResult();
+        await job.Completion;
+    });
+
+    [Fact]
+    public Task EtaNeedsFivePercentAndThreeSecondsAndSurvivesStageOnlyReports() => UiThread.Run(async () =>
+    {
+        var time = new FakeTimeProvider();
+        var queue = new JobQueue(_ => Task.CompletedTask, time);
+        var (job, started, release) = StartReporting(queue);
+        var progress = await started;
+
+        time.Advance(TimeSpan.FromSeconds(2));
+        progress.Report(new JobProgress("Copying", 0.2));
+        await UiThread.Settle();
+        Assert.Null(job.Remaining); // Too early.
+
+        time.Advance(TimeSpan.FromSeconds(2));
+        progress.Report(new JobProgress("Copying", 0.04));
+        await UiThread.Settle();
+        Assert.Equal(TimeSpan.FromSeconds(16), job.Remaining); // 4 s for 20%; the lower report is ignored.
+
+        progress.Report(new JobProgress("Verifying"));
+        await UiThread.Settle();
+        Assert.Equal("Verifying · 20% · about 16 s left", job.StatusText);
+        release.SetResult();
+        await job.Completion;
+        Assert.Null(job.Remaining);
+
+        var (slow, slowStarted, slowRelease) = StartReporting(queue);
+        time.Advance(TimeSpan.FromMinutes(1));
+        (await slowStarted).Report(new JobProgress("Copying", 0.04));
+        await UiThread.Settle();
+        Assert.Null(slow.Remaining); // Too little progress.
+        slowRelease.SetResult();
+        await slow.Completion;
+    });
+
+    [Fact]
+    public Task CancelAllAndWaitNeverRunsQueuedWork() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var ran = 0;
+        var running = queue.Enqueue("running", JobLane.Render, async (_, token) => { await Task.Delay(Timeout.Infinite, token); return JobOutcome.Done("never"); });
+        var queued = Enumerable.Range(0, 2).Select(index => queue.Enqueue($"queued {index}", JobLane.Render, (_, _) =>
+        {
+            Interlocked.Increment(ref ran);
+            return Task.FromResult(JobOutcome.Done("ok"));
+        })).ToArray();
+
+        await queue.CancelAllAndWaitAsync();
+        await UiThread.Settle();
+        Assert.Equal(0, ran);
+        Assert.All(queued.Append(running), job => Assert.Equal(JobState.Cancelled, job.State));
+        Assert.False(queue.HasActive);
+    });
+
+    [Fact]
+    public Task DismissAndClearFinished() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var gate = new TaskCompletionSource<JobOutcome>();
+        var failed = queue.Enqueue("failed", JobLane.Import, (_, _) => throw new IOException("disk"));
+        var done = queue.Enqueue("done", JobLane.Import, (_, _) => Task.FromResult(JobOutcome.Done("ok")));
+        var running = queue.Enqueue("running", JobLane.Render, (_, _) => gate.Task);
+        await Task.WhenAll(failed.Completion, done.Completion);
+        Assert.Equal(1, queue.FailedCount);
+        Assert.False(running.DismissCommand.CanExecute(null));
+
+        failed.DismissCommand.Execute(null);
+        Assert.DoesNotContain(failed, queue.Jobs);
+        Assert.False(queue.HasFailures);
+        queue.ClearFinishedCommand.Execute(null);
+        Assert.Same(running, Assert.Single(queue.Jobs));
+        Assert.False(queue.ClearFinishedCommand.CanExecute(null));
+        gate.SetResult(JobOutcome.Done("ok"));
+        await running.Completion;
+    });
+
+    [Fact]
+    public Task TheListShowsRunningThenQueuedThenNewestFinishedAndOnlyMovesJobs() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var actions = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        queue.Jobs.CollectionChanged += (_, args) => actions.Add(args.Action);
+        var gates = Enumerable.Range(0, 3).Select(_ => new TaskCompletionSource<JobOutcome>()).ToArray();
+        var jobs = Enumerable.Range(0, 3).Select(index => queue.Enqueue($"job {index}", JobLane.Import, (_, _) => gates[index].Task)).ToArray();
+        Assert.Equal(jobs, queue.Jobs);
+
+        gates[0].SetResult(JobOutcome.Done("ok"));
+        await jobs[0].Completion;
+        Assert.Equal([jobs[1], jobs[2], jobs[0]], queue.Jobs);
+        gates[1].SetResult(JobOutcome.Done("ok"));
+        await jobs[1].Completion;
+        Assert.Equal([jobs[2], jobs[1], jobs[0]], queue.Jobs);
+        gates[2].SetResult(JobOutcome.Done("ok"));
+        await queue.WhenIdleAsync();
+        Assert.DoesNotContain(System.Collections.Specialized.NotifyCollectionChangedAction.Reset, actions);
+        Assert.DoesNotContain(System.Collections.Specialized.NotifyCollectionChangedAction.Remove, actions);
+    });
+
+    [Fact]
+    public Task ALaneReportsOneBatchWhenItDrains() => UiThread.Run(async () =>
+    {
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var batches = new List<JobBatch>();
+        queue.Drained += batches.Add;
+        var gate = new TaskCompletionSource<JobOutcome>();
+        queue.Enqueue("a", JobLane.Import, (_, _) => gate.Task);
+        queue.Enqueue("b", JobLane.Import, (_, _) => throw new IOException("disk"));
+        queue.Enqueue("c", JobLane.Import, (_, _) => gate.Task).Cancel();
+        queue.Enqueue("d", JobLane.Import, (_, _) => gate.Task);
+
+        gate.SetResult(JobOutcome.Done("ok"));
+        await queue.WhenIdleAsync();
+        await UiThread.Settle();
+        Assert.Equal([new JobBatch(JobLane.Import, Succeeded: 2, Failed: 1, Cancelled: 1)], batches);
+    });
+
+    /// <summary>Starts a render that hands out its progress sink and runs until released.</summary>
+    private static (JobViewModel Job, Task<IProgress<JobProgress>> Progress, TaskCompletionSource Release) StartReporting(JobQueue queue)
+    {
+        var progress = new TaskCompletionSource<IProgress<JobProgress>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource();
+        var job = queue.Enqueue("render", JobLane.Render, async (sink, _) =>
+        {
+            progress.SetResult(sink);
+            await release.Task;
+            return JobOutcome.Done("ok");
+        });
+        return (job, progress.Task, release);
+    }
 }
 
 /// <summary>Runs a test body on one thread with a synchronization context, as the app's view models run on the UI
