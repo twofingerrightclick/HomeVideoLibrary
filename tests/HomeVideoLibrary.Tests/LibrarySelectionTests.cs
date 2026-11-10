@@ -180,7 +180,7 @@ public sealed class LibrarySelectionTests : IDisposable
         _interaction.Picked = new PickedFiles(["/somewhere/new clip.mov", "/somewhere/duplicate.mov", "/somewhere/broken.mov"], 0);
 
         await vm.Import.ImportCommand.ExecuteAsync();
-        Assert.Equal(["Queued (#2)", "Queued (#1)"], vm.Jobs.Jobs.Take(2).Select(job => job.StatusText));
+        Assert.Equal(["Queued (#1)", "Queued (#2)"], vm.Jobs.Jobs.Skip(1).Select(job => job.StatusText));
         await vm.Jobs.WhenIdleAsync();
 
         Assert.Equal(2, vm.Shelf.Tapes.Count);

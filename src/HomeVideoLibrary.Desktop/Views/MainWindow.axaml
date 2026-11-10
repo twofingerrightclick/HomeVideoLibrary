@@ -225,7 +225,7 @@
                Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
               <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"/>
-               <c:PlasticButton Classes="toolbar" Content="{Binding IsQueued, Converter={x:Static views:JobCancelLabel.Instance}}"
+               <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"
                 Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
                <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"
                 IsVisible="{Binding IsFinished}" ToolTip.Tip="Remove from the list" AutomationProperties.Name="Remove from the list"/>
