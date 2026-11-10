@@ -66,6 +66,29 @@ public sealed class ImportTests : IDisposable
     }
 
     [Fact]
+    public async Task ASourceWhoseVideoFileIsGoneImportsAgainAndTakesTheFingerprintOver()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+        var first = await importer.ImportAsync(source);
+        // What a crash between moving the file to the Trash and deleting its row leaves: a row whose file is missing.
+        var trashed = Path.Combine(_root, "trashed.mkv");
+        File.Move(catalog.GetVideoPath(first.Video.RelativePath), trashed);
+
+        var again = await importer.ImportAsync(source);
+
+        Assert.Equal(ImportOutcome.Imported, again.Outcome);
+        Assert.NotEqual(first.Video.Id, again.Video.Id);
+        Assert.Equal(first.Video.SourceFingerprint, again.Video.SourceFingerprint);
+        var rows = await catalog.ListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.Null(rows.Single(video => video.Id == first.Video.Id).SourceFingerprint);
+        Assert.Equal(again.Video.Id, (await catalog.FindBySourceFingerprintAsync(again.Video.SourceFingerprint!))!.Id);
+        Assert.Equal(ImportOutcome.AlreadyInLibrary, (await importer.ImportAsync(source)).Outcome);
+    }
+
+    [Fact]
     public async Task FingerprintTellsApartFilesThatDifferOnlyInTheMiddle()
     {
         Directory.CreateDirectory(_root);

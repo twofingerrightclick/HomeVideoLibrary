@@ -368,7 +368,18 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         return await reader.ReadAsync(cancellationToken) ? ReadVideo(reader) : null;
     }
 
-    private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";
+    /// <summary>Clears <paramref name="fingerprint"/> from the video that holds it, so a new video of the same source can
+    /// be registered with it. Does nothing when that video now holds another fingerprint or is gone.</summary>
+    public async Task ReleaseSourceFingerprintAsync(Guid videoId, string fingerprint, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE videos SET source_fingerprint = NULL WHERE id = $id AND source_fingerprint = $fingerprint";
+        command.Parameters.AddWithValue("$id", videoId.ToString()); command.Parameters.AddWithValue("$fingerprint", fingerprint);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private const string VideoColumns ="id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";
 
     private async Task<List<LibraryVideo>> ReadVideosAsync(SqliteConnection connection, List<string> issues,
         CancellationToken cancellationToken, SqliteTransaction? transaction = null)
