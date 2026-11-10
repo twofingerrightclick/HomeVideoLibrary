@@ -259,15 +259,35 @@ public sealed class VideoPageViewTests
             handledEventsToo: true);
         var page = Page();
         Show(host, page);
-        var overlay = PageView(host).FindControl<Panel>("Overlay")!;
-        var overlayWindow = Assert.IsAssignableFrom<Window>(TopLevel.GetTopLevel(overlay));
-        Assert.NotSame(window, overlayWindow);
+        var overlayWindow = Assert.Single(window.OwnedWindows.OfType<VideoOverlayWindow>());
 
         Press(overlayWindow, PhysicalKey.ArrowRight);
         Press(overlayWindow, PhysicalKey.Q);
 
         Assert.Equal(TimeSpan.FromSeconds(5), page.Player.Position);
         Assert.Equal([Key.Right, Key.Q], windowKeys);
+    }
+
+    [AvaloniaFact]
+    public void The_overlay_covers_the_video_and_follows_it_into_fullscreen()
+    {
+        var (window, host) = Window();
+        var page = Page();
+        Show(host, page);
+        var video = PageView(host).FindControl<LibVLCSharp.Avalonia.VideoView>("Video")!;
+        var overlay = Assert.Single(window.OwnedWindows.OfType<VideoOverlayWindow>());
+        Assert.True(overlay.IsVisible);
+        Assert.Equal(video.PointToScreen(default), overlay.Position);
+        Assert.Equal(video.Bounds.Size, overlay.ClientSize);
+
+        page.Fullscreen.ToggleCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(video.Bounds.Size, overlay.ClientSize);
+        Assert.Equal(window.ClientSize.Height, overlay.ClientSize.Height); // The status row and deck below the video are gone.
+
+        host.Content = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(window.OwnedWindows.OfType<VideoOverlayWindow>());
     }
 
     [AvaloniaFact]
