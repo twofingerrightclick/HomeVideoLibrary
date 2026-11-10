@@ -286,6 +286,21 @@ public sealed class TrashTests : IDisposable
         Assert.Empty(_trash.Moved);
     }
 
+    [Fact]
+    public async Task TheShellsHoldsNeverWaitOnAUiThreadThatHasStopped()
+    {
+        var stopped = new List<Action>();
+        var holders = new ShellVideoHolders(() => null, () => null, stopped.Add);
+        using var cancellation = new CancellationTokenSource();
+
+        var taking = holders.HoldAsync(Guid.NewGuid(), cancellation.Token);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => taking.WaitAsync(TimeSpan.FromSeconds(5)));
+        var running = new ShellVideoHolders(() => null, () => null, action => action());
+        await (await running.HoldAsync(Guid.NewGuid(), CancellationToken.None)).DisposeAsync();
+    }
+
     public void Dispose()
     {
         DeleteDirectory(_root);

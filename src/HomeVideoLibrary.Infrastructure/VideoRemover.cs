@@ -7,7 +7,8 @@ namespace HomeVideoLibrary.Infrastructure;
 public interface IVideoHolders
 {
     /// <summary>Stops every reader of the video's file, completing once they have let go of it, and keeps new ones off
-    /// until the returned hold is disposed.</summary>
+    /// until the returned hold is disposed. A failure to dispose the hold is traced by the caller, never reported as the
+    /// removal's.</summary>
     Task<IAsyncDisposable> HoldAsync(Guid videoId, CancellationToken cancellationToken);
 
     /// <summary>Forgets whatever is cached for a video that has left the library, deleting its files.</summary>
@@ -118,7 +119,12 @@ public sealed class VideoRemover
             return new VideoRemoval(videoId, record.Label, RemovalResult.Failed, exception.Message);
         }
         // Held until the row is gone, so nothing starts reading the file again in between.
-        await using (hold) return await RemoveHeldAsync(record, remove, cancellationToken);
+        try { return await RemoveHeldAsync(record, remove, cancellationToken); }
+        finally
+        {
+            try { await hold.DisposeAsync(); }
+            catch (Exception exception) { Trace.TraceWarning($"Could not let the readers of video {videoId} back: {exception}"); }
+        }
     }
 
     private async Task<VideoRemoval> RemoveHeldAsync(VideoRecord record, Func<string, RemovalResult> remove, CancellationToken cancellationToken)

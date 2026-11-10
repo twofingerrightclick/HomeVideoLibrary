@@ -44,6 +44,18 @@ public sealed class VideoRemoverTests : IDisposable
     }
 
     [Fact]
+    public async Task AHoldThatFailsToReleaseDoesNotUndoATrashedResult()
+    {
+        var (model, video, trash) = await OpenAsync();
+        var holders = new RecordingHolders { ReleaseFails = true };
+
+        var result = await new VideoRemover(model, trash, holders).MoveToTrashAsync(video.Id);
+
+        Assert.Equal(RemovalResult.Trashed, result.Result);
+        Assert.Null(model.Snapshot.Find(video.Id));
+    }
+
+    [Fact]
     public async Task AFileTheTrashCannotTakeStaysInTheLibrary()
     {
         var (model, video, trash) = await OpenAsync();
@@ -203,12 +215,17 @@ public sealed class VideoRemoverTests : IDisposable
     {
         public List<string> Calls { get; } = [];
         public Action? OnRelease { get; set; }
+        public bool ReleaseFails { get; init; }
 
         public Task<IAsyncDisposable> HoldAsync(Guid videoId, CancellationToken cancellationToken)
         {
             OnRelease?.Invoke();
             Calls.Add("hold " + videoId);
-            return Task.FromResult<IAsyncDisposable>(new Hold(() => Calls.Add("release " + videoId)));
+            return Task.FromResult<IAsyncDisposable>(new Hold(() =>
+            {
+                Calls.Add("release " + videoId);
+                if (ReleaseFails) throw new InvalidOperationException("The dispatcher has shut down.");
+            }));
         }
 
         private sealed class Hold(Action released) : IAsyncDisposable
