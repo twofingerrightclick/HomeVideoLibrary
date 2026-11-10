@@ -31,6 +31,8 @@ public sealed record MainWindowDependencies
     public Func<IVideoPlayback> CreatePlayback { get; init; } = () => new LibVlcPlayback();
     /// <summary>Runs an action on the UI thread later. Tests run it inline.</summary>
     public Action<Action> Post { get; init; } = action => Dispatcher.UIThread.Post(action);
+    /// <summary>The clock for toasts and job estimates.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
 }
 
 /// <summary>The window shell and the only adapter from <see cref="LibraryModel"/> to the UI: it opens and releases the
@@ -50,7 +52,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private Task<bool>? _closing;
     private CancellationTokenSource? _quitWait;
     private Task? _opening;
-    private CancellationTokenSource? _toastTimer;
+    private object? _shownToast;
     private DateTime _lastActivationStat;
     private IReadOnlyList<string> _unavailableTools = [];
     private string _status = "Your original files stay untouched.";
@@ -61,8 +63,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(MainWindowDependencies dependencies)
     {
         _dependencies = dependencies;
-        Jobs = new JobQueue(OpenJobOutputAsync);
+        Jobs = new JobQueue(OpenJobOutputAsync, dependencies.Time);
         Jobs.Finished += JobFinished;
+        Jobs.Drained += LaneDrained;
         Jobs.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.ActiveCount)) UpdateCommands(); };
         Shelf = new ShelfViewModel(CreatePreviewSession, (record, at) => OpenVideoAsync(record, at));
         Albums = new AlbumsViewModel(() => _model, Shelf, ShowToast, message => Status = message, RefreshView);
@@ -558,27 +561,41 @@ public sealed class MainWindowViewModel : ViewModelBase
         else Status = $"The video from “{job.Title}” is no longer in the library.";
     }
 
+    /// <summary>A failure is announced at once; successes wait for the lane's summary.</summary>
     private void JobFinished(JobViewModel job)
     {
-        if (job.State == JobState.Cancelled) return;
+        if (!job.HasFailed) return;
         ShowToast($"{job.Title}: {job.StatusText}");
-        if (_dependencies.Sounds.IsEnabled) _dependencies.Sounds.Play(job.HasFailed ? ClickSoundKind.Rubber : ClickSoundKind.Chime);
+        Play(ClickSoundKind.Rubber);
+    }
+
+    /// <summary>One toast and one chime per batch of jobs, for example "Imported 48 · 2 failed".</summary>
+    private void LaneDrained(JobBatch batch)
+    {
+        if (batch.Succeeded + batch.Failed == 0) return;
+        var done = (batch.Lane == JobLane.Import ? "Imported " : "Rendered ") + batch.Succeeded;
+        ShowToast(batch.Failed == 0 ? done : $"{done} · {batch.Failed} failed");
+        if (batch.Succeeded > 0) Play(ClickSoundKind.Chime);
+    }
+
+    private void Play(ClickSoundKind sound)
+    {
+        if (_dependencies.Sounds.IsEnabled) _dependencies.Sounds.Play(sound);
     }
 
     /// <summary>Shows <paramref name="message"/> as a toast (and on the status line) for a few seconds; a newer toast
-    /// replaces it.</summary>
+    /// replaces it and restarts the time.</summary>
     private void ShowToast(string message)
     {
-        _toastTimer?.Cancel();
-        var timer = _toastTimer = new CancellationTokenSource();
+        var shown = _shownToast = new object();
         Toast = message; Status = message;
-        _ = HideToastAsync(timer);
+        _ = HideToastAsync(shown);
     }
 
-    private async Task HideToastAsync(CancellationTokenSource timer)
+    private async Task HideToastAsync(object shown)
     {
-        try { await Task.Delay(ToastDuration, timer.Token); }
-        catch (OperationCanceledException) { return; }
-        Toast = "";
+        await Task.Delay(ToastDuration, _dependencies.Time);
+        // An older toast's delay can end after a newer toast is shown; only the newest one's clears it.
+        if (ReferenceEquals(_shownToast, shown)) Toast = "";
     }
 }

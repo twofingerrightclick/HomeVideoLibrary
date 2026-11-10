@@ -208,6 +208,7 @@
       <StackPanel Orientation="Horizontal" Spacing="8">
        <Ellipse Width="7" Height="7" Classes="led" Classes.lit="{Binding Jobs.HasActive}" VerticalAlignment="Center"/>
        <TextBlock Text="{Binding Jobs.Summary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+       <TextBlock Classes="meta error" Text="{Binding Jobs.FailedLabel}" IsVisible="{Binding Jobs.HasFailures}" VerticalAlignment="Center"/>
       </StackPanel>
       <c:PlasticButton.Flyout>
        <Flyout Placement="TopEdgeAlignedRight" ShowMode="Standard">
@@ -227,7 +228,8 @@
                <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
                 Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
                <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"/>
+                <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"
+                 Click="CloseActivity"/>
                 <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"
                  Command="{Binding CancelCommand}" IsVisible="{Binding !IsFinished}"/>
                 <c:PlasticButton Classes="icon toolbar" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DismissCommand}"

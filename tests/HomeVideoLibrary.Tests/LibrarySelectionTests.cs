@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Infrastructure;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using static HomeVideoLibrary.Tests.TestLibrary;
 
@@ -272,6 +273,49 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.Equal("The video from “Trim” is no longer in the library.", vm.Status);
         Assert.Null(vm.Page);
     }
+
+    [Fact]
+    public Task ImportsNotifyOnceWhenTheLaneDrainsAndFailuresAtOnce() => UiThread.Run(async () =>
+    {
+        _importer = catalog => new FakeImporter(catalog, _files);
+        var (vm, _) = await OpenAsync("existing");
+        var toasts = new List<string>();
+        vm.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(MainWindowViewModel.Toast) && vm.HasToast) toasts.Add(vm.Toast); };
+
+        vm.Import.Enqueue(["/somewhere/a.mov", "/somewhere/broken.mov", "/somewhere/b.mov"]);
+        await vm.Jobs.WhenIdleAsync();
+        await UiThread.Settle();
+
+        Assert.Equal(["Import broken.mov: bad header", "Imported 2 · 1 failed"], toasts);
+        Assert.True(vm.Jobs.HasFailures);
+        Assert.Equal("1 FAILED", vm.Jobs.FailedLabel);
+        vm.Jobs.ClearFinishedCommand.Execute(null);
+        Assert.False(vm.Jobs.HasFailures);
+    });
+
+    [Fact]
+    public Task NewerToastNotClearedByOlderTimer() => UiThread.Run(async () =>
+    {
+        var time = new FakeTimeProvider();
+        var vm = new MainWindowViewModel(new MainWindowDependencies
+        {
+            Interaction = _interaction,
+            Settings = new LibrarySettings(Path.Combine(_root, "settings.json")),
+            Time = time,
+            Post = action => action(),
+        });
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []); // Toasts "Select videos first…".
+
+        // The older toast's delay ends off the UI thread; its continuation is queued behind the newer toast.
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await vm.Albums.AddToAlbumAsync(Guid.NewGuid(), []);
+        await UiThread.Settle();
+        Assert.True(vm.HasToast);
+
+        Task.Run(() => time.Advance(TimeSpan.FromSeconds(3))).Wait();
+        await UiThread.Settle();
+        Assert.False(vm.HasToast);
+    });
 
     [Fact]
     public async Task EscapeInAnAlbumRenameKeepsTheOldName()

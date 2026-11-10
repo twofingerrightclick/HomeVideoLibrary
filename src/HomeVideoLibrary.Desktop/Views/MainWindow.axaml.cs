@@ -101,6 +101,10 @@ public sealed partial class MainWindow : Window
         }, "Close window");
     }
 
+    /// <summary>OPEN on a finished job runs its command and closes the activity flyout, so the opened page (or the
+    /// status line saying why it could not open) is in view.</summary>
+    private void CloseActivity(object? sender, RoutedEventArgs args) => ActivityButton.Flyout?.Hide();
+
     /// <summary>Tells the shelf which tape is at the top of the viewport (for the sticky month pill).</summary>
     private void UpdateTopVisible()
     {
