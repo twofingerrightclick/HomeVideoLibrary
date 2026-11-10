@@ -7,7 +7,10 @@ using Avalonia.VisualTree;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.ViewModels;
 using HomeVideoLibrary.Desktop.ViewModels.Editing;
+using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Desktop.Views.Editing;
+using HomeVideoLibrary.Desktop.Views.VideoPage;
+using HomeVideoLibrary.UI.Controls;
 using Xunit;
 
 namespace HomeVideoLibrary.Desktop.UiTests;
@@ -42,8 +45,7 @@ public sealed class EditingViewTests
     [AvaloniaFact]
     public void Enter_commits_a_typed_in_point()
     {
-        var panel = new TrimPanelViewModel(Video("Source", TimeSpan.FromMinutes(10)), new NoEditing(), () => TimeSpan.Zero, Jobs(),
-            _ => Task.CompletedTask, () => false);
+        var panel = new TrimPanelViewModel(Video("Source", TimeSpan.FromMinutes(10)), NoClipEditing.Edits(), () => TimeSpan.Zero, () => false);
         var window = new Window { Content = new EditTab { DataContext = panel }, Width = 340, Height = 900 };
         window.Show();
         var field = window.GetVisualDescendants().OfType<TextBox>().First(box => box.Name == "InField");
@@ -58,6 +60,29 @@ public sealed class EditingViewTests
         Assert.Equal("0:01:30.000", field.Text);
     }
 
+    [AvaloniaFact]
+    public void The_I_and_O_keys_mark_the_range_on_the_scrub_bar_and_open_the_edit_tab()
+    {
+        var (window, host) = VideoPageFixture.Window();
+        var page = VideoPageFixture.Page();
+        VideoPageFixture.Show(host, page);
+        var view = host.GetVisualDescendants().OfType<VideoPageView>().Single();
+
+        page.Player.Seek(TimeSpan.FromSeconds(12));
+        view.Focus();
+        window.KeyPressQwerty(PhysicalKey.I, RawInputModifiers.None);
+        window.KeyReleaseQwerty(PhysicalKey.I, RawInputModifiers.None);
+        page.Player.Seek(TimeSpan.FromSeconds(40));
+        window.KeyPressQwerty(PhysicalKey.O, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal((int)InspectorTab.Edit, page.SelectedTab);
+        var bar = host.GetVisualDescendants().OfType<ScrubBar>().Single();
+        Assert.Equal((TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(40)), (bar.RangeStart, bar.RangeEnd));
+        var tab = host.GetVisualDescendants().OfType<EditTab>().Single();
+        Assert.Same(page.Edit, tab.DataContext);
+    }
+
     private static (Window Window, ListBox List) Show(MergePageViewModel page)
     {
         var window = new Window { Content = new MergePageView { DataContext = page }, Width = 1000, Height = 700 };
@@ -68,28 +93,8 @@ public sealed class EditingViewTests
 
     private static MergePageViewModel Merge() =>
         new([Video("Christmas '91", TimeSpan.FromMinutes(42)), Video("Lake Tahoe", TimeSpan.FromMinutes(12)), Video("Little league", TimeSpan.FromMinutes(7))],
-            new NoEditing(), Jobs(), _ => Task.CompletedTask, () => Task.CompletedTask);
-
-    private static JobQueue Jobs() => new(_ => Task.CompletedTask);
+            NoClipEditing.Edits(), () => Task.CompletedTask);
 
     private static LibraryVideo Video(string name, TimeSpan duration) =>
         new(Guid.NewGuid(), $"Videos/{name}.mkv", name, duration, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-
-    /// <summary>Plans never finish, so the views show their pending state without touching media.</summary>
-    private sealed class NoEditing : IClipEditingService
-    {
-        public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
-            CancellationToken cancellationToken = default) => new TaskCompletionSource<ClipCutPlan>().Task;
-        public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
-            new TaskCompletionSource<ClipCutPlan>().Task;
-        public Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default) =>
-            new TaskCompletionSource<ClipMergePlan>().Task;
-        public Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default, ClipCutMode mode = ClipCutMode.Precise) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
-            IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
 }

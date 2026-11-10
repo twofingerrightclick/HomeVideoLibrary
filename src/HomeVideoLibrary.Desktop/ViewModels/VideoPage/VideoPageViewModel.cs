@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows.Input;
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Logic;
 
@@ -22,8 +23,12 @@ public sealed record VideoPageDependencies
     public required VideoPageSession Session { get; init; }
     /// <summary>Runs an action on the UI thread later.</summary>
     public required Action<Action> Post { get; init; }
+    /// <summary>Trim and split for the EDIT tab; they run as render jobs that outlive the page.</summary>
+    public required ClipEdits Edits { get; init; }
     /// <summary>Where playback starts (for example a chapter a search matched).</summary>
     public TimeSpan StartAt { get; init; }
+    /// <summary>The inspector tab to open on (for example EDIT from TRIM/SPLIT); null keeps the session's last tab.</summary>
+    public InspectorTab? StartTab { get; init; }
     /// <summary>Frames for the scrub bar's hover preview; null shows none.</summary>
     public PreviewCache? Previews { get; init; }
     /// <summary>Returns to the library through the shell's leave flow.</summary>
@@ -61,7 +66,7 @@ public sealed class VideoPageViewModel : PageViewModel
         _snapshot = dependencies.Snapshot;
         _isInspectorOpen = _session.IsInspectorOpen;
         _inspectorWidth = Math.Clamp(_session.InspectorWidth, VideoPageSession.MinInspectorWidth, VideoPageSession.MaxInspectorWidth);
-        _selectedTab = _session.SelectedTab;
+        _selectedTab = dependencies.StartTab is { } startTab ? (int)startTab : _session.SelectedTab;
         var record = dependencies.Record;
         Id = record.Id;
         Player = new PlayerViewModel(dependencies.Playback, dependencies.Path, record.Duration, dependencies.Post, Report, _session.Volume,
@@ -69,6 +74,7 @@ public sealed class VideoPageViewModel : PageViewModel
         Details = new VideoDetailsViewModel(record, dependencies.Metadata, dependencies.SuggestTags, () => Player.Position, Player.Seek,
             dependencies.ReleasePlaybackDuringSave ? Player.WhileReleasedAsync : work => work(), Report, _lifetime.Token);
         Details.Tags.ShowPopularFrom(_snapshot.Tags);
+        Edit = new TrimPanelViewModel(record.ToLibraryVideo(), dependencies.Edits, () => Player.Position, () => Details.IsDirty, dependencies.Time);
         Preview = new ScrubPreviewViewModel(record, dependencies.Path, dependencies.Previews, dependencies.Time);
         Fullscreen = new FullscreenViewModel(() => Player.IsPlaying, dependencies.Time);
         BackCommand = new AsyncCommand(_ => dependencies.Back(), onError: Report);
@@ -78,6 +84,8 @@ public sealed class VideoPageViewModel : PageViewModel
         ToggleInspectorCommand = new RelayCommand(() => IsInspectorOpen = !IsInspectorOpen);
         SelectTabCommand = new RelayCommand<int>(tab => SelectedTab = tab);
         AddChapterCommand = new RelayCommand(AddChapter, () => Details.Chapters.CanAddChapter);
+        MarkInCommand = new RelayCommand(() => MarkRange(Edit.SetInCommand));
+        MarkOutCommand = new RelayCommand(() => MarkRange(Edit.SetOutCommand));
         Player.PropertyChanged += PlayerChanged;
         Fullscreen.PropertyChanged += (_, args) =>
         {
@@ -85,7 +93,11 @@ public sealed class VideoPageViewModel : PageViewModel
             IsImmersive = Fullscreen.IsFullscreen;
             OnPropertyChanged(nameof(IsInspectorShown));
         };
-        Details.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(VideoDetailsViewModel.Title)) OnPropertyChanged(nameof(DisplayTitle)); };
+        Details.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(VideoDetailsViewModel.Title)) OnPropertyChanged(nameof(DisplayTitle));
+            if (args.PropertyName == nameof(VideoDetailsViewModel.IsDirty)) Edit.DetailsDirtyChanged();
+        };
         Details.Chapters.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName != nameof(ChaptersPanelViewModel.CanAddChapter)) return;
@@ -103,8 +115,8 @@ public sealed class VideoPageViewModel : PageViewModel
     public ScrubPreviewViewModel Preview { get; }
     public FullscreenViewModel Fullscreen { get; }
 
-    /// <summary>The EDIT tab's content (trim and split); none yet.</summary>
-    public object? Edit => null;
+    /// <summary>The EDIT tab: trim to the in/out range or split at the playhead.</summary>
+    public TrimPanelViewModel Edit { get; }
 
     /// <summary>Move to Trash, when the library offers it; hidden while null.</summary>
     public ICommand? MoveToTrashCommand => null;
@@ -174,6 +186,11 @@ public sealed class VideoPageViewModel : PageViewModel
     /// title open for typing. In fullscreen, where the inspector is hidden, the chapter is added untitled and the status
     /// over the video says so.</summary>
     public RelayCommand AddChapterCommand { get; }
+
+    /// <summary>Sets the trim's in point (I) or out point (O) at the playhead from anywhere on the page, and shows it in
+    /// the EDIT tab.</summary>
+    public RelayCommand MarkInCommand { get; }
+    public RelayCommand MarkOutCommand { get; }
 
     /// <summary>Starts playback and reads the MKV together; the library's record is already shown. Completes when the
     /// read is done and editing can start. Playback is not awaited: the shell navigates one page at a time, and a slow or
@@ -253,6 +270,7 @@ public sealed class VideoPageViewModel : PageViewModel
             {
                 Fullscreen.Dispose();
                 Preview.Dispose();
+                Edit.Dispose();
                 Details.PruneCaptures();
                 Details.Frames.Dispose();
                 _lifetime.Dispose();
@@ -274,12 +292,21 @@ public sealed class VideoPageViewModel : PageViewModel
             Report($"Chapter added at {Timecode.Format(added.Start)}. Type its title and press Enter.");
     }
 
+    private void MarkRange(ICommand mark)
+    {
+        mark.Execute(null);
+        if (Fullscreen.IsFullscreen) return;
+        SelectedTab = (int)InspectorTab.Edit;
+        IsInspectorOpen = true;
+    }
+
     private void PlayerChanged(object? sender, PropertyChangedEventArgs args)
     {
         switch (args.PropertyName)
         {
             case nameof(PlayerViewModel.Position):
                 Details.Chapters.SetPlayhead(Player.Position);
+                Edit.PlayheadMoved();
                 OnPropertyChanged(nameof(ScrubMarker));
                 break;
             case nameof(PlayerViewModel.IsPlaying):

@@ -17,22 +17,18 @@ public sealed record MergeSource(LibraryVideo Video)
 /// <summary>Joins two or more videos, in an order the user arranges, into one new video made by a render job.</summary>
 public sealed class MergePageViewModel : PageViewModel
 {
-    private readonly IClipEditingService _editing;
-    private readonly JobQueue _jobs;
-    private readonly Func<IReadOnlyList<LibraryVideo>, Task> _outputsCreated;
+    private readonly ClipEdits _edits;
     private MergeSource? _selectedSource;
     private string _outputTitle = "Merged home video";
     private JobViewModel? _job;
 
-    /// <param name="jobs">Runs the merge; it keeps running if the page closes.</param>
-    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditJob"/>).</param>
+    /// <param name="edits">Plans the merge and runs it as a render job, which keeps running if the page closes.</param>
     /// <param name="back">Returns to the library.</param>
     /// <param name="time">Clock for the plan delay; tests pass a fake.</param>
-    public MergePageViewModel(IReadOnlyList<LibraryVideo> sources, IClipEditingService editing, JobQueue jobs,
-        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<Task> back, TimeProvider? time = null)
+    public MergePageViewModel(IReadOnlyList<LibraryVideo> sources, ClipEdits edits, Func<Task> back, TimeProvider? time = null)
     {
         if (sources.Count < 2) throw new ArgumentException("Select at least two videos to merge.", nameof(sources));
-        _editing = editing; _jobs = jobs; _outputsCreated = outputsCreated;
+        _edits = edits;
         Sources = new ObservableCollection<MergeSource>(sources.Select(video => new MergeSource(video)));
         Plan = new PlanReadout(time ?? TimeProvider.System);
         MoveUpCommand = new RelayCommand(() => MoveSelected(-1), () => CanMove(-1));
@@ -64,6 +60,9 @@ public sealed class MergePageViewModel : PageViewModel
 
     /// <summary>The latest merge started here, shown with its progress, CANCEL and OPEN; null until one starts.</summary>
     public JobViewModel? Job { get => _job; private set => SetProperty(ref _job, value); }
+
+    /// <summary>The page's toolbar has its own ◀ LIBRARY key (and Esc).</summary>
+    public override bool HasBackKey => true;
 
     public RelayCommand MoveUpCommand { get; }
     public RelayCommand MoveDownCommand { get; }
@@ -101,13 +100,13 @@ public sealed class MergePageViewModel : PageViewModel
     }
 
     private Func<CancellationToken, Task<PlanDescription>> PlanAsync(IReadOnlyList<LibraryVideo> order) =>
-        async token => PlanDescription.Merge(await _editing.PlanMergeAsync(order, token), order);
+        async token => PlanDescription.Merge(await _edits.Service.PlanMergeAsync(order, token), order);
 
     private void Save()
     {
         // Captured now: the job may start later, and runs on the thread pool.
         var (order, title) = (Sources.Select(source => source.Video).ToArray(), OutputTitle);
-        Job = ClipEditJob.Enqueue(_jobs, $"Merge {order.Length} videos",
-            (progress, token) => _editing.MergeAsync(order, title, progress, token), _outputsCreated);
+        Job = ClipEditJob.Enqueue(_edits, $"Merge {order.Length} videos",
+            (editing, progress, token) => editing.MergeAsync(order, title, progress, token));
     }
 }

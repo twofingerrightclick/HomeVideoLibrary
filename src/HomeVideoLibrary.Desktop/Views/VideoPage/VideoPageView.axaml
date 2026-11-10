@@ -5,6 +5,7 @@
              xmlns:core="using:HomeVideoLibrary.Core"
              xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
              xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
+             xmlns:editing="using:HomeVideoLibrary.Desktop.Views.Editing"
              xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.VideoPageView"
              x:DataType="vp:VideoPageViewModel"
@@ -112,11 +113,7 @@
             <ScrollViewer><local:FramesTab Margin="4,4,8,12"/></ScrollViewer>
           </TabItem>
           <TabItem Header="EDIT" ui:Vcr.Icon="{StaticResource Vcr.Icon.Scissors}">
-            <Panel>
-              <ContentControl Content="{Binding Edit}"/>
-              <TextBlock Classes="meta" Margin="8,16" TextWrapping="Wrap" Text="Trim and split arrive in U3."
-                         IsVisible="{Binding Edit, Converter={x:Static ObjectConverters.IsNull}}"/>
-            </Panel>
+            <ScrollViewer><editing:EditTab DataContext="{Binding Edit}" Margin="4,4,8,12"/></ScrollViewer>
           </TabItem>
         </TabControl>
       </Border>

@@ -1,6 +1,7 @@
 using HomeVideoLibrary.Core;
 using HomeVideoLibrary.Desktop.Playback;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Desktop.ViewModels.Editing;
 using HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 using HomeVideoLibrary.Infrastructure;
 using HomeVideoLibrary.UI.Logic;
@@ -130,7 +131,7 @@ internal static class VideoPages
     /// <summary>A page whose waits complete at once unless <paramref name="delay"/> says otherwise.</summary>
     public static VideoPageViewModel Create(FakeMetadata metadata, FakePlayback playback, VideoRecord? record = null,
         bool releasePlayback = false, VideoPageSession? session = null, LibrarySnapshot? snapshot = null,
-        TagSuggestionProvider? suggest = null, TimeProvider? time = null)
+        TagSuggestionProvider? suggest = null, TimeProvider? time = null, ClipEdits? edits = null)
     {
         record ??= Record(metadata.Stored);
         return new VideoPageViewModel(new VideoPageDependencies
@@ -139,6 +140,26 @@ internal static class VideoPages
             Snapshot = snapshot ?? LibrarySnapshot.Empty, SuggestTags = suggest ?? ((_, _, _) => []),
             Session = session ?? new VideoPageSession(), Post = action => action(),
             ReleasePlaybackDuringSave = releasePlayback, Time = time ?? TimeProvider.System,
+            Edits = edits ?? new ClipEdits(new UnusedClipEditing(), new JobQueue(_ => Task.CompletedTask), _ => Task.CompletedTask),
         });
     }
+}
+
+/// <summary>For pages whose tests do not edit clips: every call fails, which a plan readout shows as its message.</summary>
+internal sealed class UnusedClipEditing : IClipEditingService
+{
+    public Task<ClipOutputFormat> GetSourceFormatAsync(LibraryVideo source, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ClipCutPlan> PlanTrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, ClipCutMode mode = ClipCutMode.Precise,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ClipCutPlan> PlanSplitAsync(LibraryVideo source, TimeSpan position, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    public Task<ClipMergePlan> PlanMergeAsync(IReadOnlyList<LibraryVideo> sources, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+    public Task<IReadOnlyList<LibraryVideo>> TrimAsync(LibraryVideo source, TimeSpan start, TimeSpan end, string title,
+        IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default, ClipCutMode mode = ClipCutMode.Precise) =>
+        throw new NotSupportedException();
+    public Task<IReadOnlyList<LibraryVideo>> SplitAsync(LibraryVideo source, TimeSpan position, string title,
+        IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IReadOnlyList<LibraryVideo>> MergeAsync(IReadOnlyList<LibraryVideo> sources, string title,
+        IProgress<ClipEditProgress>? progress = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 }

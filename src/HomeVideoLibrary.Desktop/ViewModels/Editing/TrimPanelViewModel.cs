@@ -8,9 +8,7 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
 {
     public const string UnsavedDetailsMessage = "Save or revert your changes first";
 
-    private readonly IClipEditingService _editing;
-    private readonly JobQueue _jobs;
-    private readonly Func<IReadOnlyList<LibraryVideo>, Task> _outputsCreated;
+    private readonly ClipEdits _edits;
     private readonly Func<TimeSpan> _playhead;
     private readonly Func<bool> _hasUnsavedDetails;
     private TimeSpan? _in, _out;
@@ -22,16 +20,14 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
     private JobViewModel? _job;
 
     /// <param name="playhead">The player's current position, read when I/O is pressed and when the page reports a move.</param>
-    /// <param name="jobs">Runs the edits; they keep running if the page closes.</param>
-    /// <param name="outputsCreated">Publishes committed outputs to the library (see <see cref="ClipEditJob"/>).</param>
+    /// <param name="edits">Plans the edits and runs them as render jobs, which keep running if the page closes.</param>
     /// <param name="hasUnsavedDetails">Whether the page has unsaved metadata edits. New clips copy the file's saved
     /// metadata, so edits are blocked until they are saved or reverted. Call <see cref="DetailsDirtyChanged"/> when it changes.</param>
     /// <param name="time">Clock for the plan delay; tests pass a fake.</param>
-    public TrimPanelViewModel(LibraryVideo source, IClipEditingService editing, Func<TimeSpan> playhead, JobQueue jobs,
-        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, Func<bool> hasUnsavedDetails, TimeProvider? time = null)
+    public TrimPanelViewModel(LibraryVideo source, ClipEdits edits, Func<TimeSpan> playhead, Func<bool> hasUnsavedDetails,
+        TimeProvider? time = null)
     {
-        Source = source; _editing = editing; _playhead = playhead; _jobs = jobs; _outputsCreated = outputsCreated;
-        _hasUnsavedDetails = hasUnsavedDetails;
+        Source = source; _edits = edits; _playhead = playhead; _hasUnsavedDetails = hasUnsavedDetails;
         _outputTitle = source.Title.Length > 0 ? source.Title : source.DisplayName;
         TrimPlan = new PlanReadout(time ?? TimeProvider.System);
         SplitPlan = new PlanReadout(time ?? TimeProvider.System);
@@ -187,29 +183,29 @@ public sealed class TrimPanelViewModel : ViewModelBase, IDisposable
         if (RangeStart is not { } start || RangeEnd is not { } end) { TrimPlan.Show("Set an in or out point to keep part of this video."); return; }
         if (RangeError is not null) { TrimPlan.Show(""); return; }
         var mode = Mode;
-        TrimPlan.Request(async token => PlanDescription.Trim(await _editing.PlanTrimAsync(Source, start, end, mode, token)));
+        TrimPlan.Request(async token => PlanDescription.Trim(await _edits.Service.PlanTrimAsync(Source, start, end, mode, token)));
     }
 
     private void RefreshSplitPlan()
     {
         var position = SplitAt;
         if (!IsInside(position)) { SplitPlan.Show("Move the playhead to where the second part should start."); return; }
-        SplitPlan.Request(async token => PlanDescription.Split(await _editing.PlanSplitAsync(Source, position, token)));
+        SplitPlan.Request(async token => PlanDescription.Split(await _edits.Service.PlanSplitAsync(Source, position, token)));
     }
 
     private void Trim()
     {
         // Captured now: the job may start later, and runs on the thread pool.
         var (start, end, title, mode) = (RangeStart!.Value, RangeEnd!.Value, OutputTitle, Mode);
-        Job = ClipEditJob.Enqueue(_jobs, $"Trim {Source.Label}",
-            (progress, token) => _editing.TrimAsync(Source, start, end, title, progress, token, mode), _outputsCreated);
+        Job = ClipEditJob.Enqueue(_edits, $"Trim {Source.Label}",
+            (editing, progress, token) => editing.TrimAsync(Source, start, end, title, progress, token, mode));
     }
 
     private void Split()
     {
         var (position, title) = (SplitAt, OutputTitle);
-        Job = ClipEditJob.Enqueue(_jobs, $"Split {Source.Label}",
-            (progress, token) => _editing.SplitAsync(Source, position, title, progress, token), _outputsCreated);
+        Job = ClipEditJob.Enqueue(_edits, $"Split {Source.Label}",
+            (editing, progress, token) => editing.SplitAsync(Source, position, title, progress, token));
     }
 
     private bool IsInside(TimeSpan position) => position > TimeSpan.Zero && position < Source.Duration;

@@ -274,11 +274,11 @@ public sealed class ClipEditingViewModelTests
     }
 
     private TrimPanelViewModel Panel() =>
-        new(Video("Source", TimeSpan.FromMinutes(10)), _editing, () => _playhead, _jobs, Publish, () => _dirty, _time);
+        new(Video("Source", TimeSpan.FromMinutes(10)), new ClipEdits(_editing, _jobs, Publish), () => _playhead, () => _dirty, _time);
 
     private MergePageViewModel Merge(int count) =>
-        new(Enumerable.Range(1, count).Select(index => Video($"Clip {index}", TimeSpan.FromMinutes(index))).ToArray(), _editing, _jobs,
-            Publish, () => Task.CompletedTask, _time);
+        new(Enumerable.Range(1, count).Select(index => Video($"Clip {index}", TimeSpan.FromMinutes(index))).ToArray(),
+            new ClipEdits(_editing, _jobs, Publish), () => Task.CompletedTask, _time);
 
     private Task Publish(IReadOnlyList<LibraryVideo> outputs)
     {

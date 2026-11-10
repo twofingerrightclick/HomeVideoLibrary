@@ -24,6 +24,8 @@
                 ChapterSegments="{Binding Details.Chapters.Marks}"
                 SeekCommand="{Binding Player.SeekCommand}"
                 PreviewMarkerPosition="{Binding ScrubMarker}"
+                RangeStart="{Binding Edit.RangeStart}"
+                RangeEnd="{Binding Edit.RangeEnd}"
                 HoverTime="{Binding Preview.HoverTime, Mode=OneWayToSource}"
                 HoverPreview="{Binding Preview.Image}"/>
     <WrapPanel ItemSpacing="14" LineSpacing="8" VerticalAlignment="Bottom">

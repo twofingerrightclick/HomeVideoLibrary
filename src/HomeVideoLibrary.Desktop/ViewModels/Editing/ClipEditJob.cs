@@ -3,17 +3,22 @@ using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Desktop.ViewModels.Editing;
 
+/// <summary>What a page needs to start clip edits: the editing service, the queue its render jobs run in, and how
+/// their outputs reach the library.</summary>
+/// <param name="Publish">Publishes committed outputs to the library (see <see cref="ClipEditJob"/>).</param>
+public sealed record ClipEdits(IClipEditingService Service, JobQueue Jobs, Func<IReadOnlyList<LibraryVideo>, Task> Publish);
+
 /// <summary>A clip edit as a background render job: the edit's stages become job progress, its warnings join the
 /// final summary and its outputs are published to the library.</summary>
 public static class ClipEditJob
 {
     /// <param name="edit">Runs the edit on the thread pool; captures its inputs before it is queued.</param>
-    /// <param name="outputsCreated">Publishes committed outputs to the library. It runs even when the job was cancelled
-    /// after the service committed, because the new files already exist; a failure becomes a warning.</param>
-    public static JobViewModel Enqueue(JobQueue jobs, string title,
-        Func<IProgress<ClipEditProgress>, CancellationToken, Task<IReadOnlyList<LibraryVideo>>> edit,
-        Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated) =>
-        jobs.Enqueue(title, JobLane.Render, (progress, cancellationToken) => RunAsync(edit, outputsCreated, progress, cancellationToken));
+    /// <remarks>The outputs are published even when the job was cancelled after the service committed, because the new
+    /// files already exist; a publishing failure becomes a warning.</remarks>
+    public static JobViewModel Enqueue(ClipEdits edits, string title,
+        Func<IClipEditingService, IProgress<ClipEditProgress>, CancellationToken, Task<IReadOnlyList<LibraryVideo>>> edit) =>
+        edits.Jobs.Enqueue(title, JobLane.Render,
+            (progress, cancellationToken) => RunAsync((stages, token) => edit(edits.Service, stages, token), edits.Publish, progress, cancellationToken));
 
     private static async Task<JobOutcome> RunAsync(Func<IProgress<ClipEditProgress>, CancellationToken, Task<IReadOnlyList<LibraryVideo>>> edit,
         Func<IReadOnlyList<LibraryVideo>, Task> outputsCreated, IProgress<JobProgress> progress, CancellationToken cancellationToken)

@@ -75,18 +75,23 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
-    public async Task ClosingTheWindowCancelsARunningClipEditThenReleasesTheLibrary()
+    public async Task TrimOpensTheEditTabAndClosingTheWindowCancelsItsJobThenReleasesTheLibrary()
     {
         var (viewModel, _) = await OpenLibraryAsync();
         viewModel.Shelf.Tapes.Single().IsSelected = true;
-        await viewModel.OpenClipEditorAsync();
-        var clips = Assert.IsType<ClipEditorPage>(viewModel.Page).Editor;
-        var trim = clips.TrimAsync();
-        Assert.True(clips.IsBusy);
-        Assert.False(await viewModel.NavigateAsync(() => null)); // Back keeps a running edit.
+        await viewModel.TrimSelectedCommand.ExecuteAsync();
+        var page = Assert.IsType<VideoPageViewModel>(viewModel.Page);
+        Assert.Equal((int)InspectorTab.Edit, page.SelectedTab);
+
+        page.Edit.InText = "1";
+        page.Edit.OutText = "5";
+        page.Edit.TrimCommand.Execute(null);
+        var job = Assert.IsType<JobViewModel>(page.Edit.Job);
+        Assert.True(await viewModel.NavigateAsync(() => null)); // The trim keeps running in the activity drawer.
+        Assert.True(job.IsRunning);
 
         Assert.True(await viewModel.RequestCloseAsync());
-        await trim;
+        Assert.Equal(JobState.Cancelled, job.State);
         Assert.Null(viewModel.Page);
         using var released = LibraryLock.TryAcquire(Library);
         Assert.NotNull(released);

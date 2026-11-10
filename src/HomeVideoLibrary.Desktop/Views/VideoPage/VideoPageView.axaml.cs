@@ -174,6 +174,8 @@ public sealed partial class VideoPageView : UserControl
             .Map(Key.D0, KeyModifiers.None, Player(player => player.ToggleMuteCommand), ClickSoundKind.Plastic)
             .Map(Key.NumPad0, KeyModifiers.None, Player(player => player.ToggleMuteCommand), ClickSoundKind.Plastic)
             .Map(Key.M, KeyModifiers.None, Page(page => page.AddChapterCommand), ClickSoundKind.Rubber)
+            .Map(Key.I, KeyModifiers.None, Page(page => page.MarkInCommand), ClickSoundKind.Plastic)
+            .Map(Key.O, KeyModifiers.None, Page(page => page.MarkOutCommand), ClickSoundKind.Plastic)
             .Map(Key.F2, KeyModifiers.None, Page(page => page.Details.Chapters.RenameCurrentCommand))
             .Map(Key.C, KeyModifiers.Shift, Page(page => page.Details.Frames.CaptureCommand), ClickSoundKind.Plastic)
             .Map(Key.F, KeyModifiers.None, Page(page => page.Fullscreen.ToggleCommand), ClickSoundKind.Plastic)
