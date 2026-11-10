@@ -9,7 +9,8 @@ namespace HomeVideoLibrary.Infrastructure;
 /// outright when its Recycle Bin cannot take it, so that case is ruled out before the call where it can be predicted (not a
 /// local fixed drive; the drive's bin deletes immediately or is smaller than the file), and detected afterwards where it
 /// cannot: the operation's progress sink reports whether a recycled item was created, and a file deleted outright (after
-/// Windows' own warning, which the user accepted) is <see cref="TrashResult.Deleted"/>, never Trashed.
+/// Windows' own warning, which the user accepted) is <see cref="TrashResult.Deleted"/>, never Trashed; declining that warning
+/// is <see cref="TrashResult.Declined"/>.
 /// Microsoft.VisualBasic's <c>FileSystem.DeleteFile</c> and <c>SHFileOperation</c> were rejected: neither reports whether a
 /// file was recycled or deleted.</summary>
 [SupportedOSPlatform("windows")]
@@ -247,7 +248,7 @@ internal static class WindowsTrashRules
         if (result >= 0 && recycled is { } created) return created ? TrashResult.Trashed : TrashResult.Deleted;
         if (IsLocked(result) || IsLocked(itemResult)) return TrashResult.Locked;
         // The user declined Windows' warning that the file would be deleted rather than recycled.
-        if (IsCancel(result) || IsCancel(itemResult) || aborted && result >= 0 && itemResult >= 0) return TrashResult.Unavailable;
+        if (IsCancel(result) || IsCancel(itemResult) || aborted && result >= 0 && itemResult >= 0) return TrashResult.Declined;
         var failure = result < 0 ? result : itemResult < 0 ? itemResult : unchecked((int)0x80004005);
         throw new IOException($"Windows could not move {name} to the Recycle Bin (0x{failure:X8}).", failure);
     }

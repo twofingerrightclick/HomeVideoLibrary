@@ -12,10 +12,14 @@ public enum TrashResult
     /// <summary>The system deleted the file outright instead of keeping it: Windows does when the Recycle Bin cannot take a
     /// file it did not foresee, after its own warning, which the user accepted. The file cannot be restored.</summary>
     Deleted,
+    /// <summary>The user declined the system's warning that the file would be deleted rather than kept (Windows). The file
+    /// is untouched.</summary>
+    Declined,
 }
 
 /// <summary>Moves files to the operating system's Trash, where the user can restore them. Never copies a file and
-/// never deletes one instead: when the Trash cannot take a file, the answer is <see cref="TrashResult.Unavailable"/>.</summary>
+/// never deletes one instead: when the Trash cannot take a file, the answer is <see cref="TrashResult.Unavailable"/>, or
+/// <see cref="TrashResult.Declined"/> when the system asked the user and they said no.</summary>
 public interface IFileTrash
 {
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>

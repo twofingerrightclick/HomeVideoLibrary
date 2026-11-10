@@ -212,6 +212,24 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
+    public async Task DecliningTheSystemsWarningKeepsTheVideoWithoutAskingAgain()
+    {
+        var (vm, videos) = await OpenAsync("first");
+        _trash.Answers.Enqueue(TrashResult.Declined);
+        Select(vm, videos[0]);
+        _interaction.ConfirmAnswers.Enqueue(true);
+
+        var request = await vm.Trash.MoveToTrashAsync(vm.Shelf.SelectedIds.ToArray());
+        await request!.Completion;
+
+        Assert.Equal(JobState.Succeeded, request.Job.State);
+        Assert.Single(_interaction.Confirmations);
+        Assert.True(File.Exists(PathOf(vm, videos[0])));
+        Assert.Single(vm.Shelf.Tapes);
+        Assert.Equal("Kept “first”.", vm.Status);
+    }
+
+    [Fact]
     public async Task TrashingFromItsPageLeavesThePageAndAVideoInATrashJobCannotOpen()
     {
         var (vm, videos) = await OpenAsync("first", "second");

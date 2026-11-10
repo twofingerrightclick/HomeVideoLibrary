@@ -24,6 +24,8 @@ public enum RemovalResult
     Unavailable,
     /// <summary>Another program kept the file open; the video is untouched.</summary>
     Locked,
+    /// <summary>The user declined the system's warning that the file would be deleted outright; the video is untouched.</summary>
+    Declined,
     /// <summary>The file is gone, so there was nothing to move; the video stays in the library until removed from it.</summary>
     Missing,
     /// <summary>See <see cref="VideoRemoval.Error"/>.</summary>
@@ -67,6 +69,7 @@ public sealed class VideoRemover
             TrashResult.Trashed => RemovalResult.Trashed,
             TrashResult.Deleted => RemovalResult.Deleted,
             TrashResult.Locked => RemovalResult.Locked,
+            TrashResult.Declined => RemovalResult.Declined,
             _ => RemovalResult.Unavailable,
         }, cancellationToken);
 

@@ -141,7 +141,8 @@ public sealed class TrashViewModel : ViewModelBase
     }
 
     /// <summary>Queues one job removing <paramref name="videos"/> one by one. It fails only when nothing left the library
-    /// and something went wrong; a drive without a Trash is no failure, since the follow-up asks about it.</summary>
+    /// and something went wrong; a drive without a Trash is no failure, since the follow-up asks about it, and neither is
+    /// the user declining the system's warning.</summary>
     private Batch Enqueue(string title, IReadOnlyList<VideoRecord> videos, Func<Guid, CancellationToken, Task<VideoRemoval>> remove, string stage)
     {
         var results = new List<VideoRemoval>();
@@ -154,7 +155,7 @@ public sealed class TrashViewModel : ViewModelBase
                 results.Add(await remove(videos[index].Id, cancellationToken));
             }
             var summary = Summarize(results);
-            if (!results.Any(result => result.IsRemoved) && results.Any(result => result.Result != RemovalResult.Unavailable))
+            if (!results.Any(result => result.IsRemoved) && results.Any(result => result.Result is not (RemovalResult.Unavailable or RemovalResult.Declined)))
                 throw new IOException(summary);
             return JobOutcome.Done(summary);
         });
@@ -214,6 +215,7 @@ public sealed class TrashViewModel : ViewModelBase
                 RemovalResult.Deleted => $"Deleted {Count(labels.Length)} permanently.",
                 RemovalResult.RemovedFromLibrary => $"Removed {Count(labels.Length)} from the library.",
                 RemovalResult.Locked => $"{Names(labels)} {(one ? "is" : "are")} open in another program; try again later.",
+                RemovalResult.Declined => $"Kept {Names(labels)}.",
                 RemovalResult.Unavailable => $"{Names(labels)} cannot go to the Trash on {(one ? "its" : "their")} drive.",
                 RemovalResult.Missing => $"{Names(labels)} {(one ? "has" : "have")} no file; use Remove from library.",
                 _ => string.Join(" ", group.Select(result => $"“{result.Label}”: {result.Error}")),
