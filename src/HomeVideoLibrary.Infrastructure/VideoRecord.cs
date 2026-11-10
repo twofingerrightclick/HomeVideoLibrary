@@ -127,7 +127,8 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
         Thumbnails.Select(thumbnail => new CachedThumbnail(thumbnail.Id, thumbnail.Position.Ticks, thumbnail.AttachmentName, thumbnail.Sha256)).ToArray(),
         MediaIdentity));
 
-    /// <summary>Applies cached content; returns null when the cache entry is unreadable or from another format version.</summary>
+    /// <summary>Applies cached content; returns null when the cache entry is unreadable or from another format version. The
+    /// record is <see cref="VideoRecordState.Pending"/> when the entry lacks a <see cref="MediaIdentity"/>.</summary>
     internal VideoRecord? WithCachedContent(CatalogCacheEntry entry)
     {
         CachedContent? content;
@@ -149,7 +150,8 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
                 thumbnail.AttachmentName ?? "", thumbnail.Sha256 ?? "")).OrderBy(thumbnail => thumbnail.Position).ToArray(),
             MediaIdentity = content.MediaIdentity,
             Stamp = new FileStamp(entry.FileLength, entry.ModifiedTicks),
-            State = VideoRecordState.Ok,
+            // An entry written before media identities existed shows its content until the file is read again.
+            State = content.MediaIdentity is null ? VideoRecordState.Pending : VideoRecordState.Ok,
             Error = null,
         };
     }
@@ -158,8 +160,9 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
         DateTimeOffset? RecordedAt, string? RecordedAtText, IReadOnlyList<CachedChapter>? Chapters, IReadOnlyList<CachedThumbnail>? Thumbnails,
         string? MediaIdentity)
     {
-        // Version 2 added MediaIdentity; older entries are read again rather than published without one.
-        public const int CurrentVersion = 2;
+        // MediaIdentity is optional rather than a new version, so entries from either side of it still show their content
+        // and an older app reading a newer entry just ignores it.
+        public const int CurrentVersion = 1;
     }
 
     private sealed record CachedChapter(ulong Uid, long StartTicks, string? Title, string? Description, IReadOnlyList<string>? Tags);

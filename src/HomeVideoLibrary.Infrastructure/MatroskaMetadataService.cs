@@ -468,10 +468,33 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     }
     private sealed record ContainerInfo(long? DurationNanoseconds, string[] Tracks, Attachment[] Attachments, string? Title)
     {
-        /// <summary>A hash of exactly what <see cref="VerifyAsync"/> requires every metadata write to preserve: the duration
-        /// and each track as mkvmerge describes it (UID, codec data, dimensions, frame and byte statistics).</summary>
-        public string MediaIdentity => Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            string.Join('\n', Tracks.Prepend(DurationNanoseconds?.ToString(CultureInfo.InvariantCulture) ?? "")))), 0, 8);
+        public string MediaIdentity => MediaIdentityOf(DurationNanoseconds, Tracks);
+    }
+
+    /// <summary>What a track's media is, among the properties mkvmerge -J reports. Every one is also covered by
+    /// <see cref="VerifyAsync"/>, so metadata writes keep them; the statistics tags' writing date and application are left
+    /// out because a remux or an MKVToolNix upgrade rewrites them without touching the media.</summary>
+    private static readonly string[] MediaProperties =
+    [
+        "uid", "codec_id", "codec_private_data", "pixel_dimensions", "display_dimensions", "default_duration", "minimum_timestamp",
+        "tag_number_of_frames", "tag_number_of_bytes", "tag_bps",
+    ];
+
+    /// <summary>A hash of the duration and each track's <see cref="MediaProperties"/>; see <see cref="VideoTextMetadata.MediaIdentity"/>.</summary>
+    internal static string MediaIdentityOf(long? durationNanoseconds, IEnumerable<string> tracks)
+    {
+        var text = new System.Text.StringBuilder(durationNanoseconds?.ToString(CultureInfo.InvariantCulture) ?? "");
+        foreach (var track in tracks)
+        {
+            using var json = JsonDocument.Parse(track);
+            var root = json.RootElement;
+            text.Append('\n').Append(Raw(root, "id")).Append(' ').Append(Raw(root, "type"));
+            if (!root.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object) continue;
+            foreach (var name in MediaProperties) text.Append(' ').Append(name).Append('=').Append(Raw(properties, name));
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString())), 0, 8);
+
+        static string Raw(JsonElement element, string name) => element.TryGetProperty(name, out var value) ? value.GetRawText() : "";
     }
     /// <param name="Manifest">The thumbnail manifest the file must have after the write.</param>
     /// <param name="TouchesAttachments">Whether the write deletes the owned attachments and adds the planned ones.</param>
