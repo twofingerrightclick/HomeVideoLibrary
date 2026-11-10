@@ -29,6 +29,10 @@ PlasticButton, RubberButton, LatchButton, LegendFrame, `TabControl.inspector`, S
 ChapterPlaceholderRow, TagChipInput, VhsSpine, LcdCounter, `Slider.volume`, SectionHeader and VcrDialog. The
 gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every control in every state.
 
+**The Amber Key Rule.** The one primary action of a view or dialog (IMPORT VIDEOS, SAVE, RENDER) is a dark plastic key
+like its neighbours, set apart by the amber VFD legend and edge (`.primary`). Destructive keys are red caps and power
+keys green.
+
 **The Paper Rule.** Light material belongs to tape labels, the sticky month pill and toasts.
 
 **The Handwriting Rule.** Caveat handwriting is the user's tape label only, never navigation or form controls.

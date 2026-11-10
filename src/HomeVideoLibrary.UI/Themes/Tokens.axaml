@@ -48,8 +48,11 @@
   <Color x:Key="Vcr.Color.Amber">#FF8F2E</Color>
   <Color x:Key="Vcr.Color.Amber.Ghost">#2A1A0E</Color>
   <Color x:Key="Vcr.Color.Focus">#8FC6DA</Color>
-  <Color x:Key="Vcr.Color.Primary">#B7D4DD</Color>
-  <Color x:Key="Vcr.Color.Primary.Ink">#182A31</Color>
+  <!-- The primary key's legend and edge: the amber VFD. -->
+  <StaticResource x:Key="Vcr.Color.Primary" ResourceKey="Vcr.Color.Amber"/>
+  <Color x:Key="Vcr.Color.Primary.Edge">#A0561A</Color>
+  <Color x:Key="Vcr.Color.Primary.EdgeHover">#C86A22</Color>
+  <Color x:Key="Vcr.Color.Primary.EdgePressed">#7A4216</Color>
 
   <!-- Display glass (LCD/VFD windows, text wells). -->
   <Color x:Key="Vcr.Color.Glass">#0B0D0E</Color>
@@ -91,7 +94,9 @@
   <SolidColorBrush x:Key="Vcr.Brush.Amber.Ghost" Color="{StaticResource Vcr.Color.Amber.Ghost}"/>
   <SolidColorBrush x:Key="Vcr.Brush.Focus" Color="{StaticResource Vcr.Color.Focus}"/>
   <SolidColorBrush x:Key="Vcr.Brush.Primary" Color="{StaticResource Vcr.Color.Primary}"/>
-  <SolidColorBrush x:Key="Vcr.Brush.Primary.Ink" Color="{StaticResource Vcr.Color.Primary.Ink}"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Primary.Edge" Color="{StaticResource Vcr.Color.Primary.Edge}"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Primary.EdgeHover" Color="{StaticResource Vcr.Color.Primary.EdgeHover}"/>
+  <SolidColorBrush x:Key="Vcr.Brush.Primary.EdgePressed" Color="{StaticResource Vcr.Color.Primary.EdgePressed}"/>
   <SolidColorBrush x:Key="Vcr.Brush.Glass" Color="{StaticResource Vcr.Color.Glass}"/>
   <SolidColorBrush x:Key="Vcr.Brush.Glass.Edge" Color="{StaticResource Vcr.Color.Glass.Edge}"/>
   <SolidColorBrush x:Key="Vcr.Brush.Field" Color="{StaticResource Vcr.Color.Field}"/>
@@ -119,13 +124,18 @@
     <GradientStop Offset="0" Color="{StaticResource Vcr.Color.Plastic.TopPressed}"/>
     <GradientStop Offset="1" Color="{StaticResource Vcr.Color.Plastic.BottomPressed}"/>
   </LinearGradientBrush>
+  <!-- A shade darker and warmer than the plain cap, so the amber legend keeps 4.5:1 at the cap's lightest point. -->
   <LinearGradientBrush x:Key="Vcr.Brush.Plastic.Primary" StartPoint="0%,0%" EndPoint="0%,100%">
-    <GradientStop Offset="0" Color="#C9E0E7"/>
-    <GradientStop Offset="1" Color="#9FC0CB"/>
+    <GradientStop Offset="0" Color="#3B3834"/>
+    <GradientStop Offset="1" Color="#211F1C"/>
+  </LinearGradientBrush>
+  <LinearGradientBrush x:Key="Vcr.Brush.Plastic.Primary.Hover" StartPoint="0%,0%" EndPoint="0%,100%">
+    <GradientStop Offset="0" Color="#43403B"/>
+    <GradientStop Offset="1" Color="#282622"/>
   </LinearGradientBrush>
   <LinearGradientBrush x:Key="Vcr.Brush.Plastic.Primary.Pressed" StartPoint="0%,0%" EndPoint="0%,100%">
-    <GradientStop Offset="0" Color="#A3C2CC"/>
-    <GradientStop Offset="1" Color="#93B5C0"/>
+    <GradientStop Offset="0" Color="#282623"/>
+    <GradientStop Offset="1" Color="#1F1D1B"/>
   </LinearGradientBrush>
   <LinearGradientBrush x:Key="Vcr.Brush.Plastic.Destructive" StartPoint="0%,0%" EndPoint="0%,100%">
     <GradientStop Offset="0" Color="#C8392F"/>

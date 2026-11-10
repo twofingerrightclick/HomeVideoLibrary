@@ -126,16 +126,18 @@
       <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Toolbar}"/>
     </Style>
 
-    <!-- Pale-blue cap: the one primary action of a view or dialog (Import, Save). -->
+    <!-- Amber key: the one primary action of a view or dialog (Import, Save); a dark cap with the VFD's amber legend and edge. -->
     <Style Selector="^.primary">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary}"/>
-      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Primary.Ink}"/>
-      <Setter Property="BorderBrush" Value="#0E1A1F"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Primary}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Primary.Edge}"/>
       <Style Selector="^:pointerover">
-        <Setter Property="Background" Value="#C9E0E7"/>
+        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary.Hover}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Primary.EdgeHover}"/>
       </Style>
       <Style Selector="^:pressed">
         <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary.Pressed}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Primary.EdgePressed}"/>
       </Style>
     </Style>
     <!-- Red cap: irreversible actions (Delete, Discard); pair with a confirmation. -->
@@ -165,6 +167,7 @@
     <Style Selector="^.primary:disabled, ^.destructive:disabled, ^.go:disabled">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
       <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
     </Style>
   </ControlTheme>
 
