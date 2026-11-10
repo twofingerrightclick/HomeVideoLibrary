@@ -219,11 +219,32 @@ public sealed class LibrarySelectionTests : IDisposable
 
         _interaction.CloseChoice = CloseChoice.CancelJobs;
         var close = vm.RequestCloseAsync();
-        Assert.Same(close, vm.RequestCloseAsync());
+        var again = vm.RequestCloseAsync();
         Assert.True(await close);
+        Assert.True(await again);
         Assert.Equal(2, _interaction.CloseAsked);
         Assert.Equal(JobState.Cancelled, Assert.Single(vm.Jobs.Jobs).State);
         Assert.False(vm.Import.IsImporting);
+    }
+
+    [Fact]
+    public async Task ImportEnabledAgainAfterSwitchAndAfterKeepOpen()
+    {
+        var started = new TaskCompletionSource();
+        _importer = _ => new BlockingImporter(started);
+        var (vm, _) = await OpenAsync("existing");
+        bool? announced = null;
+        vm.Import.ImportCommand.CanExecuteChanged += (_, _) => announced = vm.Import.ImportCommand.CanExecute(null);
+
+        await vm.OpenLibraryAsync(vm.Settings.LibraryRoot);
+        Assert.True(announced);
+
+        vm.Import.Enqueue(["/somewhere/slow.mov"]);
+        await started.Task;
+        _interaction.CloseChoice = CloseChoice.KeepOpen;
+        Assert.False(await vm.RequestCloseAsync());
+        Assert.True(announced);
+        await vm.Jobs.CancelAllAndWaitAsync();
     }
 
     [Fact]

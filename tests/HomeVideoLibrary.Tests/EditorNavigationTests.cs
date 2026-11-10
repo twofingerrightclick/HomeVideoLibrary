@@ -147,6 +147,60 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.Null(viewModel.Page);
     }
 
+    [Fact]
+    public async Task CloseAfterFailedSwitchStillCloses()
+    {
+        var viewModel = await OpenEditorAsync();
+        Editor(viewModel).Title = "unsaved";
+        var other = await CreateCatalogAsync(Path.Combine(_root, "other"));
+        var broken = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
+        broken.SetException(new InvalidOperationException("prompt failed"));
+
+        await viewModel.OpenLibraryAsync(other.Paths.RootDirectory);
+        Assert.Contains("prompt failed", viewModel.Status);
+        Assert.Equal(Library.RootDirectory, viewModel.Settings.LibraryRoot);
+        using (var free = LibraryLock.TryAcquire(other.Paths)) Assert.NotNull(free);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.RequestCloseAsync());
+        using var released = LibraryLock.TryAcquire(Library);
+        Assert.NotNull(released);
+    }
+
+    [Fact]
+    public async Task KeepEditingDuringALibrarySwitchReleasesTheNewLibrary()
+    {
+        var viewModel = await OpenEditorAsync();
+        Editor(viewModel).Title = "unsaved";
+        var other = await CreateCatalogAsync(Path.Combine(_root, "other"));
+
+        _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
+        await viewModel.OpenLibraryAsync(other.Paths.RootDirectory);
+
+        Assert.Contains("not switched", viewModel.Status);
+        Assert.Equal(Library.RootDirectory, viewModel.Settings.LibraryRoot);
+        Assert.IsType<VideoEditorPage>(viewModel.Page);
+        using var free = LibraryLock.TryAcquire(other.Paths);
+        Assert.NotNull(free);
+    }
+
+    [Fact]
+    public async Task NavigateFailureDoesNotPoisonLaterNavigation()
+    {
+        var viewModel = await OpenEditorAsync();
+        var page = viewModel.Page;
+        Editor(viewModel).Title = "unsaved";
+        var broken = _interaction.Pending = new TaskCompletionSource<LeaveChoice>();
+        broken.SetException(new InvalidOperationException("prompt failed"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => viewModel.NavigateAsync(() => null));
+        Assert.Same(page, viewModel.Page);
+
+        _interaction.Answers.Enqueue(LeaveChoice.Discard);
+        Assert.True(await viewModel.NavigateAsync(() => null));
+        Assert.Null(viewModel.Page);
+    }
+
     private static VideoEditorViewModel Editor(MainWindowViewModel viewModel) => Assert.IsType<VideoEditorPage>(viewModel.Page).Editor;
 
     private sealed class BlockingClipEditing : IClipEditingService

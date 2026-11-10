@@ -251,10 +251,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// calls while one is running share it; new work is refused meanwhile.</summary>
     public Task<bool> RequestCloseAsync()
     {
-        if (_closing is { IsCompleted: false } running) return running;
-        _closing = CloseAsync();
-        UpdateCommands();
-        return _closing;
+        if (_closing is not { IsCompleted: false })
+        {
+            _closing = CloseAsync();
+            UpdateCommands();
+        }
+        return UpdateCommandsAfterAsync(_closing);
     }
 
     private async Task<bool> CloseAsync()
@@ -288,12 +290,21 @@ public sealed class MainWindowViewModel : ViewModelBase
             await ReleaseLibraryAsync();
             return true;
         }
-        finally
-        {
-            Status = status;
-            // The closing task is still the current one here; let commands re-check once it has completed.
-            _dependencies.Post(UpdateCommands);
-        }
+        finally { Status = status; }
+    }
+
+    /// <summary>Awaits a library switch or close and then re-checks the commands it held off: only once it has
+    /// completed does <see cref="IsSettled"/> read true.</summary>
+    private async Task<T> UpdateCommandsAfterAsync<T>(Task<T> flow)
+    {
+        try { return await flow; }
+        finally { UpdateCommands(); }
+    }
+
+    private async Task UpdateCommandsAfterAsync(Task flow)
+    {
+        try { await flow; }
+        finally { UpdateCommands(); }
     }
 
     /// <summary>Stops work on the open library and gives up its lock. The lock is released even if stopping fails.</summary>
@@ -324,10 +335,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { Status = exception.Message; }
     }
 
-    /// <summary>Opens (and if needed migrates) a library. Nothing about the current library changes unless the new one
-    /// is free (not open in another instance), initializes and loads; only then is the old one released and the
-    /// background refresh started. Reopening the open library just refreshes it. An open page is left first (through
-    /// the leave prompt); background jobs must have finished. New work waits until the switch completes.</summary>
+    /// <summary>Opens (and if needed migrates) a library. The new library is locked (refused if another instance has
+    /// it), initialized and loaded first; a failure there leaves the current library as it was. Then the open page is
+    /// left through the leave prompt (keeping it releases the new lock), and only then is the old library released and
+    /// the background refresh started. Reopening the open library just refreshes it. Background jobs must have
+    /// finished, and new work waits until the switch completes. The returned task never faults: failures go to the
+    /// status line.</summary>
     public Task OpenLibraryAsync(string root)
     {
         if (!IsSettled) return Task.CompletedTask;
@@ -338,13 +351,17 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         _opening = SwitchLibraryAsync(root);
         UpdateCommands();
-        return _opening;
+        return UpdateCommandsAfterAsync(_opening);
     }
 
     private async Task SwitchLibraryAsync(string root)
     {
         try { await SwitchLibraryCoreAsync(root); }
-        finally { _dependencies.Post(UpdateCommands); }
+        catch (Exception exception)
+        {
+            Status = "The library could not be opened: " + exception.Message;
+            AppErrors.Report(exception, "Open library");
+        }
     }
 
     private async Task SwitchLibraryCoreAsync(string root)
@@ -391,12 +408,21 @@ public sealed class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (!await NavigateAsync(() => null))
+        try
+        {
+            if (!await NavigateAsync(() => null))
+            {
+                owner.Dispose();
+                Status = "The library was not switched; the open page has work to finish or save first.";
+                return;
+            }
+            await ReleaseLibraryAsync();
+        }
+        catch
         {
             owner.Dispose();
-            return;
+            throw;
         }
-        await ReleaseLibraryAsync();
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
         _unavailableTools = unavailable;
         ToolWarning = DescribeUnavailable(unavailable);
