@@ -60,7 +60,7 @@ gallery (`dotnet run --project src/HomeVideoLibrary.Gallery`) shows every contro
   - The shell shows the running time, or MISSING / UNREADABLE (details in the tooltip).
   - A selection checkbox sits on the leading edge.
   - Spines keep a real VHS spine's 187:25 proportions at every size, in a centered stack up to 760 px wide.
-  - Hover lights an amber LED on the shell end (the tape never moves) and shows a frame preview above the pointer.
+  - Hover brings the tape slightly forward (2.5% scale, deeper shadow; no shift), lights an amber end LED and shows a frame preview above the pointer. Reduced motion (macOS setting) keeps the tape still.
 - **Settings:** a real modal window with the library folder, refresh/rebuild with a scrollable per-file error
   list, media tool health and the button-sound switch.
 

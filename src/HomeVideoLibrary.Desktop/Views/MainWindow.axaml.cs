@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
+        Opened += (_, _) => AppErrors.Run(async () => Classes.Set("reduced-motion", await ReducedMotion.IsRequestedAsync()), "Reduced motion");
         Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
         Closing += WindowClosing;
         DataContextChanged += (_, _) => Subscribe(DataContext as MainWindowViewModel);
