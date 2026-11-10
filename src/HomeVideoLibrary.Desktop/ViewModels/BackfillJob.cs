@@ -6,25 +6,25 @@ namespace HomeVideoLibrary.Desktop.ViewModels;
 /// <summary>Runs a library's one-time <see cref="IdentityBackfill"/> as render-lane jobs of <see cref="IdentityBackfill.SliceSize"/>
 /// videos each: it rewrites MKV metadata in place, which must not overlap a trim, split or merge reading the same file,
 /// and slicing lets jobs the user queues meanwhile run between slices instead of after the whole pass. Each slice is queued
-/// when the previous one has finished. Videos open on a page are retried once after the rest.</summary>
+/// when the previous one has finished. Videos open on a page are retried once after the rest; still open then, they wait for
+/// the next library open, as do videos that could not be checked.</summary>
 public static class BackfillJob
 {
     public const string Title = "Write titles and dates into older videos";
 
     /// <summary>Runs the pass to its end, or until a slice is cancelled or fails, or <paramref name="canContinue"/> is
-    /// false after a slice (the library is being switched or closed). Records it as done only when every video was checked without a
-    /// skip. Runs on the UI thread, like the queue; never throws.</summary>
+    /// false after a slice (the library is being switched or closed). Each slice records its own progress. Runs on the UI
+    /// thread, like the queue; never throws.</summary>
     /// <param name="isBusy">Whether a video is open on a page; called from the slice's thread.</param>
     public static async Task RunAsync(JobQueue jobs, IdentityBackfill backfill, Func<Guid, bool> isBusy, Func<bool> canContinue)
     {
         try
         {
             if (!backfill.IsDue) return;
-            var plan = backfill.Plan();
+            var plan = await backfill.PlanAsync();
             var slices = new Queue<IReadOnlyList<Guid>>(plan.Chunk(IdentityBackfill.SliceSize));
             var deferred = new List<Guid>();
             var retrying = false;
-            var complete = true;
             var done = 0;
             while (slices.TryDequeue(out var slice))
             {
@@ -38,13 +38,11 @@ public static class BackfillJob
                 await job.Completion;
                 if (job.State != JobState.Succeeded || result is null || !canContinue()) return;
                 done += slice.Count;
-                complete &= result.Skipped.Count == 0 && !(retrying && result.Deferred.Count > 0);
                 deferred.AddRange(result.Deferred);
                 if (slices.Count > 0 || retrying || deferred.Count == 0) continue;
                 retrying = true;
                 foreach (var retry in deferred.Chunk(IdentityBackfill.SliceSize)) slices.Enqueue(retry);
             }
-            if (complete) await backfill.RecordCompletedAsync();
         }
         catch (Exception exception) { Trace.TraceWarning($"The title and date backfill stopped: {exception}"); }
     }

@@ -25,7 +25,7 @@ public sealed class BackfillTests : IDisposable
     }
 
     [Fact]
-    public async Task ASliceWritesWhatIsMissingDefersBusyVideosAndSkipsMissingFiles()
+    public async Task ASliceWritesWhatIsMissingDefersBusyVideosAndPassesOverGoneFiles()
     {
         var (model, videos) = await LibraryAsync(4);
         _identity.Writes.Add(videos[0].Id);
@@ -38,9 +38,10 @@ public sealed class BackfillTests : IDisposable
 
         Assert.Equal(1, slice.Updated);
         Assert.Equal([videos[1].Id], slice.Deferred);
-        Assert.StartsWith("video 2:", Assert.Single(slice.Skipped));
+        Assert.Empty(slice.Skipped);
         Assert.Equal([videos[0].Id], _identity.Checked);
         Assert.Equal("written", model.Snapshot.Find(videos[0].Id)!.Title);
+        Assert.Equal([videos[1].Id], await backfill.PlanAsync());
     }
 
     [Fact]
@@ -72,28 +73,70 @@ public sealed class BackfillTests : IDisposable
     });
 
     [Fact]
-    public Task ASkippedVideoKeepsThePassDueAndAnOpenVideoIsRetriedOnceAfterTheRest() => UiThread.Run(async () =>
+    public Task AnOpenVideoIsRetriedOnceAfterTheRestAndThenWaitsForTheNextOpen() => UiThread.Run(async () =>
     {
         var (model, videos) = await LibraryAsync(3);
         var jobs = new JobQueue(_ => Task.CompletedTask);
-        var open = videos[0].Id;
-        _identity.Before = () =>
-        {
-            if (_identity.Checked.Count == 2) open = Guid.Empty; // The page closes once the others are done.
-            return Task.CompletedTask;
-        };
 
-        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), id => id == open, () => true);
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), id => id == videos[0].Id, () => true);
 
-        Assert.Equal([videos[1].Id, videos[2].Id, videos[0].Id], _identity.Checked);
+        Assert.Equal([videos[1].Id, videos[2].Id], _identity.Checked);
         Assert.Equal(2, jobs.Jobs.Count);
         Assert.Equal($"{BackfillJob.Title} (videos that were open)", jobs.Jobs[0].Title);
-        Assert.True(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
-
-        File.Delete(IdentityBackfill.StampPath(model.Catalog.Paths));
-        _identity.Failing.Add(videos[2].Id);
-        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => true);
         Assert.False(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => true);
+
+        Assert.Equal([videos[1].Id, videos[2].Id, videos[0].Id], _identity.Checked);
+        Assert.True(File.Exists(IdentityBackfill.StampPath(model.Catalog.Paths)));
+        Assert.False(File.Exists(IdentityBackfill.PendingPath(model.Catalog.Paths)));
+    });
+
+    [Fact]
+    public Task AVideoWhoseFileIsGoneDoesNotKeepThePassDue() => UiThread.Run(async () =>
+    {
+        var (model, videos) = await LibraryAsync(2);
+        File.Delete(model.Catalog.GetVideoPath(videos[1].RelativePath));
+
+        await BackfillJob.RunAsync(new JobQueue(_ => Task.CompletedTask), new IdentityBackfill(model, _identity), _ => false, () => true);
+
+        Assert.Equal([videos[0].Id], _identity.Checked);
+        Assert.False(new IdentityBackfill(model, _identity).IsDue);
+    });
+
+    [Fact]
+    public Task AFailingVideoIsTriedAgainOnLaterOpensAloneUntilThePassGivesUpOnIt() => UiThread.Run(async () =>
+    {
+        var (model, videos) = await LibraryAsync(2);
+        _identity.Failing.Add(videos[1].Id);
+
+        for (var open = 1; open <= IdentityBackfill.MaxAttempts; open++)
+        {
+            Assert.True(new IdentityBackfill(model, _identity).IsDue);
+            await BackfillJob.RunAsync(new JobQueue(_ => Task.CompletedTask), new IdentityBackfill(model, _identity), _ => false, () => true);
+        }
+
+        Assert.Equal([videos[0].Id, .. Enumerable.Repeat(videos[1].Id, IdentityBackfill.MaxAttempts)], _identity.Checked);
+        Assert.False(new IdentityBackfill(model, _identity).IsDue);
+    });
+
+    [Fact]
+    public Task AStoppedPassContinuesWhereItStoppedAndNeverChecksAVideoTwice() => UiThread.Run(async () =>
+    {
+        var (model, videos) = await LibraryAsync(IdentityBackfill.SliceSize + 5);
+        var jobs = new JobQueue(_ => Task.CompletedTask);
+        var continuing = false;
+
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => continuing);
+        Assert.Equal(IdentityBackfill.SliceSize, _identity.Checked.Count);
+        var added = await AddVideoAsync(model.Catalog, "imported since");
+        await model.UpsertFromFileAsync(added);
+        continuing = true;
+        await BackfillJob.RunAsync(jobs, new IdentityBackfill(model, _identity), _ => false, () => continuing);
+
+        Assert.Equal(videos.Select(video => video.Id).Order(), _identity.Checked.Order());
+        Assert.DoesNotContain(added.Id, _identity.Checked);
+        Assert.False(new IdentityBackfill(model, _identity).IsDue);
     });
 
     [Fact]
