@@ -123,3 +123,22 @@ dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~MetadataTes
 - `tests/HomeVideoLibrary.Desktop.UiTests`: headless tests of the app's views.
 
 Follow [CODING_STANDARDS.md](CODING_STANDARDS.md). Original source videos are preserved; content metadata belongs in MKV, while SQLite owns catalog locations and albums.
+
+## Catalog schema and EF Core migrations
+
+EF Core is the sole schema and migration owner. Runtime catalog, album, cache and import operations still use parameterized SQL. The repository starts with exactly one `InitialCreate` migration: there are no installed libraries to upgrade and no automatic upgrade path for pre-release development catalogs. Create a fresh library directory for development. Keep an old catalog with its original app if its data matters; **the album database is not disposable**. Albums and memberships cannot be reconstructed from MKV metadata. Initialization never deletes, stamps or recreates an unsupported database, and never modifies MKVs.
+
+Restore the pinned local tool before working on schema changes:
+
+```sh
+dotnet tool restore
+```
+
+Edit `LibraryDbContext` mappings, then generate and review the migration, designer and snapshot together (use an absolute scratch path on your machine):
+
+```sh
+dotnet ef migrations add DescribeTheChange --project src/HomeVideoLibrary.Infrastructure --output-dir Migrations -- --database-path /tmp/hvl-schema-development.sqlite3
+dotnet ef migrations has-pending-model-changes --project src/HomeVideoLibrary.Infrastructure -- --database-path /tmp/hvl-schema-development.sqlite3
+```
+
+The factory requires an explicit absolute database path and never selects a user's library by default. Migration generation does not initialize that path. Do not use `EnsureCreated`, manual schema SQL, `user_version`, or hand-maintained schema versions. Keep the model, generated migrations and snapshot in sync; the catalog migration tests also check for pending model differences. Initialization uses `MigrateAsync` without an enclosing caller transaction, applies local WAL or network DELETE journal policy before migration work and reapplies it afterward. Empty EF bookkeeping left by an interrupted first migration is retryable; an occupied EF migration lock is reported without deleting it or waiting indefinitely. Preserve that database for investigation or create a fresh development library. See [the accepted scope and verification](docs/ef-core-migration-spec.md).
