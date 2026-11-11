@@ -24,36 +24,21 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
 
     /// <summary>Creates the catalog using EF migrations. Pre-release catalogs without valid EF history must be
     /// opened with their original application; they are never upgraded, repaired or discarded here.</summary>
-    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
-        InitializeAsync(TimeSpan.FromSeconds(30), cancellationToken);
-
-    // Keep the deadline injectable inside the assembly so lock-race tests need not wait 30 seconds.
-    internal async Task InitializeAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
-        try
-        {
-            await using var context = new LibraryDbContext(LibraryDbContext.Options(Paths.DatabasePath));
-            await ValidateHistoryAsync(context, deadline.Token);
-            deadline.Token.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Paths.RootDirectory);
-            Directory.CreateDirectory(Paths.VideosDirectory);
-            Directory.CreateDirectory(Paths.CacheDirectory);
-            await using var connection = await OpenAsync(deadline.Token);
-            context.Database.SetDbConnection(connection, contextOwnsConnection: false);
-            await SetJournalModeAsync(connection, deadline.Token);
-            await context.Database.MigrateAsync(deadline.Token);
-            // SQLite's EF database creator can enable WAL. Restore the actual volume policy after migration.
-            await SetJournalModeAsync(connection, deadline.Token);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            throw new TimeoutException("Catalog initialization timed out while waiting for or applying EF migrations. " +
-                "Close other applications or EF tools using this library, then retry. " +
-                "If the migration lock remains, preserve the database for investigation; do not delete its lock or catalog.", exception);
-        }
+        await using var context = new LibraryDbContext(LibraryDbContext.Options(Paths.DatabasePath));
+        await ValidateHistoryAsync(context, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.CreateDirectory(Paths.RootDirectory);
+        Directory.CreateDirectory(Paths.VideosDirectory);
+        Directory.CreateDirectory(Paths.CacheDirectory);
+        await using var connection = await OpenAsync(cancellationToken);
+        context.Database.SetDbConnection(connection, contextOwnsConnection: false);
+        await SetJournalModeAsync(connection, cancellationToken);
+        await context.Database.MigrateAsync(cancellationToken);
+        // SQLite's EF database creator can enable WAL. Restore the actual volume policy after migration.
+        await SetJournalModeAsync(connection, cancellationToken);
     }
 
     private async Task ValidateHistoryAsync(LibraryDbContext context, CancellationToken cancellationToken)
@@ -76,14 +61,6 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             "No changes were made. Open it with its original application, or create a fresh library. " +
             "Keep the original database: it contains albums and memberships that cannot be rebuilt from MKVs.";
         var hasCatalogObjects = tables.Any(name => name is not ("__EFMigrationsHistory" or "__EFMigrationsLock"));
-        if (tables.Contains("__EFMigrationsLock", StringComparer.Ordinal))
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT COUNT(*) FROM __EFMigrationsLock";
-            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) != 0)
-                throw new InvalidDataException("This catalog has an unfinished EF migration lock. No changes were made. " +
-                    "Close any other instance using it. Preserve the database for investigation, or create a fresh development library.");
-        }
         if (!tables.Contains("__EFMigrationsHistory", StringComparer.Ordinal))
         {
             if (!hasCatalogObjects) return;
@@ -99,8 +76,10 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
             while (await reader.ReadAsync(cancellationToken))
             {
                 if (reader.IsDBNull(0) || reader.IsDBNull(1) || string.IsNullOrWhiteSpace(reader.GetString(1)) ||
-                    !known.Contains(reader.GetString(0)) || !applied.Add(reader.GetString(0)))
+                    !applied.Add(reader.GetString(0)))
                     throw new InvalidDataException(unsupported);
+                if (!known.Contains(reader.GetString(0)))
+                    throw new InvalidDataException("This library requires a newer version of Home Video Library to open.");
             }
         }
         catch (SqliteException exception) { throw new InvalidDataException(unsupported, exception); }

@@ -66,39 +66,6 @@ public sealed class CatalogMigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task OccupiedMigrationLockIsRejectedWithoutWaitingOrDeletingIt()
-    {
-        var catalog = await CreateCatalogAsync(_root);
-        await ExecuteAsync(catalog.Paths, "INSERT INTO __EFMigrationsLock VALUES(1,'2024-01-01T00:00:00Z')");
-        var before = await File.ReadAllBytesAsync(catalog.Paths.DatabasePath);
-        var exception = await Assert.ThrowsAsync<InvalidDataException>(() => catalog.InitializeAsync());
-        Assert.Contains("unfinished EF migration lock", exception.Message);
-        Assert.Equal(before, await File.ReadAllBytesAsync(catalog.Paths.DatabasePath));
-    }
-
-    [Fact]
-    public async Task LockAcquiredAfterPreflightCannotWaitIndefinitely()
-    {
-        var catalog = await CreateCatalogAsync(_root);
-        var lateLock = new LibraryCatalog(catalog.Paths, _ =>
-        {
-            InsertMigrationLock(catalog.Paths);
-            return false;
-        });
-        using var stopRunawayTest = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
-            lateLock.InitializeAsync(TimeSpan.FromMilliseconds(200), stopRunawayTest.Token));
-        Assert.Contains("Close other", exception.Message);
-        Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
-        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
-        // The simulated owner releases its own lock; initialization can then be retried without leaked work.
-        await ExecuteAsync(catalog.Paths, "DELETE FROM __EFMigrationsLock WHERE Timestamp='late-lock-owner'");
-        await catalog.InitializeAsync();
-        Assert.Equal(0L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsLock"));
-        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
-    }
-
-    [Fact]
     public async Task CallerCanCancelWaitingForALockAcquiredAfterPreflight()
     {
         var catalog = await CreateCatalogAsync(_root);
@@ -109,7 +76,7 @@ public sealed class CatalogMigrationTests : IDisposable
             cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
             return false;
         });
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateLock.InitializeAsync(TimeSpan.FromSeconds(2), cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateLock.InitializeAsync(cancellation.Token));
         Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
         Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
     }
@@ -211,7 +178,8 @@ public sealed class CatalogMigrationTests : IDisposable
         var catalog = await CreateCatalogAsync(_root);
         await ExecuteAsync(catalog.Paths, $"INSERT INTO __EFMigrationsHistory VALUES('{migration}','10.0.14')");
         var before = await File.ReadAllBytesAsync(catalog.Paths.DatabasePath);
-        await Assert.ThrowsAsync<InvalidDataException>(() => catalog.InitializeAsync());
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() => catalog.InitializeAsync());
+        Assert.Equal("This library requires a newer version of Home Video Library to open.", exception.Message);
         Assert.Equal(before, await File.ReadAllBytesAsync(catalog.Paths.DatabasePath));
     }
 
