@@ -24,20 +24,36 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
 
     /// <summary>Creates the catalog using EF migrations. Pre-release catalogs without valid EF history must be
     /// opened with their original application; they are never upgraded, repaired or discarded here.</summary>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        InitializeAsync(TimeSpan.FromSeconds(30), cancellationToken);
+
+    // Keep the deadline injectable inside the assembly so lock-race tests need not wait 30 seconds.
+    internal async Task InitializeAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var context = new LibraryDbContext(LibraryDbContext.Options(Paths.DatabasePath));
-        await ValidateHistoryAsync(context, cancellationToken);
-        Directory.CreateDirectory(Paths.RootDirectory);
-        Directory.CreateDirectory(Paths.VideosDirectory);
-        Directory.CreateDirectory(Paths.CacheDirectory);
-        await using var connection = await OpenAsync(cancellationToken);
-        context.Database.SetDbConnection(connection, contextOwnsConnection: false);
-        await SetJournalModeAsync(connection, cancellationToken);
-        await context.Database.MigrateAsync(cancellationToken);
-        // SQLite's EF database creator can enable WAL. Restore the actual volume policy after migration.
-        await SetJournalModeAsync(connection, cancellationToken);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            await using var context = new LibraryDbContext(LibraryDbContext.Options(Paths.DatabasePath));
+            await ValidateHistoryAsync(context, deadline.Token);
+            deadline.Token.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Paths.RootDirectory);
+            Directory.CreateDirectory(Paths.VideosDirectory);
+            Directory.CreateDirectory(Paths.CacheDirectory);
+            await using var connection = await OpenAsync(deadline.Token);
+            context.Database.SetDbConnection(connection, contextOwnsConnection: false);
+            await SetJournalModeAsync(connection, deadline.Token);
+            await context.Database.MigrateAsync(deadline.Token);
+            // SQLite's EF database creator can enable WAL. Restore the actual volume policy after migration.
+            await SetJournalModeAsync(connection, deadline.Token);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Catalog initialization timed out while waiting for or applying EF migrations. " +
+                "Close other applications or EF tools using this library, then retry. " +
+                "If the migration lock remains, preserve the database for investigation; do not delete its lock or catalog.", exception);
+        }
     }
 
     private async Task ValidateHistoryAsync(LibraryDbContext context, CancellationToken cancellationToken)
@@ -51,7 +67,7 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         var tables = new List<string>();
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'";
+            command.CommandText = "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'";
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) tables.Add(reader.GetString(0));
         }

@@ -76,6 +76,55 @@ public sealed class CatalogMigrationTests : IDisposable
         Assert.Equal(before, await File.ReadAllBytesAsync(catalog.Paths.DatabasePath));
     }
 
+    [Fact]
+    public async Task LockAcquiredAfterPreflightCannotWaitIndefinitely()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        var lateLock = new LibraryCatalog(catalog.Paths, _ =>
+        {
+            InsertMigrationLock(catalog.Paths);
+            return false;
+        });
+        using var stopRunawayTest = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            lateLock.InitializeAsync(TimeSpan.FromMilliseconds(200), stopRunawayTest.Token));
+        Assert.Contains("Close other", exception.Message);
+        Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
+        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        // The simulated owner releases its own lock; initialization can then be retried without leaked work.
+        await ExecuteAsync(catalog.Paths, "DELETE FROM __EFMigrationsLock WHERE Timestamp='late-lock-owner'");
+        await catalog.InitializeAsync();
+        Assert.Equal(0L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsLock"));
+        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+    }
+
+    [Fact]
+    public async Task CallerCanCancelWaitingForALockAcquiredAfterPreflight()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        using var cancellation = new CancellationTokenSource();
+        var lateLock = new LibraryCatalog(catalog.Paths, _ =>
+        {
+            InsertMigrationLock(catalog.Paths);
+            cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
+            return false;
+        });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateLock.InitializeAsync(TimeSpan.FromSeconds(2), cancellation.Token));
+        Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
+        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+    }
+
+    // The volume callback runs after read-only preflight, so a separate connection can deterministically model
+    // another EF tool acquiring its persistent lock in that gap, without production hooks or thread timing races.
+    private static void InsertMigrationLock(LibraryPaths paths)
+    {
+        using var connection = new SqliteConnection($"Data Source={paths.DatabasePath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO __EFMigrationsLock VALUES(1,'late-lock-owner')";
+        command.ExecuteNonQuery();
+    }
+
     [Theory]
     [InlineData(true, "delete")]
     [InlineData(false, "wal")]
@@ -116,13 +165,15 @@ public sealed class CatalogMigrationTests : IDisposable
         Assert.False(Directory.Exists(paths.CacheDirectory));
     }
 
-    [Fact]
-    public async Task OpeningRejectedCatalogDoesNotRecoverPublicationsOrSweepScratch()
+    [Theory]
+    [InlineData("albums")]
+    [InlineData("sqliteBackup")]
+    public async Task OpeningRejectedCatalogDoesNotRecoverPublicationsOrSweepScratch(string table)
     {
         var paths = new LibraryPaths(_root);
         Directory.CreateDirectory(paths.VideosDirectory);
         Directory.CreateDirectory(paths.ScratchDirectory);
-        await ExecuteAsync(paths, "CREATE TABLE albums(id TEXT PRIMARY KEY,name TEXT); INSERT INTO albums VALUES('kept','Family');");
+        await ExecuteAsync(paths, $"CREATE TABLE {table}(id TEXT PRIMARY KEY,name TEXT); INSERT INTO {table} VALUES('kept','Family');");
         var pending = paths.PendingVideoPath(Guid.NewGuid());
         await File.WriteAllTextAsync(pending, "pending media");
         var scratch = Path.Combine(paths.ScratchDirectory, "old.mkv");
