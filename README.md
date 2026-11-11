@@ -1,5 +1,9 @@
 # Longplay — Home Video Library
 
+![Longplay (Home Video Library): a chronological shelf of VHS tapes, handwritten labels, and family albums.](docs/images/library.svg)
+
+*A familiar shelf for your home movies. Sample library shown.*
+
 **A capable video library manager. A collection that stays yours.**
 
 Longplay helps you organize, annotate, search, trim, merge, and watch your home videos. It brings digitized VHS and Digital8 tapes, long family recordings, and everyday clips into one browsable collection, ready to watch with family.
@@ -13,10 +17,6 @@ Longplay builds on Matroska (MKV), an open video container that holds video, aud
 SQLite keeps track of file locations and album membership, along with a rebuildable metadata cache. It's a standard database you can inspect or query with ordinary SQLite tools. Keep it alongside your videos to preserve your albums; the descriptions, chapters, tags, and thumbnails remain in the MKVs themselves.
 
 Longplay provides the browsing, playback, search, and editing tools around that collection. The files and database remain accessible if you choose a different workflow later.
-
-![Longplay (Home Video Library): a chronological shelf of VHS tapes, handwritten labels, and family albums.](docs/images/library.svg)
-
-*A familiar shelf for your home movies. Sample library shown.*
 
 ## Organize the collection. Find the moment.
 
