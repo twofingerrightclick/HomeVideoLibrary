@@ -9,6 +9,10 @@ public sealed class LibVlcPlayback : IVideoPlayback
     private static readonly Lock EngineLock = new();
     // One engine for the app's lifetime: creating LibVLC scans every plugin, which made each editor open slow.
     private static LibVLC? _engine;
+    private static bool _nativeResolverInstalled;
+    private static string? _nativeLibraryPath;
+    // Like the shared engine, the resolved library stays loaded for the application's lifetime.
+    private static IntPtr _nativeLibraryHandle;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private MediaPlayer? _player;
     private Media? _media;
@@ -79,8 +83,7 @@ public sealed class LibVlcPlayback : IVideoPlayback
         lock (EngineLock)
         {
             if (_engine is not null) return _engine;
-            var directory = Environment.GetEnvironmentVariable("HOME_VIDEO_LIBRARY_LIBVLC");
-            if (string.IsNullOrWhiteSpace(directory)) directory = FindInstalledVlc();
+            var directory = FindInstalledVlc(AppContext.BaseDirectory, Environment.GetEnvironmentVariable("HOME_VIDEO_LIBRARY_LIBVLC"));
             if (OperatingSystem.IsMacOS() && directory is not null && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VLC_PLUGIN_PATH")))
             {
                 var plugins = new[] { Path.Combine(directory, "plugins"), Path.Combine(directory, "..", "plugins"), Path.Combine(directory, "vlc", "plugins") }
@@ -90,16 +93,43 @@ public sealed class LibVlcPlayback : IVideoPlayback
                 if (plugins is not null && SetNativeEnvironment("VLC_PLUGIN_PATH", plugins, 1) != 0)
                     throw new InvalidOperationException("Could not configure the LibVLC plugin directory.");
             }
+            if (OperatingSystem.IsMacOS() && directory is not null && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VLC_DATA_PATH")))
+            {
+                var share = Path.GetFullPath(Path.Combine(directory, "..", "share"));
+                if (Directory.Exists(share) && SetNativeEnvironment("VLC_DATA_PATH", share, 1) != 0)
+                    throw new InvalidOperationException("Could not configure the LibVLC data directory.");
+            }
+            if (OperatingSystem.IsMacOS() && directory is not null)
+            {
+                _nativeLibraryPath = Path.Combine(directory, "libvlc.dylib");
+                if (!_nativeResolverInstalled)
+                {
+                    // Core.Initialize preloads dylibs, but .NET's short-name P/Invokes do not always
+                    // match a relocated dylib's install name. Bind them to the selected runtime explicitly.
+                    NativeLibrary.SetDllImportResolver(typeof(LibVLC).Assembly, (name, _, _) =>
+                    {
+                        if (name != "libvlc") return IntPtr.Zero;
+                        if (_nativeLibraryHandle == IntPtr.Zero) _nativeLibraryHandle = NativeLibrary.Load(_nativeLibraryPath!);
+                        return _nativeLibraryHandle;
+                    });
+                    _nativeResolverInstalled = true;
+                }
+            }
             LibVLCSharp.Shared.Core.Initialize(directory);
             return _engine = new LibVLC("--no-video-title-show", "--no-metadata-network-access");
         }
     }
 
-    /// <summary>The library folder of a VLC desktop install, used when no explicit runtime path is configured.</summary>
-    private static string? FindInstalledVlc()
+    /// <summary>An explicit runtime overrides the bundled engine; source builds can use an installed VLC.</summary>
+    internal static string? FindInstalledVlc(string applicationDirectory, string? explicitDirectory = null)
     {
+        if (!string.IsNullOrWhiteSpace(explicitDirectory)) return explicitDirectory;
         if (OperatingSystem.IsMacOS())
+        {
+            var bundled = Path.GetFullPath(Path.Combine(applicationDirectory, "..", "Resources", "Native", "vlc", "lib"));
+            if (File.Exists(Path.Combine(bundled, "libvlc.dylib"))) return bundled;
             return Directory.Exists("/Applications/VLC.app/Contents/MacOS/lib") ? "/Applications/VLC.app/Contents/MacOS/lib" : null;
+        }
         if (OperatingSystem.IsWindows())
             return new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }
                 .Select(folder => Path.Combine(Environment.GetFolderPath(folder), "VideoLAN", "VLC"))

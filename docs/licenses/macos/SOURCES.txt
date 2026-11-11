@@ -1,0 +1,17 @@
+Authoritative upstream license texts collected for the local macOS bundle.
+These notices are not corresponding-source archives or a complete license audit.
+
+VLC-COPYING.txt
+https://raw.githubusercontent.com/videolan/vlc/3.0.24/COPYING
+
+VLC-COPYING.LIB.txt
+https://raw.githubusercontent.com/videolan/vlc/3.0.24/COPYING.LIB
+
+LGPL-2.1.txt
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
+LGPL-3.0.txt
+https://www.gnu.org/licenses/lgpl-3.0.txt
+
+GPL-3.0.txt
+https://www.gnu.org/licenses/gpl-3.0.txt

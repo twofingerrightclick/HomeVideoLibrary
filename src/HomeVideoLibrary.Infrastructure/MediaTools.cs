@@ -20,7 +20,14 @@ public sealed partial record MediaTools(string Ffmpeg, string Ffprobe)
     public string MkvExtract { get; init; } = Find("mkvextract");
     public string MkvMerge { get; init; } = Find("mkvmerge");
     public string MkvPropEdit { get; init; } = Find("mkvpropedit");
-    public static MediaTools Discover() => new(Find("ffmpeg"), Find("ffprobe"));
+    public static MediaTools Discover() => Discover(AppContext.BaseDirectory);
+
+    internal static MediaTools Discover(string applicationDirectory) => new(Find("ffmpeg", applicationDirectory), Find("ffprobe", applicationDirectory))
+    {
+        MkvExtract = Find("mkvextract", applicationDirectory),
+        MkvMerge = Find("mkvmerge", applicationDirectory),
+        MkvPropEdit = Find("mkvpropedit", applicationDirectory),
+    };
 
     /// <summary>The tools that do not answer a version query within 10 s, by file name, or that are older than the
     /// minimum, with what is needed and found (for example "ffmpeg (needs 5.1 or newer; found 4.4)"). A tool that passed once is not
@@ -68,11 +75,15 @@ public sealed partial record MediaTools(string Ffmpeg, string Ffprobe)
     [GeneratedRegex(@"(?:version n?|\bv)(\d+)\.(\d+)")]
     private static partial Regex VersionPattern();
 
-    private static string Find(string name)
+    private static string Find(string name, string? applicationDirectory = null)
     {
-        // GUI apps on macOS do not normally inherit Homebrew's PATH.
         if (OperatingSystem.IsMacOS())
         {
+            // A Finder launch has a minimal PATH. Resolve from the executable, never the working directory,
+            // so the self-contained bundle keeps working when moved or renamed.
+            var bundled = Path.GetFullPath(Path.Combine(applicationDirectory ?? AppContext.BaseDirectory, "..", "Resources", "Native", "bin", name));
+            if (File.Exists(bundled)) return bundled;
+            // Source builds can still use the developer's Homebrew installation.
             foreach (var root in new[] { "/opt/homebrew/bin", "/usr/local/bin" })
             {
                 var candidate = Path.Combine(root, name);

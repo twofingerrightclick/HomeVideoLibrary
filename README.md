@@ -41,7 +41,9 @@ Import and editing jobs run in the background, so you can keep browsing while yo
 
 Built with **C#, Avalonia, and .NET 10** for **macOS, Windows, and Linux**. Native playback has been smoke-tested on macOS ARM64; Windows and Linux integration still needs verification.
 
-You'll need the .NET 10 SDK, FFmpeg/ffprobe, MKVToolNix, and a matching LibVLC 3 runtime. See the [development guide](DEVELOPMENT.md#build-and-run) for platform setup and runtime configuration.
+For an all-in-one macOS `.app`, run `bash scripts/package-macos.sh` on Apple Silicon. The package targets macOS 15 or later and includes .NET, FFmpeg, MKVToolNix and native LibVLC; users do not install Homebrew, VLC or .NET. See [macOS packaging](DEVELOPMENT.md#macos-packaging) for build prerequisites and the remaining public-release steps.
+
+To build from source, you'll need the .NET 10 SDK, FFmpeg/ffprobe, MKVToolNix, and a matching LibVLC 3 runtime. See the [development guide](DEVELOPMENT.md#build-and-run) for platform setup and runtime configuration.
 
 ```sh
 dotnet restore HomeVideoLibrary.sln

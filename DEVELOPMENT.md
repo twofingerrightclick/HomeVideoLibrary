@@ -29,6 +29,45 @@ Import probes the source and skips it when the same file (by a content fingerpri
 
 The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.cache/` for disposable data (scratch files, extracted previews and the shelf's hover strips). SQLite owns catalog paths and albums; the library reads each video's title, description, tags and chapters from its MKV into an in-memory model that search and the shelf use, so everything but paths and albums is rebuildable from the MKVs. **Settings** shows a per-file error list and has **REFRESH** (re-read changed files) and **REBUILD FROM MKVS** (re-read every file). Opening a library also refreshes changed files in the background.
 
+## macOS packaging
+
+Build an all-in-one Finder-launchable `.app` on an **Apple Silicon Mac**, targeting **macOS 15.0 or later**:
+
+```sh
+bash scripts/package-macos.sh                    # osx-arm64, version 0.1.1
+bash scripts/package-macos.sh osx-arm64 0.1.2
+```
+
+Build prerequisites are the .NET 10 SDK, Python 3.9 or later, Apple's command-line tools, `/opt/homebrew/bin/{ffmpeg,ffprobe,mkvmerge,mkvextract,mkvpropedit}`, and VLC **3** at `/Applications/VLC.app`. The source-only helper `bash scripts/install-macos-dependencies.command` can install the media dependencies on the build machine. The package does not include or run that installer. Intel and universal packages are not supported.
+
+The output is `artifacts/macos/HomeVideoLibrary-<version>-osx-arm64/`, plus a ZIP preserving the bundle and executable permissions. Existing outputs are never overwritten. Drag `Home Video Library.app` into Applications or another folder; users need **no Homebrew, VLC, .NET runtime, or SDK installation**.
+
+| Dependency | How this package supplies it |
+| --- | --- |
+| .NET runtime | Self-contained publish; native runtime and managed libraries inside the app |
+| Avalonia, LibVLCSharp, SQLite and other NuGet dependencies | Included in publish output; available notices and versions in `Contents/Resources/ManagedNotices` |
+| FFmpeg + ffprobe | Executables and transitive dylibs in `Contents/Resources/Native` |
+| MKVToolNix | Three command-line tools, dylibs, QtCore framework/resources and translations |
+| Native LibVLC 3 | Engine, full plugins/data tree, and referenced frameworks; no VLC GUI installation needed |
+
+`MediaTools` checks `Contents/Resources/Native/bin` relative to the executable before developer Homebrew paths or PATH. Playback honors `HOME_VIDEO_LIBRARY_LIBVLC` first, then the bundled `Native/vlc/lib`, then a system VLC installation. It configures matching plugin/data paths unless the corresponding startup `VLC_PLUGIN_PATH` or `VLC_DATA_PATH` is explicit. For ordinary packaged use, leave those overrides unset. Discovery does not depend on the current working directory or app filename.
+
+`scripts/bundle-macos-native.py` recursively inspects Mach-O load commands, copies the dependency closure, preserves framework/resources and VLC plugins/share, thins universal dependencies to arm64, rewrites non-system load references to relative bundle paths, removes build-machine rpaths and stale plugin caches, and signs native files. It rejects missing arm64 slices, deployment targets above 15.0, unresolved or external non-system dependencies, and broken/escaping symlinks. The final audit covers the .NET publish output too. It does not change the installed Homebrew/VLC files.
+
+Prepared native trees are cached at `artifacts/macos/native-cache/<content-hash>/`. Input hashes cover the exact native binaries, copied resource trees, formula/license metadata, notices and bundling script; cache reuse verifies every output file's hash, mode and symlink target. Upgrading dependencies or changing the bundling script invalidates the cache. Timestamps alone are never trusted. Normal source builds use installed developer dependencies and do not need repackaging. To inspect an existing package:
+
+```sh
+python3 scripts/bundle-macos-native.py '/path/Home Video Library.app' --audit
+codesign --verify --deep --strict '/path/Home Video Library.app'
+bash scripts/smoke-test-macos-package.sh '/path/Home Video Library.app'
+```
+
+The smoke test copies and renames the app into a temporary folder, compiles a small harness against the packaged assemblies, then runs it with the **packaged .NET runtime**, temporary working files and a system-only PATH. It uses an explicit temporary catalog and never loads user library settings; setting HOME alone does not redirect .NET's macOS LocalApplicationData folder. It checks the application's actual tool discovery, generates H.264/AAC media, imports it without changing the source, probes/remuxes MKV, round-trips metadata/chapters/JPEGs, and decodes video through the application's LibVLC initializer. It verifies loaded LibVLC/plugin paths from dyld. The shipping app and installed dependencies are untouched; the SDK is needed only to build the test harness.
+
+The manifest at `Contents/Resources/Native/manifest.json` records versions, original binary hashes/load paths and component provenance. Available Homebrew notices, exact formulas, installation receipts, SBOMs and additional upstream license texts accompany it. See [the third-party notice](docs/macos-third-party.txt): this is **not yet a completed redistribution compliance package**. Before distributing to others, assemble exact corresponding sources/build scripts/patches and complete notices and LGPL replacement/relinking information. The FFmpeg build is GPLv3-or-later; the VLC plugins tree must not be described as entirely LGPL. Upstream URLs and version manifests alone do not meet source-delivery obligations.
+
+The script signs every nested Mach-O and framework, then the app, with an **ad-hoc local signature**. This is a local/test build, not a Gatekeeper-ready public release. For public distribution, use a bundle identifier you control, arrange native code in Apple's standard signing locations as needed (the current local package keeps the native tree in Resources), sign with **Developer ID Application**, enable the hardened runtime with the required .NET entitlements, notarize with `xcrun notarytool`, and staple Apple's ticket. Validate on a clean macOS 15 Mac, including launching from Finder, importing, playback, metadata saves and editing. See [Avalonia's signing guide](https://docs.avaloniaui.net/docs/deployment/macos). That certificate-dependent release workflow is not automated here. Self-contained apps also need rebuilding to receive .NET and native dependency security patches.
+
 ## The library
 
 The window has a collapsible drawer (search, All videos, albums, Settings), a toolbar, a selection bar that appears with a selection, and the shelf. The shelf is one virtualized column of VHS spines, one per row in a centered stack, newest first, with a month divider before the first tape of each month and a pill pinned at the top that shows the month at the top of the viewport. Each spine shows the video's description or title, falling back to the imported filename. Click a spine to open the video; check its box, or Cmd/Ctrl- or Shift-click, to select. Arrow keys move between tapes, Space toggles the focused tape and Enter opens it. Layout, sizes and the full shortcut table are in [DESIGN.md](DESIGN.md).
@@ -70,7 +109,7 @@ Nothing is written until **SAVE** (Cmd/Ctrl+S): it embeds the edited text, chapt
 Playback uses the embedded **LibVLC 3 native engine** through LibVLCSharp; installing or launching the VLC desktop app is not a product requirement. Deployments can bundle a matching native runtime and its plugins. For local development:
 
 - Set `HOME_VIDEO_LIBRARY_LIBVLC` to the native library directory for the app's architecture. On Windows this folder contains `libvlc.dll`, `libvlccore.dll`, and a `plugins` directory; distribute the native runtime alongside the app or point to an existing matching runtime.
-- On macOS, an explicit runtime path takes precedence. Otherwise the app can use `/Applications/VLC.app/Contents/MacOS/lib` when present. It discovers the matching sibling/nested plugins directory before initializing native LibVLC. Existing startup `VLC_PLUGIN_PATH` values are respected.
+- On macOS, an explicit runtime path takes precedence. Otherwise the app uses its bundled `Contents/Resources/Native/vlc/lib`, then `/Applications/VLC.app/Contents/MacOS/lib` when present. It discovers the matching sibling/nested plugins directory before initializing native LibVLC. Existing startup `VLC_PLUGIN_PATH` values are respected.
 - On Linux, install your distribution's LibVLC 3 engine and video/audio plugins, or set the explicit native directory for a bundled runtime. `VLC_PLUGIN_PATH` can identify a nonstandard plugin directory.
 
 Missing/incompatible runtimes produce an actionable message in the player; importing and embedded metadata remain available. See [VideoLAN's LibVLCSharp requirements](https://docs.videolan.me/libvlcsharp/docs/getting_started.html) for native deployment requirements. Native video occupies its own surface, so Avalonia content cannot draw over it; the fullscreen controls and the scrub bar's tooltip are native windows (see [DESIGN.md](DESIGN.md)), following the [Avalonia integration guidance](https://github.com/videolan/libvlcsharp/blob/3.x/src/LibVLCSharp.Avalonia/README.md).
@@ -95,7 +134,7 @@ Run focused editing tests with `dotnet test tests/HomeVideoLibrary.Tests --filte
 
 ## Embedded metadata service
 
-Install MKVToolNix (`brew install mkvtoolnix` on macOS) for the metadata service. Its tools are discovered on PATH or in the standard macOS Homebrew directories; `MediaTools` also allows explicit executable paths.
+Install MKVToolNix (`brew install mkvtoolnix` on macOS) for the metadata service. Packaged macOS builds include its tools; source builds discover them on PATH or in the standard macOS Homebrew directories; `MediaTools` also allows explicit executable paths.
 
 `MatroskaMetadataService(catalog, tools)` implements `IVideoMetadataService`:
 

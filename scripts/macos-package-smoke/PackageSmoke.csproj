@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>PackageSmoke</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <UseAppHost>true</UseAppHost>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="HomeVideoLibrary" HintPath="$(BundleMacOS)/HomeVideoLibrary.dll" />
+    <Reference Include="HomeVideoLibrary.Core" HintPath="$(BundleMacOS)/HomeVideoLibrary.Core.dll" />
+    <Reference Include="HomeVideoLibrary.Infrastructure" HintPath="$(BundleMacOS)/HomeVideoLibrary.Infrastructure.dll" />
+    <Reference Include="LibVLCSharp" HintPath="$(BundleMacOS)/LibVLCSharp.dll" />
+  </ItemGroup>
+</Project>

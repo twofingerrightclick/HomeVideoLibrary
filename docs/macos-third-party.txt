@@ -1,0 +1,47 @@
+Home Video Library — native component notices (local build)
+
+This package includes FFmpeg/ffprobe, MKVToolNix, LibVLC 3 and VLC plugins,
+QtCore, and their native dependencies. It also includes the .NET runtime,
+Avalonia, LibVLCSharp, SQLite, and other NuGet dependencies.
+
+Contents/Resources/Native/manifest.json records native versions, original
+paths and SHA-256 hashes, original load commands, and component provenance.
+Licenses/Homebrew contains available installed copyright/license files,
+the exact Homebrew formula, installation receipt and source/bottle SBOM
+for each included Homebrew component. Licenses/Upstream contains additional
+upstream license texts and their source URLs. The package also retains
+the .NET publish output's notices and a managed-package inventory.
+
+FFmpeg in this build enables GPL and version3 and is GPL-3.0-or-later.
+MKVToolNix is GPL-2.0-or-later. LibVLC is LGPL-2.1-or-later, but the full
+VLC plugins/data tree includes additional GPL and third-party components;
+do not treat that complete tree as LGPL-only. QtCore is included as a
+dynamic dependency of the MKV command-line tools. Its available open-source
+licensing includes LGPLv3, subject to its terms. Consult each component's
+exact notices and build configuration.
+
+This is a locally assembled test build, NOT a completed public-release
+license compliance package. Before distributing binaries to others:
+
+- Assemble and provide corresponding source for the exact copyleft builds,
+  including bundled/static codec contributions, build scripts, configuration,
+  Homebrew patches and any modifications, using an applicable license's
+  permitted source-delivery mechanism. URLs and hashes alone are insufficient.
+- Complete copyright notices and license texts for all components, including
+  code linked statically into VLC plugins and Qt and the NuGet dependencies.
+- Preserve applicable LGPL replacement/relinking and reverse-engineering
+  rights, with usable instructions and installation information as required.
+- Review the complete combination and chosen distribution method, including
+  any codec/patent obligations, before publishing a download.
+
+The packaging changes thin universal binaries to arm64, rewrite native load
+paths and identifiers, remove original signatures/plugin caches, and apply
+local ad-hoc signatures. Source code is not changed. The bundling scripts
+are in the project's scripts directory and must accompany a source release.
+
+Upstream guidance:
+https://ffmpeg.org/legal.html
+https://mkvtoolnix.download/
+https://www.videolan.org/legal.html
+https://docs.videolan.me/vlc-user/desktop/3.0/en/support/faq/legalconcerns.html
+https://www.qt.io/development/open-source-lgpl-obligations

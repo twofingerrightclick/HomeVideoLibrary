@@ -1,0 +1,22 @@
+Home Video Library — macOS installation
+
+Requires an Apple Silicon Mac (M1 or later) running macOS 15 or later.
+Intel Macs are not supported by this package.
+
+1. Extract the ZIP.
+2. Drag Home Video Library.app to Applications (or another folder you own).
+3. Open the app and create or open a video library.
+
+Everything needed for importing, editing and playback is included in the
+app: .NET, FFmpeg/ffprobe, MKVToolNix, LibVLC and their native dependencies.
+You do not need Homebrew, the VLC desktop application, or a .NET installation.
+Keep the app bundle intact when moving it. Your library remains separate.
+
+This is a local test build with an ad-hoc signature, not a notarized public
+release. macOS may block a downloaded copy because its developer identity
+has not been verified. Do not disable Gatekeeper globally. A public release
+still needs Developer ID signing, notarization and clean-machine validation.
+
+Third-party component versions and available notices are inside the app in
+Contents/Resources/Native and Contents/Resources/ManagedNotices. Read
+THIRD PARTY.txt before redistributing this local build.
