@@ -1,6 +1,8 @@
 # Development guide
 
-Build, run, test, and understand Home Video Library. For a product overview, see the [README](README.md).
+Build, run, test, and understand Longplay, installed as **Home Video Library**. For a product overview, see the [README](README.md).
+
+Longplay is the project brand. Keep **Home Video Library** as the installed app name, window title, and launcher label. Solution names, namespaces, executable names, bundle identifiers, and library paths continue to use `HomeVideoLibrary`.
 
 ## Build and run
 

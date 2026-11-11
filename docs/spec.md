@@ -1,8 +1,8 @@
-# Home Video Library
+# Longplay — Home Video Library
 
 ## Product
 
-A cross-platform C# Avalonia desktop app named **Home Video Library**, with a dark modern iPhoto-inspired layout and a distinctive chronological shelf of VHS tape spines.
+A cross-platform C# Avalonia desktop app branded **Longplay**, installed as **Home Video Library**, with a dark modern iPhoto-inspired layout and a distinctive chronological shelf of VHS tape spines. Keep Home Video Library as the app launcher label and window title so people can find it by purpose. Technical identifiers and library paths remain `HomeVideoLibrary`.
 
 ## Build sequence
 

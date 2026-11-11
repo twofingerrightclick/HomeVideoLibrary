@@ -1,11 +1,11 @@
 ---
-name: Home Video Library
+name: Longplay — Home Video Library
 description: A shelf of handwritten VHS memories, operated like an 80s/90s VCR.
 tokens: src/HomeVideoLibrary.UI/Themes/Tokens.axaml
 components: src/HomeVideoLibrary.UI (gallery: src/HomeVideoLibrary.Gallery)
 ---
 
-# Design System: Home Video Library
+# Design System: Longplay — Home Video Library
 
 ## Overview
 

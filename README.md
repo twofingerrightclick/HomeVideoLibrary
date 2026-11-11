@@ -1,22 +1,24 @@
-# Home Video Library
+# Longplay — Home Video Library
 
-**Your home movies. Their stories. Together in one file.**
+**A capable video library manager. A collection that stays yours.**
 
-A cross-platform desktop library for the videos you want to keep. Turn digitized tapes, long family recordings, and everyday clips into a collection you can browse, watch, and remember.
+Longplay helps you organize, annotate, search, trim, merge, and watch your home videos. It brings digitized VHS and Digital8 tapes, long family recordings, and everyday clips into one browsable collection, ready to watch with family.
 
-![Home Video Library: a chronological shelf of VHS tapes, handwritten labels, and family albums.](docs/images/library.svg)
+The library is yours independently of the app: **ordinary MKV files in a folder you choose, with a SQLite database for the catalog and albums.** Titles, descriptions, dates, tags, chapters, and selected thumbnails live inside the videos. You can work with the files using other tools or take them to another platform without exporting them from Longplay.
+
+## Your files, with a library around them
+
+Longplay builds on Matroska (MKV), an open video container that holds video, audio, chapters, tags, and attachments together. Add context once and keep it with the recording when you copy it, back it up, or share it. Other tools can read the embedded metadata according to their support for Matroska tags and attachments.
+
+SQLite keeps track of file locations and album membership, along with a rebuildable metadata cache. It's a standard database you can inspect or query with ordinary SQLite tools. Keep it alongside your videos to preserve your albums; the descriptions, chapters, tags, and thumbnails remain in the MKVs themselves.
+
+Longplay provides the browsing, playback, search, and editing tools around that collection. The files and database remain accessible if you choose a different workflow later.
+
+![Longplay (Home Video Library): a chronological shelf of VHS tapes, handwritten labels, and family albums.](docs/images/library.svg)
 
 *A familiar shelf for your home movies. Sample library shown.*
 
-## The video is the source of truth
-
-A home movie deserves more than a filename. Record who was there, what happened, and the moments you want to find again—right inside the video.
-
-Home Video Library stores titles, descriptions, recording dates, tags, chapters, and chosen thumbnails **inside each MKV file**. Those memories travel with the video when you copy it, move it to another drive, or share it with family. No separate sidecar files to keep together.
-
-The library database tracks file locations and albums, plus a disposable metadata cache. The MKVs hold the stories; albums stay with the library.
-
-## A shelf full of memories
+## Organize the collection. Find the moment.
 
 - **Browse a shelf of VHS tapes.** Handwritten-style labels, a chronological stack, and month markers make a growing collection feel familiar. Move across a tape to preview its contents.
 - **Watch and mark the moments.** Play a long recording, press **M**, and give a chapter a name, description, and tags. Jump straight back to birthdays, first steps, or a story you want to hear again.
@@ -25,7 +27,7 @@ The library database tracks file locations and albums, plus a disposable metadat
 - **Make albums.** Collect family favorites, holidays, or a year's worth of recordings without duplicating the videos.
 - **Keep the parts you want.** Trim a recording, split a tape, or merge clips into a new video. The originals stay intact, and chapters and chosen frames follow the new timeline.
 
-## Mark the moment. Keep the story.
+## Add chapters while you watch
 
 ![A home movie playing beside its chapter list, with a new chapter marked at the playhead using the M shortcut.](docs/images/chapters.svg)
 
@@ -38,6 +40,8 @@ Choose where your library lives, then import your videos. Original source files 
 Import and editing jobs run in the background, so you can keep browsing while your collection grows.
 
 ## Run it
+
+Longplay is installed as **Home Video Library** so it's easy to find in your app launcher.
 
 Built with **C#, Avalonia, and .NET 10** for **macOS, Windows, and Linux**. Native playback has been smoke-tested on macOS ARM64; Windows and Linux integration still needs verification.
 
