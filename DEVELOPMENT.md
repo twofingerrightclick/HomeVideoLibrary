@@ -34,13 +34,15 @@ The folder contains `library.sqlite3`, `Videos/` with unique MKV names, and `.ca
 Build an all-in-one Finder-launchable `.app` on an **Apple Silicon Mac**, targeting **macOS 15.0 or later**:
 
 ```sh
-bash scripts/package-macos.sh                    # osx-arm64, version 0.1.1
-bash scripts/package-macos.sh osx-arm64 0.1.2
+bash scripts/package-macos.sh                    # osx-arm64; automatic release/build identity
+bash scripts/package-macos.sh osx-arm64
 ```
 
 Build prerequisites are the .NET 10 SDK, Python 3.9 or later, Apple's command-line tools, `/opt/homebrew/bin/{ffmpeg,ffprobe,mkvmerge,mkvextract,mkvpropedit}`, and VLC **3** at `/Applications/VLC.app`. The source-only helper `bash scripts/install-macos-dependencies.command` can install the media dependencies on the build machine. The package does not include or run that installer. Intel and universal packages are not supported.
 
-The output is `artifacts/macos/HomeVideoLibrary-<version>-osx-arm64/`, plus a ZIP preserving the bundle and executable permissions. Existing outputs are never overwritten. Drag `Home Video Library.app` into Applications or another folder; users need **no Homebrew, VLC, .NET runtime, or SDK installation**.
+The output is `artifacts/macos/HomeVideoLibrary-<version>-build.<number>-g<revision>-osx-arm64/`, plus a ZIP preserving the bundle and executable permissions. Existing outputs are never overwritten. Drag `Home Video Library.app` into Applications or another folder; users need **no Homebrew, VLC, .NET runtime, or SDK installation**.
+
+Release versions come from the latest reachable Git tag named `vMAJOR.MINOR.PATCH`. Before the first release tag, the desktop project's `VersionPrefix` supplies the version (currently `0.1.0`). Only an intentional release changes that version: rebuilding does not. Each packaging invocation allocates a separate increasing build number in `artifacts/macos/.build-number`; retain that file between builds. CI can provide a greater `HVL_BUILD_NUMBER` (1–9999). Failed builds may leave gaps. `CFBundleShortVersionString` stores the release version, `CFBundleVersion` stores the build number, and .NET informational metadata records both the build and Git revision. `Contents/Resources/build-info.json` records the full revision, source tag, UTC build time and whether the working tree had changes. A release tag is created deliberately, never by the build script. No release tags have been created yet.
 
 | Dependency | How this package supplies it |
 | --- | --- |
