@@ -51,9 +51,9 @@
         <c:LcdCounter Value="{Binding Player.Position}" Hours="Always" Caption="TIME"/>
         <c:LcdCounter Classes="small" Value="{Binding Player.Duration}" Hours="Always" Caption="TOTAL" VerticalAlignment="Bottom"/>
       </StackPanel>
-      <c:LegendFrame Legend="M" LegendDot="{DynamicResource Vcr.Brush.Yellow}">
-        <c:RubberButton Classes="yellow" Icon="{StaticResource Vcr.Icon.Chapter}" Content="MARK"
-                        Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
+      <c:LegendFrame Legend="M" LegendDot="{DynamicResource Vcr.Brush.Legend.Dim}">
+        <c:PlasticButton BorderBrush="{DynamicResource Vcr.Brush.Legend.Dim}" Icon="{StaticResource Vcr.Icon.Moment}" Content="MOMENT"
+                        Command="{Binding AddMomentCommand}" ToolTip.Tip="Add a moment at the playhead (M); C adds a chapter"/>
       </c:LegendFrame>
       <c:LegendFrame Legend="VOL">
         <StackPanel Orientation="Horizontal" Spacing="8">

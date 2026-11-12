@@ -29,9 +29,10 @@
     <Setter Property="Cursor" Value="Hand"/>
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Deep}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
-    <Setter Property="TrackBrush" Value="{DynamicResource Vcr.Brush.Chassis.Highlight}"/>
+    <Setter Property="TrackBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
+    <Setter Property="MomentBrush" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
     <Setter Property="BufferedBrush" Value="{DynamicResource Vcr.Brush.Scrub.Buffered}"/>
-    <Setter Property="PlayedBrush" Value="{DynamicResource Vcr.Brush.Red}"/>
+    <Setter Property="PlayedBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
     <Setter Property="SegmentSheenBrush" Value="{DynamicResource Vcr.Brush.Scrub.Sheen}"/>
     <Setter Property="MarkerBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
     <Setter Property="RangeBrush" Value="{DynamicResource Vcr.Brush.Yellow}"/>
@@ -39,7 +40,7 @@
     <Setter Property="ThumbBrush" Value="{DynamicResource Vcr.Brush.Plastic}"/>
     <Setter Property="ThumbIndexBrush" Value="{DynamicResource Vcr.Brush.Red.Led}"/>
     <Setter Property="GrooveShadow" Value="{DynamicResource Vcr.Shadow.Scrub.Groove}"/>
-    <Setter Property="PlayedGlow" Value="{DynamicResource Vcr.Shadow.Scrub.Played}"/>
+    <Setter Property="PlayedGlow" Value="0 0 0 0 Transparent"/>
     <Setter Property="ThumbShadow" Value="{DynamicResource Vcr.Shadow.Cap.Raised}"/>
     <Setter Property="Transitions">
       <Transitions>

@@ -16,6 +16,24 @@ public sealed class ClipEditingTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task SplitClipsRangesAndKeepsBoundaryMomentOnlyInSecondOutput()
+    {
+        var catalog = await CreateCatalogAsync();
+        var source = await CreateFixtureAsync(catalog, "timing");
+        var metadata = new MatroskaMetadataService(catalog, _tools);
+        await metadata.SaveAsync(source, VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.FromSeconds(1), "Range", "", []) { End = TimeSpan.FromSeconds(5) },
+            new VideoChapter(2, TimeSpan.FromSeconds(3), "Moment", "", [])] });
+        var parts = await new ClipEditingService(catalog, _tools).SplitAsync(source, TimeSpan.FromSeconds(3), "Split timing");
+        var first = await metadata.ReadAsync(parts[0]);
+        var second = await metadata.ReadAsync(parts[1]);
+        Assert.Single(first.Chapters);
+        Assert.Equal(TimeSpan.FromSeconds(3), first.Chapters[0].End);
+        Assert.Equal(TimeSpan.Zero, second.Chapters.Single(c => c.IsMoment).Position);
+        Assert.Equal(TimeSpan.FromSeconds(2), second.Chapters.Single(c => !c.IsMoment).End);
+    }
+
+    [Fact]
     public async Task FastTrimCopiesPacketsKeepsEveryTrackAndShiftsMetadataBySnappedStart()
     {
         var catalog = await CreateCatalogAsync();
@@ -23,7 +41,7 @@ public sealed class ClipEditingTests : IDisposable
         var metadata = new MatroskaMetadataService(catalog, _tools);
         var thumbnail = await metadata.CaptureThumbnailAsync(source, TimeSpan.FromSeconds(3.5));
         await metadata.SaveAsync(source, new VideoMetadata("Family", "Description retained", ["family"], DateTimeOffset.Parse("1997-07-03T12:00:00Z"),
-            [new VideoChapter(1, TimeSpan.Zero, "Arrival", "Start", ["arrival"]),
+            [new VideoChapter(1, TimeSpan.Zero, "Arrival", "Start", ["arrival"]) { End = TimeSpan.FromSeconds(3.5) },
                 new VideoChapter(2, TimeSpan.FromSeconds(3.5), "Cake", "Birthday moment", ["cake"])], [thumbnail]));
         var before = await HashAsync(catalog, source);
         var editing = new ClipEditingService(catalog, _tools);
@@ -88,7 +106,7 @@ public sealed class ClipEditingTests : IDisposable
         await metadata.SaveAsync(source, VideoMetadata.Empty with
         {
             Title = "Split me",
-            Chapters = [new VideoChapter(1, TimeSpan.Zero, "Arrival", "", []), new VideoChapter(2, TimeSpan.FromSeconds(3.5), "Cake", "", [])],
+            Chapters = [new VideoChapter(1, TimeSpan.Zero, "Arrival", "", []) { End = TimeSpan.FromSeconds(3.5) }, new VideoChapter(2, TimeSpan.FromSeconds(3.5), "Cake", "", [])],
         });
         var editing = new ClipEditingService(catalog, _tools);
 
@@ -118,7 +136,7 @@ public sealed class ClipEditingTests : IDisposable
         await metadata.SaveAsync(first, VideoMetadata.Empty with { Title = "Morning", Description = "First film", Tags = ["one"] });
         await metadata.SaveAsync(second, VideoMetadata.Empty with
         {
-            Description = "Second film", Tags = ["two", "One"], Chapters = [new VideoChapter(9, TimeSpan.Zero, "Afternoon", "", [])],
+            Description = "Second film", Tags = ["two", "One"], Chapters = [new VideoChapter(9, TimeSpan.Zero, "Afternoon", "", []) { End = TimeSpan.FromSeconds(6) }],
         });
         var editing = new ClipEditingService(catalog, _tools);
 

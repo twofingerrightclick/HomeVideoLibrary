@@ -21,17 +21,17 @@ Longplay provides the browsing, playback, search, and editing tools around that 
 ## Organize the collection. Find the moment.
 
 - **Browse a shelf of VHS tapes.** Handwritten-style labels, a chronological stack, and month markers make a growing collection feel familiar. Move across a tape to preview its contents.
-- **Watch and mark the moments.** Play a long recording, press **M**, and give a chapter a name, description, and tags. Jump straight back to birthdays, first steps, or a story you want to hear again.
+- **Watch and mark the moments.** Play a long recording, press **C** for a chapter or **M** for a moment, and give it a name, description, and tags. Jump straight back to birthdays, first steps, or a story you want to hear again.
 - **Add the context.** Give each video a title, description, recording date, and tags. Choose up to twenty frames to keep inside the MKV.
 - **Find what you remember.** Search video and chapter text, filter by tags, or narrow the search to an album.
 - **Make albums.** Collect family favorites, holidays, or a year's worth of recordings without duplicating the videos.
 - **Keep the parts you want.** Trim a recording, split a tape, or merge clips into a new video. The originals stay intact, and chapters and chosen frames follow the new timeline.
 
-## Add chapters while you watch
+## Add Chapters and Moments while you watch
 
-![A home movie playing beside its chapter list, with a new chapter marked at the playhead using the M shortcut.](docs/images/chapters.svg)
+![A home movie playing beside its annotation list.](docs/images/chapters.svg)
 
-Press **M** while watching to mark a moment. Give it a name, add a description and tags, then **Save** to keep the story inside the MKV. Click a chapter to return to it.
+Press **C** for a chapter range or **M** to mark a moment. Give it a name, add a description and tags, then **Save** to keep the story inside the MKV. Click a chapter to return to it.
 
 ## Bring your tapes into the library
 

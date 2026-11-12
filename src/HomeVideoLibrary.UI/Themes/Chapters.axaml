@@ -23,10 +23,10 @@
                                 IsVisible="{TemplateBinding IsExpanded}"
                                 Content="{TemplateBinding ExpandedContent}"
                                 ContentTemplate="{TemplateBinding ExpandedContentTemplate}"/>
-              <Grid ColumnDefinitions="3,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
-                <Border Name="PART_Bar" CornerRadius="1.5" Margin="0,6" Background="Transparent"/>
+              <Grid ColumnDefinitions="16,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
+                <PathIcon Name="PART_TypeIcon" Width="12" Height="14" Data="{StaticResource Vcr.Icon.Chapter}" Foreground="{DynamicResource Vcr.Brush.Yellow}" VerticalAlignment="Center"/>
                 <!-- Transparent, so a click anywhere on the time seeks. -->
-                <Panel Name="PART_Start" Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center"
+                <Panel Name="PART_Start" Grid.Column="1" MinWidth="62" Margin="9,0,4,0" VerticalAlignment="Center"
                        Background="Transparent" Cursor="Hand">
                   <TextBlock Text="{TemplateBinding StartGhostText}"
                              FontFamily="{DynamicResource Vcr.Font.Segment}"
@@ -36,7 +36,7 @@
                   <TextBlock Text="{TemplateBinding StartText}"
                              FontFamily="{DynamicResource Vcr.Font.Segment}"
                              FontSize="11"
-                             Foreground="{DynamicResource Vcr.Brush.Amber}"
+                             Foreground="{DynamicResource Vcr.Brush.Yellow}"
                              HorizontalAlignment="Right"/>
                 </Panel>
                 <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
@@ -84,12 +84,17 @@
       <Setter Property="IsVisible" Value="True"/>
     </Style>
 
+    <Style Selector="^:moment /template/ PathIcon#PART_TypeIcon">
+      <Setter Property="Data" Value="{StaticResource Vcr.Icon.Moment}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    </Style>
+    <Style Selector="^:moment /template/ Panel#PART_Start TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+    </Style>
     <!-- The chapter under the playhead: red played bar and a brighter title. -->
     <Style Selector="^:current">
       <Setter Property="Background" Value="#0FFFFFFF"/>
-      <Style Selector="^ /template/ Border#PART_Bar">
-        <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Red}"/>
-      </Style>
+
       <Style Selector="^ /template/ TextBlock#PART_TitleText">
         <Setter Property="FontWeight" Value="SemiBold"/>
       </Style>
@@ -119,7 +124,7 @@
                 CornerRadius="3">
           <Grid ColumnDefinitions="3,Auto,*">
             <Border CornerRadius="1.5" Margin="0,6" Background="{DynamicResource Vcr.Brush.Yellow}"/>
-            <Panel Grid.Column="1" Width="62" Margin="9,0,4,0" VerticalAlignment="Center">
+            <Panel Grid.Column="1" MinWidth="62" Margin="9,0,4,0" VerticalAlignment="Center">
               <TextBlock Text="{TemplateBinding StartGhostText}"
                          FontFamily="{DynamicResource Vcr.Font.Segment}"
                          FontSize="11"

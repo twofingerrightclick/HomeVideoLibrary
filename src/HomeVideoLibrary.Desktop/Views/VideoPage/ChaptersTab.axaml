@@ -15,19 +15,23 @@
     </Style>
   </UserControl.Styles>
   <StackPanel Spacing="10">
-    <c:SectionHeader Title="CHAPTERS">
-      <c:PlasticButton Classes="toolbar" Icon="{StaticResource Vcr.Icon.Chapter}" Content="ADD  M"
-                       Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (M)"/>
-    </c:SectionHeader>
+    <c:SectionHeader Title="CHAPTERS AND MOMENTS"/>
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <c:PlasticButton Classes="toolbar" Foreground="{DynamicResource Vcr.Brush.Yellow}" Icon="{StaticResource Vcr.Icon.Chapter}" Content="CHAPTER  C" Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (C)"/>
+        <c:PlasticButton Classes="toolbar" BorderBrush="{DynamicResource Vcr.Brush.Legend.Dim}" Icon="{StaticResource Vcr.Icon.Moment}" Content="MOMENT  M" Command="{Binding AddMomentCommand}" ToolTip.Tip="Add a moment at the playhead (M)"/>
+      </StackPanel>
+
     <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Chapters.HasChapters}"
-               Text="Play or scrub to a moment, then press M to start a chapter there."/>
+               Text="Press C for a chapter or M for a moment at the playhead."/>
+    <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding Details.Chapters.TimingConflict}"
+               IsVisible="{Binding Details.Chapters.TimingConflict, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
     <!-- The playhead moves only the placeholder, so a row being clicked or edited is never rebuilt. A row expands in
          place into its editor; the editor exists only while its row is expanded. -->
     <ItemsControl ItemsSource="{Binding Details.Chapters.Rows}">
       <ItemsControl.DataTemplates>
         <DataTemplate DataType="vp:ChapterRowViewModel">
           <c:ChapterListItem Margin="0,1"
-                             Start="{Binding Start}"
+                             Start="{Binding Start}" End="{Binding End}"
                              Title="{Binding Title}"
                              IsCurrent="{Binding IsCurrent}"
                              IsEditing="{Binding IsEditing, Mode=TwoWay}"
@@ -38,14 +42,14 @@
                              IsExpanded="{Binding IsExpanded}"
                              ExpandedContent="{Binding Editor}"
                              ExpandedContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
-                             ToolTip.Tip="Click the time to play from it, or elsewhere to edit the chapter">
+                             ToolTip.Tip="Click the time to play from it, or elsewhere to edit the chapter or moment">
             <StackPanel Orientation="Horizontal" Spacing="4" Classes="rowActions">
               <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}" Command="{Binding SeekCommand}"
                                ToolTip.Tip="Play from here"/>
               <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Edit}" Command="{Binding EditCommand}"
                                ToolTip.Tip="Edit (F2)"/>
               <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DeleteCommand}"
-                               ToolTip.Tip="Remove chapter (Delete)"/>
+                               ToolTip.Tip="Remove chapter or moment (Delete)"/>
             </StackPanel>
           </c:ChapterListItem>
         </DataTemplate>

@@ -92,7 +92,8 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
         MoveToTrashCommand = dependencies.MoveToTrash is { } moveToTrash ? new AsyncCommand(_ => moveToTrash(), onError: Report) : null;
         ToggleInspectorCommand = new RelayCommand(() => IsInspectorOpen = !IsInspectorOpen);
         SelectTabCommand = new RelayCommand<int>(tab => SelectedTab = tab);
-        AddChapterCommand = new RelayCommand(AddChapter, () => Details.Chapters.CanAddChapter);
+        AddMomentCommand = new RelayCommand(() => AddAnnotation(true), () => Details.Chapters.CanAddMoment);
+        AddChapterCommand = new RelayCommand(() => AddAnnotation(false), () => Details.Chapters.CanAddChapter);
         MarkInCommand = new RelayCommand(() => { Edit?.SetInAtPlayhead(); ShowTab(InspectorTab.Edit); }, () => Edit is not null);
         MarkOutCommand = new RelayCommand(() => { Edit?.SetOutAtPlayhead(); ShowTab(InspectorTab.Edit); }, () => Edit is not null);
         Player.PropertyChanged += PlayerChanged;
@@ -113,6 +114,7 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
             if (args.PropertyName != nameof(ChaptersPanelViewModel.CanAddChapter)) return;
             OnPropertyChanged(nameof(ScrubMarker));
             AddChapterCommand.RaiseCanExecuteChanged();
+            AddMomentCommand.RaiseCanExecuteChanged();
         };
         if (dependencies.Jobs is { } jobs) jobs.PropertyChanged += JobsChanged;
         // Last: the panel reads the page as its host.
@@ -214,10 +216,11 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
     /// <summary>Parameter: the tab index (<see cref="InspectorTab"/>).</summary>
     public RelayCommand<int> SelectTabCommand { get; }
 
-    /// <summary>Adds a chapter at the playhead from anywhere on the page (MARK, M): shows it in the CHAPTERS tab with its
+    /// <summary>Adds a chapter at the playhead from anywhere on the page (CHAPTER, C): shows it in the CHAPTERS tab with its
     /// title open for typing. In fullscreen, where the inspector is hidden, the chapter is added untitled and the status
     /// over the video says so.</summary>
     public RelayCommand AddChapterCommand { get; }
+    public RelayCommand AddMomentCommand { get; }
 
     /// <summary>Sets the trim's in point (I) or out point (O) at the playhead from anywhere on the page, and shows it in
     /// the EDIT tab.</summary>
@@ -315,17 +318,17 @@ public sealed class VideoPageViewModel : PageViewModel, IEditHost
         }
     }
 
-    private void AddChapter()
+    private void AddAnnotation(bool moment)
     {
         if (Fullscreen.IsFullscreen)
         {
-            if (Details.Chapters.AddAtPlayhead(expand: false) is { } untitled)
-                Report($"Chapter added at {Timecode.Format(untitled.Start)}. Name it in CHAPTERS after leaving fullscreen.");
+            if (Details.Chapters.AddAtPlayhead(expand: false, moment: moment) is { } untitled)
+                Report($"{(moment ? "Moment" : "Chapter")} added at {Timecode.Format(untitled.Start)}. Name it in CHAPTERS AND MOMENTS after leaving fullscreen.");
             return;
         }
         ShowTab(InspectorTab.Chapters);
-        if (Details.Chapters.AddAtPlayhead(expand: true) is { } added)
-            Report($"Chapter added at {Timecode.Format(added.Start)}. Type its title and press Enter.");
+        if (Details.Chapters.AddAtPlayhead(expand: true, moment: moment) is { } added)
+            Report($"{(moment ? "Moment" : "Chapter")} added at {Timecode.Format(added.Start)}. Type its title and press Enter.");
     }
 
     /// <summary>Selects <paramref name="tab"/> and opens the inspector, unless fullscreen hides it.</summary>

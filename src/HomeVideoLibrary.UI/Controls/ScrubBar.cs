@@ -51,6 +51,10 @@ public class ScrubBar : TemplatedControl
     private static readonly TimeSpan LargeStep = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SmallStep = TimeSpan.FromSeconds(1);
 
+    public static readonly StyledProperty<IBrush?> MomentBrushProperty =
+        AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(MomentBrush));
+    public IBrush? MomentBrush { get => GetValue(MomentBrushProperty); set => SetValue(MomentBrushProperty, value); }
+
     public static readonly StyledProperty<IReadOnlyList<IChapterMark>?> ChapterSegmentsProperty =
         AvaloniaProperty.Register<ScrubBar, IReadOnlyList<IChapterMark>?>(nameof(ChapterSegments));
 
@@ -545,7 +549,7 @@ public class ScrubBar : TemplatedControl
         var hoverIndex = HoverTime is { } hover && _spans.Count > 1 ? ScrubTimeline.SpanIndexAt(_spans, hover) : -1;
 
         IReadOnlyList<SegmentExtent> extents = _spans.Count == 0
-            ? [new SegmentExtent(0, trackWidth)]
+            ? []
             : ScrubTimeline.LayoutSegments(_spans, Duration, trackWidth, SegmentGap, MinSegmentWidth);
         for (var i = 0; i < extents.Count; i++)
         {
@@ -554,6 +558,20 @@ public class ScrubBar : TemplatedControl
             var grow = i == hoverIndex ? Snap(HoveredSegmentGrowth * expansion) : 0;
             var segment = new Rect(left, inner.Top - grow, right - left, inner.Height + 2 * grow);
             DrawSegment(context, segment, playX, bufferedX);
+        }
+
+        foreach (var moment in (ChapterSegments ?? []).Where(mark => mark.Start == mark.End && mark.Start >= TimeSpan.Zero && mark.Start < Duration))
+        {
+            var x = Snap(TrackLeft + ScrubTimeline.TimeToX(moment.Start, Duration, trackWidth));
+            var triangle = new StreamGeometry();
+            using (var shape = triangle.Open())
+            {
+                shape.BeginFigure(new Point(x - 4, centerY - 4), true);
+                shape.LineTo(new Point(x + 4, centerY - 4));
+                shape.LineTo(new Point(x, centerY + 4));
+                shape.EndFigure(true);
+            }
+            context.DrawGeometry(MomentBrush, null, triangle);
         }
 
         if (ScrubTimeline.LayoutRange(RangeStart, RangeEnd, Duration, trackWidth) is { } range)
@@ -677,9 +695,14 @@ public class ScrubBar : TemplatedControl
         }
 
         var time = TimeAt(x);
+        var moment = (ChapterSegments ?? []).Where(mark => mark.Start == mark.End)
+            .OrderBy(mark => Math.Abs(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth) - x))
+            .FirstOrDefault(mark => Math.Abs(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth) - x) <= 6);
+        if (moment is not null) time = moment.Start;
         var index = ScrubTimeline.SpanIndexAt(_spans, time);
         HoverTime = time;
-        HoverChapterTitle = index >= 0 && !string.IsNullOrEmpty(_spans[index].Title) ? _spans[index].Title : null;
+        HoverChapterTitle = moment is not null ? (string.IsNullOrEmpty(moment.Title) ? "Moment" : moment.Title)
+            : index >= 0 && !string.IsNullOrEmpty(_spans[index].Title) ? _spans[index].Title : null;
         var text = ScrubTimeline.FormatTimestamp(time);
         if (_hoverTimeText is not null)
         {

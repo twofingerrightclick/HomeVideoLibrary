@@ -28,7 +28,7 @@ Each implementation stage is assigned sequentially to one agent. Astra owns the 
 
 - Selecting a video opens playback with an optional right sidebar showing its description, video tags, and chapters.
 - Users can edit a top-level description and arbitrary tags.
-- Pressing **M**, or a chapter button, adds a chapter at the current playback position. Chapters support titles/descriptions and tags; users can navigate to them and edit or remove them.
+- Pressing **C** adds a chapter range; **M** adds a zero-duration moment at the current playback position. P has no creation binding. Chapters support titles/descriptions and tags; users can navigate to them and edit or remove them.
 - Persist descriptions, tags, and chapters inside the MKV using standard Matroska mechanisms where possible, including chapter-targeted tags. Files retain their metadata when moved out of the library.
 - Users can scrub and choose up to twenty timestamped thumbnails. Selected images and timestamps are persisted in the MKV; extracted preview files are disposable cache.
 
@@ -57,3 +57,5 @@ Each implementation stage is assigned sequentially to one agent. Astra owns the 
 
 - Verify each changed stage with build checks and focused behavior tests only.
 - Review against both this specification and CODING_STANDARDS.md using the code-review skill. Record honest limitations, especially unverified platform behavior and native runtime dependencies.
+
+Chapters retain the existing yellow accent; moments use a neutral gray downward triangle in the list and timeline. Hovering near the timeline triangle reveals its exact timestamp and title. Chapters keep the bookmark icon. Moment actions are outlined, solid tactile VCR keys, including the shared fullscreen transport, without a bright yellow fill.

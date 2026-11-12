@@ -424,7 +424,7 @@ public sealed class LibraryModelTests : IDisposable
         var record = model.Snapshot.Find(id)!;
         Assert.Equal(VideoRecordState.Ok, record.State);
         var chapter = Assert.Single(record.Chapters);
-        Assert.Equal((TimeSpan.FromSeconds(0.5), record.Duration), (chapter.Start, chapter.End));
+        Assert.Equal((TimeSpan.FromSeconds(0.5), TimeSpan.FromSeconds(0.5)), (chapter.Start, chapter.End));
         Assert.InRange(record.Duration.TotalSeconds, 1.9, 2.1);
         Assert.Equal(chapter, Assert.Single(LibrarySearch.Run(model.Snapshot, "searchable")).Chapter);
         Assert.Equal(["Picnic", "newtag"], model.Snapshot.Tags.All().Select(tag => tag.Tag).Order(StringComparer.Ordinal));

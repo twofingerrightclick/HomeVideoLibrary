@@ -422,7 +422,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         foreach (var chapter in expected.Chapters)
         {
             var match = actual.Chapters.SingleOrDefault(candidate => candidate.Uid == chapter.Uid);
-            if (match is null || chapter.Position != match.Position || chapter.Title != match.Title || chapter.Description != match.Description ||
+            if (match is null || chapter.Position != match.Position || chapter.End != match.End || chapter.Title != match.Title || chapter.Description != match.Description ||
                 !chapter.Tags.SequenceEqual(match.Tags))
                 throw new InvalidDataException($"Chapter \"{chapter.Title}\" did not round-trip correctly.");
         }
@@ -486,6 +486,7 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
 
     private static void Validate(VideoMetadata metadata, TimeSpan duration)
     {
+        if (ChapterTiming.Conflict(metadata.Chapters, duration) is { } conflict) throw new ArgumentException(conflict, nameof(metadata));
         if (metadata.Thumbnails.Count > MaxThumbnails) throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
         if (metadata.Chapters.FirstOrDefault(chapter => chapter.Uid == 0) is { } unidentified)
             throw new ArgumentException($"Chapter \"{unidentified.Title}\" has no ID.", nameof(metadata));

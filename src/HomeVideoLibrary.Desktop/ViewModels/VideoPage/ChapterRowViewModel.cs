@@ -9,7 +9,8 @@ namespace HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 public sealed class ChapterRowViewModel : ViewModelBase
 {
     private readonly ChaptersPanelViewModel _panel;
-    private TimeSpan _start;
+    private TimeSpan _start, _end;
+    private string? _draftEnd, _timingError;
     private string _title, _description;
     private string? _draftTitle, _draftStart, _startError;
     private bool _isEditing, _isCurrent;
@@ -19,6 +20,7 @@ public sealed class ChapterRowViewModel : ViewModelBase
         _panel = panel;
         Uid = chapter.Uid;
         _start = chapter.Position;
+        _end = chapter.End;
         _title = chapter.Title;
         _description = chapter.Description;
         Tags = new TagListViewModel(chapter.Tags, suggest, panel.ChapterEdited);
@@ -27,6 +29,8 @@ public sealed class ChapterRowViewModel : ViewModelBase
         SeekCommand = new RelayCommand(() => panel.Seek(this));
         CommitTitleCommand = new RelayCommand<string>(title => panel.Rename(this, title));
         CommitDraftTitleCommand = new RelayCommand(() => panel.Rename(this, TitleText));
+        CommitDraftEndCommand = new RelayCommand(CommitEnd);
+        SetEndTimeCommand = new RelayCommand(() => panel.SetEndAtPlayhead(this), () => panel.CanEdit);
         CommitDraftStartCommand = new RelayCommand(CommitStart);
         EditCommand = new RelayCommand(() => panel.ExpandedChapter = this, () => panel.CanEdit);
         DeleteCommand = new RelayCommand(() => panel.Delete(this), () => panel.CanEdit);
@@ -38,8 +42,20 @@ public sealed class ChapterRowViewModel : ViewModelBase
     public TimeSpan Start
     {
         get => _start;
-        internal set { if (SetProperty(ref _start, value)) { OnPropertyChanged(nameof(StartText)); OnPropertyChanged(nameof(StartField)); } }
+        internal set { if (SetProperty(ref _start, value)) { OnPropertyChanged(nameof(StartText)); OnPropertyChanged(nameof(StartField)); OnPropertyChanged(nameof(IsMoment)); OnPropertyChanged(nameof(TypeLabel)); } }
     }
+
+    public TimeSpan End
+    {
+        get => _end;
+        internal set { if (SetProperty(ref _end, value)) { OnPropertyChanged(nameof(EndField)); OnPropertyChanged(nameof(IsMoment)); OnPropertyChanged(nameof(TypeLabel)); } }
+    }
+    public bool IsMoment => Start == End;
+    public string TypeLabel => IsMoment ? "MOMENT" : "CHAPTER";
+    public string? TimingError { get => _timingError; internal set => SetProperty(ref _timingError, value); }
+    public string EndField { get => _draftEnd ?? Timecode.Format(End); set { if (SetProperty(ref _draftEnd, value)) _panel.DraftChanged(); } }
+    public RelayCommand CommitDraftEndCommand { get; }
+    public RelayCommand SetEndTimeCommand { get; }
 
     public string StartText => Timecode.Format(Start);
 
@@ -84,7 +100,7 @@ public sealed class ChapterRowViewModel : ViewModelBase
 
     /// <summary>Whether something is typed into this chapter but not committed yet.</summary>
     public bool HasOpenEdits => (DraftTitle is { } title && title.Trim() != Title) ||
-        (_draftStart is { } start && start.Trim() != StartText) || Tags.HasOpenDraft;
+        (_draftStart is { } start && start.Trim() != StartText) || _draftEnd is not null || Tags.HasOpenDraft;
 
     /// <summary>Whether the row's inline title field is open.</summary>
     public bool IsEditing { get => _isEditing; set => SetProperty(ref _isEditing, value); }
@@ -124,18 +140,19 @@ public sealed class ChapterRowViewModel : ViewModelBase
     public RelayCommand DeleteCommand { get; }
     public RelayCommand MoveToPlayheadCommand { get; }
 
-    public VideoChapter ToChapter() => new(Uid, Start, Title, Description, [.. Tags.Items]);
+    public VideoChapter ToChapter() => new(Uid, Start, Title, Description, [.. Tags.Items]) { End = End };
 
-    public bool Matches(VideoChapter chapter) => chapter.Uid == Uid && chapter.Position == Start && chapter.Title == Title &&
+    public bool Matches(VideoChapter chapter) => chapter.Uid == Uid && chapter.Position == Start && chapter.End == End && chapter.Title == Title &&
         chapter.Description == Description && Tags.Matches(chapter.Tags);
 
-    /// <summary>Commits what was typed (as leaving the fields would); a start that does not parse is dropped.</summary>
+    /// <summary>Commits valid drafts and retains invalid timing drafts with an actionable error.</summary>
     internal void CommitDrafts()
     {
         if (DraftTitle is { } title) _panel.Rename(this, title);
         IsEditing = false;
         if (_draftStart is not null) CommitStart();
-        if (StartError is not null) { _draftStart = null; StartError = null; OnPropertyChanged(nameof(StartField)); }
+        if (_draftEnd is not null) CommitEnd();
+
         Tags.CommitDraft();
     }
 
@@ -143,6 +160,10 @@ public sealed class ChapterRowViewModel : ViewModelBase
     internal void ApplyBaseline(VideoChapter chapter)
     {
         Start = chapter.Position;
+        End = chapter.End;
+        _draftEnd = null;
+        TimingError = null;
+        OnPropertyChanged(nameof(EndField));
         Title = chapter.Title;
         DraftTitle = null;
         IsEditing = false;
@@ -165,6 +186,15 @@ public sealed class ChapterRowViewModel : ViewModelBase
         EditCommand.RaiseCanExecuteChanged();
         DeleteCommand.RaiseCanExecuteChanged();
         MoveToPlayheadCommand.RaiseCanExecuteChanged();
+        SetEndTimeCommand.RaiseCanExecuteChanged();
+    }
+
+    private void CommitEnd()
+    {
+        if (_draftEnd is not { } text) return;
+        if (!Timecode.TryParse(text, out var end)) { TimingError = "Use h:mm:ss, m:ss or seconds."; return; }
+        _panel.SetEnd(this, end);
+        if (TimingError is null) { _draftEnd = null; OnPropertyChanged(nameof(EndField)); }
     }
 
     private void CommitStart()

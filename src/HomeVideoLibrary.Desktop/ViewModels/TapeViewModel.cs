@@ -71,7 +71,8 @@ public sealed class TapeViewModel : ViewModelBase
     }
     public bool HasMatchedChapter => MatchedChapter is not null;
     public string MatchedChapterLabel => MatchedChapter is { } chapter
-        ? $"▸ {ScrubTimeline.FormatTimestamp(chapter.Start)} · {(chapter.Title.Length > 0 ? chapter.Title : "Untitled chapter")}" : "";
+        ? $"▸ {ScrubTimeline.FormatTimestamp(chapter.Start)}{(chapter.End > chapter.Start ? "–" + ScrubTimeline.FormatTimestamp(chapter.End) : "")} · " +
+          (chapter.Title.Length > 0 ? chapter.Title : chapter.End == chapter.Start ? "Untitled moment" : "Untitled chapter") : "";
 
     /// <summary>User-edited through the tape's checkbox.</summary>
     public bool IsSelected

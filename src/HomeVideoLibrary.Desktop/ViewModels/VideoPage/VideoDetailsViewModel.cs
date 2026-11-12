@@ -129,6 +129,9 @@ public sealed class VideoDetailsViewModel : ViewModelBase
     /// <exception cref="ArgumentException">A field is invalid; the message says how to fix it.</exception>
     public VideoMetadata BuildMetadata()
     {
+        if (Chapters.TimingConflict is { } conflict) throw new ArgumentException(conflict);
+        if (Chapters.Chapters.FirstOrDefault(c => c.TimingError is not null || c.StartError is not null) is { } invalid)
+            throw new ArgumentException(invalid.TimingError ?? invalid.StartError);
         if (RecordedDateError is { } error) throw new ArgumentException("Recorded date: " + error);
         var recordedAt = _baseline.RecordedAt;
         var recordedAtText = _baseline.RecordedAtText;

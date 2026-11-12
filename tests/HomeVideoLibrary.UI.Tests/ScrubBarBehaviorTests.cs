@@ -13,6 +13,17 @@ public sealed class ScrubBarBehaviorTests
     private static readonly TimeSpan Length = TimeSpan.FromMinutes(40);
 
     [AvaloniaFact]
+    public void MomentHoverUsesItsExactTimeAndTitleInsideARange()
+    {
+        var moment = TimeSpan.FromMinutes(20);
+        var (window, bar) = Host(new ScrubBar { Duration = Length, ChapterSegments = [
+            new ChapterMark(TimeSpan.Zero, "Range") { End = Length }, new ChapterMark(moment, "Birthday")] });
+        window.MouseMove(At(bar, 0.5));
+        Assert.Equal(moment, bar.HoverTime);
+        Assert.Equal("Birthday", bar.HoverChapterTitle);
+    }
+
+    [AvaloniaFact]
     public void A_drag_requests_exactly_one_seek_on_release_and_never_writes_Position()
     {
         var command = new RecordingCommand();
@@ -68,11 +79,11 @@ public sealed class ScrubBarBehaviorTests
     [AvaloniaFact]
     public void Assigning_a_new_chapter_snapshot_updates_what_hover_shows()
     {
-        var (window, bar) = Host(new ScrubBar { Duration = Length, ChapterSegments = [new ChapterMark(TimeSpan.Zero, "Before")] });
+        var (window, bar) = Host(new ScrubBar { Duration = Length, ChapterSegments = [new ChapterMark(TimeSpan.Zero, "Before") { End = Length }] });
         window.MouseMove(At(bar, 0.6));
         Assert.Equal("Before", bar.HoverChapterTitle);
 
-        bar.ChapterSegments = [new ChapterMark(TimeSpan.Zero, "Before"), new ChapterMark(TimeSpan.FromMinutes(20), "After")];
+        bar.ChapterSegments = [new ChapterMark(TimeSpan.Zero, "Before") { End = TimeSpan.FromMinutes(20) }, new ChapterMark(TimeSpan.FromMinutes(20), "After") { End = Length }];
         window.MouseMove(At(bar, 0.61));
 
         Assert.Equal("After", bar.HoverChapterTitle);

@@ -14,7 +14,7 @@ public enum VideoRecordState
     Unreadable,
 }
 
-/// <param name="End">The next chapter's start, or the video duration for the last chapter.</param>
+/// <param name="End">Explicit range end, equal to Start for a moment.</param>
 public sealed record VideoChapterRecord(ulong Uid, TimeSpan Start, TimeSpan End, string Title, string Description, IReadOnlyList<string> Tags);
 
 /// <param name="ModifiedTicks">Last write time in UTC ticks.</param>
@@ -84,7 +84,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     /// <summary>The text metadata read from the current file, without thumbnail images. Null unless <see cref="State"/> is Ok.</summary>
     public VideoMetadata? ToMetadata() => State != VideoRecordState.Ok ? null :
         new VideoMetadata(Title, Description, Tags, EmbeddedRecordedAt,
-            Chapters.Select(chapter => new VideoChapter(chapter.Uid, chapter.Start, chapter.Title, chapter.Description, chapter.Tags)).ToArray(), [])
+            Chapters.Select(chapter => new VideoChapter(chapter.Uid, chapter.Start, chapter.Title, chapter.Description, chapter.Tags) { End = chapter.End }).ToArray(), [])
         {
             RecordedAtText = RecordedAtText,
         };
@@ -102,7 +102,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
             EmbeddedRecordedAt = metadata.RecordedAt,
             RecordedAtText = metadata.RecordedAtText,
             Chapters = BuildChapters(metadata.Chapters.Select(chapter =>
-                (chapter.Uid, chapter.Position, chapter.Title, chapter.Description, chapter.Tags)), duration),
+                (chapter.Uid, chapter.Position, chapter.End, chapter.Title, chapter.Description, chapter.Tags)), duration),
             Thumbnails = text.Thumbnails.OrderBy(thumbnail => thumbnail.Position).ToArray(),
             MediaIdentity = text.MediaIdentity,
             Stamp = stamp,
@@ -113,17 +113,17 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     }
 
     private static VideoChapterRecord[] BuildChapters(
-        IEnumerable<(ulong Uid, TimeSpan Start, string Title, string Description, IReadOnlyList<string> Tags)> chapters, TimeSpan duration)
+        IEnumerable<(ulong Uid, TimeSpan Start, TimeSpan End, string Title, string Description, IReadOnlyList<string> Tags)> chapters, TimeSpan duration)
     {
         var sorted = chapters.OrderBy(chapter => chapter.Start).ThenBy(chapter => chapter.Uid).ToArray();
         return sorted.Select((chapter, index) => new VideoChapterRecord(chapter.Uid, chapter.Start,
-            index + 1 < sorted.Length ? sorted[index + 1].Start : TimeSpan.FromTicks(Math.Max(duration.Ticks, chapter.Start.Ticks)),
+            chapter.End,
             chapter.Title, chapter.Description, chapter.Tags.ToArray())).ToArray();
     }
 
     internal string ToCacheJson() => JsonSerializer.Serialize(new CachedContent(CachedContent.CurrentVersion, Duration.Ticks, Title, Description,
         Tags, EmbeddedRecordedAt, RecordedAtText,
-        Chapters.Select(chapter => new CachedChapter(chapter.Uid, chapter.Start.Ticks, chapter.Title, chapter.Description, chapter.Tags)).ToArray(),
+        Chapters.Select(chapter => new CachedChapter(chapter.Uid, chapter.Start.Ticks, chapter.End.Ticks, chapter.Title, chapter.Description, chapter.Tags)).ToArray(),
         Thumbnails.Select(thumbnail => new CachedThumbnail(thumbnail.Id, thumbnail.Position.Ticks, thumbnail.AttachmentName, thumbnail.Sha256)).ToArray(),
         MediaIdentity));
 
@@ -144,7 +144,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
             Tags = content.Tags ?? [],
             EmbeddedRecordedAt = content.RecordedAt,
             RecordedAtText = content.RecordedAtText ?? "",
-            Chapters = BuildChapters((content.Chapters ?? []).Select(chapter => (chapter.Uid, TimeSpan.FromTicks(chapter.StartTicks),
+            Chapters = BuildChapters((content.Chapters ?? []).Select(chapter => (chapter.Uid, TimeSpan.FromTicks(chapter.StartTicks), TimeSpan.FromTicks(chapter.EndTicks),
                 chapter.Title ?? "", chapter.Description ?? "", (IReadOnlyList<string>)(chapter.Tags ?? []))), duration),
             Thumbnails = (content.Thumbnails ?? []).Select(thumbnail => new VideoThumbnailRef(thumbnail.Id, TimeSpan.FromTicks(thumbnail.PositionTicks),
                 thumbnail.AttachmentName ?? "", thumbnail.Sha256 ?? "")).OrderBy(thumbnail => thumbnail.Position).ToArray(),
@@ -160,11 +160,10 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
         DateTimeOffset? RecordedAt, string? RecordedAtText, IReadOnlyList<CachedChapter>? Chapters, IReadOnlyList<CachedThumbnail>? Thumbnails,
         string? MediaIdentity)
     {
-        // MediaIdentity is optional rather than a new version, so entries from either side of it still show their content
-        // and an older app reading a newer entry just ignores it.
-        public const int CurrentVersion = 1;
+        // Version 2 stores explicit ends. Re-read version 1 from MKV rather than retaining inferred ranges.
+        public const int CurrentVersion = 2;
     }
 
-    private sealed record CachedChapter(ulong Uid, long StartTicks, string? Title, string? Description, IReadOnlyList<string>? Tags);
+    private sealed record CachedChapter(ulong Uid, long StartTicks, long EndTicks, string? Title, string? Description, IReadOnlyList<string>? Tags);
     private sealed record CachedThumbnail(Guid Id, long PositionTicks, string? AttachmentName, string? Sha256);
 }

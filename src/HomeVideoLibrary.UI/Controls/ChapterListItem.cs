@@ -43,6 +43,10 @@ public class ChapterListItem : ContentControl
     public static readonly StyledProperty<TimeSpan> StartProperty =
         AvaloniaProperty.Register<ChapterListItem, TimeSpan>(nameof(Start));
 
+    public static readonly StyledProperty<TimeSpan> EndProperty =
+        AvaloniaProperty.Register<ChapterListItem, TimeSpan>(nameof(End));
+    public TimeSpan End { get => GetValue(EndProperty); set => SetValue(EndProperty, value); }
+
     public static readonly DirectProperty<ChapterListItem, string> StartTextProperty =
         AvaloniaProperty.RegisterDirect<ChapterListItem, string>(nameof(StartText), o => o.StartText);
 
@@ -106,6 +110,7 @@ public class ChapterListItem : ContentControl
 
     public ChapterListItem()
     {
+        PseudoClasses.Set(":moment", true);
         DoubleTapped += OnDoubleTapped;
     }
 
@@ -210,9 +215,10 @@ public class ChapterListItem : ContentControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == StartProperty)
+        if (change.Property == StartProperty || change.Property == EndProperty)
         {
-            StartText = ScrubTimeline.FormatTimestamp(change.GetNewValue<TimeSpan>());
+            StartText = End > Start ? $"{ScrubTimeline.FormatTimestamp(Start)}–{ScrubTimeline.FormatTimestamp(End)}" : ScrubTimeline.FormatTimestamp(Start);
+            PseudoClasses.Set(":moment", End == Start);
             StartGhostText = new string(StartText.Select(ch => char.IsDigit(ch) ? '8' : ch).ToArray());
         }
         else if (change.Property == IsCurrentProperty)

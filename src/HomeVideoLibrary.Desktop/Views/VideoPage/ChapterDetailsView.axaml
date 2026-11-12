@@ -11,7 +11,7 @@
     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
       <StackPanel Spacing="4">
         <TextBlock Classes="legend" Text="TITLE"/>
-        <TextBox x:Name="TitleField" Text="{Binding TitleText, Mode=TwoWay}" Watermark="Untitled chapter"
+        <TextBox x:Name="TitleField" Text="{Binding TitleText, Mode=TwoWay}" Watermark="Untitled chapter or moment"
                  views:FieldBehaviors.FocusOnAttach="True" views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftTitleCommand}"
                  AutomationProperties.Name="Chapter title">
           <TextBox.KeyBindings>
@@ -31,9 +31,23 @@
     </Grid>
     <TextBlock Classes="legend" Foreground="{DynamicResource Vcr.Brush.Red.Led}" TextWrapping="Wrap" Text="{Binding StartError}"
                IsVisible="{Binding StartError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    <TextBlock Classes="legend" Text="{Binding TypeLabel}"/>
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <StackPanel Spacing="4">
+        <TextBlock Classes="legend" Text="END"/>
+        <TextBox Text="{Binding EndField, Mode=TwoWay}" AutomationProperties.Name="End time"
+                 views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftEndCommand}">
+          <TextBox.KeyBindings><KeyBinding Gesture="Enter" Command="{Binding CommitDraftEndCommand}"/></TextBox.KeyBindings>
+        </TextBox>
+      </StackPanel>
+      <c:PlasticButton Grid.Column="1" VerticalAlignment="Bottom" Content="SET END TIME" Command="{Binding SetEndTimeCommand}"
+                       ToolTip.Tip="Set this entry’s end to the playhead. Equal start and end makes a moment."/>
+    </Grid>
+    <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding TimingError}"
+               IsVisible="{Binding TimingError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
     <TextBlock Classes="legend" Text="DESCRIPTION" Margin="0,4,0,0"/>
     <TextBox Classes="area" Text="{Binding Description, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
-             MinHeight="56" MaxHeight="160" Watermark="What happens in this chapter?" AutomationProperties.Name="Chapter description"/>
+             MinHeight="56" MaxHeight="160" Watermark="What happens here?" AutomationProperties.Name="Chapter description"/>
     <TextBlock Classes="legend" Text="TAGS" Margin="0,4,0,0"/>
     <c:TagChipInput Watermark="Add tags…"
                     Tags="{Binding Tags.Items}"

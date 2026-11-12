@@ -13,6 +13,33 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task MissingEndsMigrateToMomentsAndExplicitEndsSurviveSave()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var chaptersPath = Path.Combine(_root, "moments.xml");
+        await File.WriteAllTextAsync(chaptersPath, """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Chapters><EditionEntry>
+              <ChapterAtom><ChapterUID>11</ChapterUID><ChapterTimeStart>00:00:00.000000000</ChapterTimeStart><ChapterTimeEnd>00:00:01.500000000</ChapterTimeEnd></ChapterAtom>
+              <ChapterAtom><ChapterUID>12</ChapterUID><ChapterTimeStart>00:00:01.000000000</ChapterTimeStart></ChapterAtom>
+            </EditionEntry></Chapters>
+            """);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--chapters", chaptersPath]);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var read = await service.ReadAsync(video);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), read.Chapters[0].End);
+        Assert.True(read.Chapters[1].IsMoment);
+        await service.SaveAsync(video, read with { Description = "Saved" });
+        var reread = await service.ReadAsync(video);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), reread.Chapters[0].End);
+        Assert.Equal(reread.Chapters[1].Position, reread.Chapters[1].End);
+        var extracted = Path.Combine(_root, "moments-after.xml");
+        await ToolAsync(_tools.MkvExtract, [path, "chapters", extracted]);
+        Assert.Contains("<ChapterTimeEnd>00:00:01.000000000</ChapterTimeEnd>", await File.ReadAllTextAsync(extracted));
+    }
+
+    [Fact]
     public async Task AVideoNoImportWroteGetsOnlyItsMissingTitleAndDateAndKeepsEverythingAsWritten()
     {
         var catalog = new LibraryCatalog(new LibraryPaths(Path.Combine(_root, "library")));

@@ -30,7 +30,8 @@ internal static class MatroskaMetadataXml
             }
             var chapterTags = ChapterTags(tags, uid).ToArray();
             chapterModels.Add(new VideoChapter(uid, start, ChapterTitle(atom),
-                PreferredValue(chapterTags, "DESCRIPTION"), Keywords(chapterTags)));
+                PreferredValue(chapterTags, "DESCRIPTION"), Keywords(chapterTags))
+            { End = TryParseTime(atom.Element("ChapterTimeEnd")?.Value, out var end) ? end : start });
         }
         var date = PreferredValue(global, "DATE_RECORDED");
         return new VideoMetadata(PreferredValue(global, "TITLE"), PreferredValue(global, "DESCRIPTION"), Keywords(global),
@@ -130,8 +131,7 @@ internal static class MatroskaMetadataXml
             if (!existing.TryGetValue(chapter.Uid, out var atom))
                 atom = new XElement("ChapterAtom", new XElement("ChapterUID", chapter.Uid));
             atom.SetElementValue("ChapterTimeStart", FormatTime(chapter.Position));
-            // Ends from other programs go stale as soon as neighbours move; players derive them from the next start.
-            atom.Element("ChapterTimeEnd")?.Remove();
+            atom.SetElementValue("ChapterTimeEnd", FormatTime(chapter.End));
             var display = atom.Element("ChapterDisplay");
             if (display is null)
             {
@@ -157,7 +157,7 @@ internal static class MatroskaMetadataXml
 
     private static bool SameChapters(IReadOnlyList<VideoChapter> left, IReadOnlyList<VideoChapter> right) =>
         left.Count == right.Count && left.OrderBy(chapter => chapter.Uid).Zip(right.OrderBy(chapter => chapter.Uid)).All(pair =>
-            pair.First.Uid == pair.Second.Uid && pair.First.Position == pair.Second.Position && pair.First.Title == pair.Second.Title &&
+            pair.First.Uid == pair.Second.Uid && pair.First.Position == pair.Second.Position && pair.First.End == pair.Second.End && pair.First.Title == pair.Second.Title &&
             pair.First.Description == pair.Second.Description && pair.First.Tags.SequenceEqual(pair.Second.Tags));
 
     private static XElement? PrimaryEdition(XDocument chapters) => chapters.Root?.Elements("EditionEntry")

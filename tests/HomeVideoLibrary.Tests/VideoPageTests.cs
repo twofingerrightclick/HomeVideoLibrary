@@ -378,7 +378,7 @@ public sealed class VideoPageTests
     {
         var metadata = new FakeMetadata
         {
-            Stored = VideoMetadata.Empty with { Chapters = [new VideoChapter(1, TimeSpan.Zero, "Start", "", []), new VideoChapter(2, TimeSpan.FromSeconds(5), "Middle", "", [])] },
+            Stored = VideoMetadata.Empty with { Chapters = [new VideoChapter(1, TimeSpan.Zero, "Start", "", []), new VideoChapter(2, TimeSpan.FromSeconds(5), "Middle", "", []) { End = TimeSpan.FromSeconds(10) }] },
         };
         var playback = new FakePlayback();
         await using var page = Create(metadata, playback);
@@ -420,13 +420,14 @@ public sealed class VideoPageTests
         Assert.True(chapters.Placeholder.IsShown);
         page.Player.Seek(TimeSpan.FromSeconds(8));
         Assert.Equal(2, chapters.Rows.IndexOf(chapters.Placeholder));
-        page.Player.Seek(TimeSpan.FromSeconds(6.5));
+        page.Player.Seek(TimeSpan.FromSeconds(6));
+        chapters.AddChapterCommand.Execute(null);
         Assert.False(chapters.Placeholder.IsShown);
         Assert.False(chapters.AddChapterCommand.CanExecute(null));
     }
 
     [Fact]
-    public async Task AddingAtThePlayheadInsertsInOrderAndASecondAddWithinASecondDoesNothing()
+    public async Task AddingAtThePlayheadInsertsInOrderAndASecondAddAtTheSameTimeDoesNothing()
     {
         var metadata = new FakeMetadata
         {
@@ -438,7 +439,7 @@ public sealed class VideoPageTests
         page.Player.Seek(TimeSpan.FromSeconds(4));
 
         chapters.AddChapterCommand.Execute(null);
-        page.Player.Seek(TimeSpan.FromSeconds(4.5));
+        page.Player.Seek(TimeSpan.FromSeconds(4));
         chapters.AddChapterCommand.Execute(null);
 
         Assert.Equal(["A", "", "B"], chapters.Chapters.Select(row => row.Title));

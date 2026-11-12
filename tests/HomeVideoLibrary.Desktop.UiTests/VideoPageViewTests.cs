@@ -23,6 +23,25 @@ public sealed class VideoPageViewTests
     };
 
     [AvaloniaFact]
+    public void FullscreenOverlayCreatesBothTypesAndLeavesPUnbound()
+    {
+        var (window, host) = Window();
+        var page = Page();
+        Show(host, page);
+        page.Player.Seek(TimeSpan.FromSeconds(12));
+        page.Fullscreen.ToggleCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var overlay = Assert.Single(window.OwnedWindows.OfType<VideoOverlayWindow>());
+        Press(overlay, PhysicalKey.M);
+        Press(overlay, PhysicalKey.C);
+        Press(overlay, PhysicalKey.P);
+        Assert.Equal(2, page.Details.Chapters.Chapters.Count);
+        Assert.Single(page.Details.Chapters.Chapters, c => c.IsMoment);
+        Assert.Single(page.Details.Chapters.Chapters, c => !c.IsMoment);
+        Assert.Null(page.Details.Chapters.ExpandedChapter);
+    }
+
+    [AvaloniaFact]
     public void Undo_in_another_videos_title_cannot_bring_back_the_first_videos_text()
     {
         var (window, host) = Window();
@@ -88,10 +107,10 @@ public sealed class VideoPageViewTests
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(TimeSpan.FromSeconds(30), page.Player.Position);
-        Assert.Null(chapters.ExpandedChapter);
+        Assert.Same(chapters.Chapters[1], chapters.ExpandedChapter);
 
         Click(window, Row(host, 1));
-        Assert.Same(chapters.Chapters[1], chapters.ExpandedChapter);
+        Assert.Null(chapters.ExpandedChapter);
     }
 
     [AvaloniaFact]
@@ -103,8 +122,8 @@ public sealed class VideoPageViewTests
         page.Player.Seek(TimeSpan.FromSeconds(12));
         PageView(host).Focus();
 
-        window.KeyPressQwerty(PhysicalKey.M, RawInputModifiers.None);
-        window.KeyReleaseQwerty(PhysicalKey.M, RawInputModifiers.None);
+        window.KeyPressQwerty(PhysicalKey.C, RawInputModifiers.None);
+        window.KeyReleaseQwerty(PhysicalKey.C, RawInputModifiers.None);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal((int)InspectorTab.Chapters, page.SelectedTab);
         Assert.Same(TitleEditor(host), window.FocusManager!.GetFocusedElement());
@@ -115,6 +134,7 @@ public sealed class VideoPageViewTests
         var added = Assert.Single(page.Details.Chapters.Chapters);
         Assert.Equal("Snowball fight", added.Title);
         Assert.Equal("Snowball fight", Row(host, 0).Title);
+        Assert.False(added.IsMoment);
         Assert.True(page.Details.IsDirty);
         Assert.True(page.Details.SaveCommand.CanExecute(null));
     }
@@ -126,7 +146,7 @@ public sealed class VideoPageViewTests
         var page = Page();
         page.SelectedTab = (int)InspectorTab.Chapters;
         Show(host, page);
-        var hint = host.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Text?.StartsWith("Play or scrub") == true);
+        var hint = host.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Text?.StartsWith("Press C") == true);
         Assert.True(hint.IsVisible);
 
         page.AddChapterCommand.Execute(null);
@@ -135,7 +155,7 @@ public sealed class VideoPageViewTests
     }
 
     [AvaloniaFact]
-    public void M_types_into_a_text_field_and_adds_a_chapter_from_the_page()
+    public void M_types_into_a_text_field_and_adds_a_moment_from_the_page()
     {
         var (window, host) = Window();
         var page = Page();
@@ -147,7 +167,10 @@ public sealed class VideoPageViewTests
         window.KeyPressQwerty(PhysicalKey.M, RawInputModifiers.None);
         window.KeyTextInput("m");
         window.KeyReleaseQwerty(PhysicalKey.M, RawInputModifiers.None);
-        Assert.Equal("m", page.Details.Description);
+        window.KeyPressQwerty(PhysicalKey.C, RawInputModifiers.None);
+        window.KeyTextInput("c");
+        window.KeyReleaseQwerty(PhysicalKey.C, RawInputModifiers.None);
+        Assert.Equal("mc", page.Details.Description);
         Assert.Empty(page.Details.Chapters.Chapters);
 
         PageView(host).Focus();

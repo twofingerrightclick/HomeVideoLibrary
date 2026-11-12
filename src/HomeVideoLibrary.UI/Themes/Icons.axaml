@@ -11,6 +11,7 @@
   <StreamGeometry x:Key="Vcr.Icon.Eject">M8,2 L14.5,9 H1.5 Z M1.5,11 H14.5 V14 H1.5 Z</StreamGeometry>
   <StreamGeometry x:Key="Vcr.Icon.Previous">M2,3 H4 V13 H2 Z M14,3 L5,8 L14,13 Z</StreamGeometry>
   <StreamGeometry x:Key="Vcr.Icon.Next">M12,3 H14 V13 H12 Z M2,3 L11,8 L2,13 Z</StreamGeometry>
+  <StreamGeometry x:Key="Vcr.Icon.Moment">M2,4 H14 L8,13 Z</StreamGeometry>
   <StreamGeometry x:Key="Vcr.Icon.Chapter">M3.5,1.5 H12.5 V14.5 L8,11 L3.5,14.5 Z</StreamGeometry>
   <StreamGeometry x:Key="Vcr.Icon.Chapters">M1.5,2.5 H4 V5 H1.5 Z M6,2.5 H14.5 V5 H6 Z M1.5,6.75 H4 V9.25 H1.5 Z M6,6.75 H14.5 V9.25 H6 Z M1.5,11 H4 V13.5 H1.5 Z M6,11 H14.5 V13.5 H6 Z</StreamGeometry>
   <StreamGeometry x:Key="Vcr.Icon.Slice">M7,0.5 H9 V15.5 H7 Z M3,0.5 H13 L8,5 Z</StreamGeometry>

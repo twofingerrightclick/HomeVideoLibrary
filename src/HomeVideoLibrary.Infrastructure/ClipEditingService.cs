@@ -260,15 +260,30 @@ public sealed class ClipEditingService : IClipEditingService
             var next = index + 1 < output.Segments.Count ? output.Segments[index + 1].Offset : output.Duration;
             var source = metadata[segment.Source.RelativePath];
             var ordered = source.Chapters.OrderBy(chapter => chapter.Position).ToArray();
-            var active = ordered.LastOrDefault(chapter => chapter.Position <= segment.Start + CutPlanner.Epsilon);
-            var selected = ordered.Where(chapter => chapter.Position > segment.Start + CutPlanner.Epsilon && chapter.Position < segment.End).ToList();
-            if (active is not null) selected.Insert(0, active);
-            else if (output.IsMerge)
-                chapters.Add(new VideoChapter(UniqueUid(0), segment.Offset, source.Title.Length > 0 ? source.Title : segment.Source.DisplayName, "", []));
-            foreach (var chapter in selected)
+            foreach (var chapter in ordered)
             {
-                var position = segment.ToOutput(chapter.Position);
-                if (position < next) chapters.Add(chapter with { Uid = UniqueUid(chapter.Uid), Position = position });
+                if (chapter.IsMoment)
+                {
+                    if (chapter.Position < segment.Start || chapter.Position >= segment.End) continue;
+                    var point = segment.ToOutput(chapter.Position);
+                    if (point < next) chapters.Add(chapter with { Uid = UniqueUid(chapter.Uid), Position = point, End = point });
+                }
+                else
+                {
+                    var start = chapter.Position > segment.Start ? chapter.Position : segment.Start;
+                    var end = chapter.End < segment.End ? chapter.End : segment.End;
+                    var position = segment.ToOutput(start);
+                    var mappedEnd = TimeSpan.FromTicks(Math.Min(segment.ToOutput(end).Ticks, next.Ticks));
+                    if (end > start && mappedEnd > position)
+                        chapters.Add(chapter with { Uid = UniqueUid(chapter.Uid), Position = position, End = mappedEnd });
+                }
+            }
+            if (output.IsMerge && !chapters.Any(c => !c.IsMoment && c.Position == segment.Offset))
+            {
+                var end = chapters.Where(c => !c.IsMoment && c.Position > segment.Offset && c.Position < next)
+                    .Select(c => c.Position).DefaultIfEmpty(next).Min();
+                if (end > segment.Offset) chapters.Add(new VideoChapter(UniqueUid(0), segment.Offset,
+                    source.Title.Length > 0 ? source.Title : segment.Source.DisplayName, "", []) { End = end });
             }
             thumbnailsBySegment.Add(new Queue<VideoThumbnail>(source.Thumbnails.OrderBy(thumbnail => thumbnail.Position)
                 .Where(thumbnail => thumbnail.Position >= segment.Start && thumbnail.Position < segment.End && segment.ToOutput(thumbnail.Position) < next)

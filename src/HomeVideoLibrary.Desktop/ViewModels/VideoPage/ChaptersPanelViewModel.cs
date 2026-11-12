@@ -43,6 +43,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         foreach (var chapter in chapters) _chapters.Add(new ChapterRowViewModel(this, chapter, suggest));
         Sort();
         AddChapterCommand = new RelayCommand(() => AddAtPlayhead(expand: true), () => CanAddChapter);
+        AddMomentCommand = new RelayCommand(() => AddAtPlayhead(true, true), () => CanAddMoment);
         RenameCurrentCommand = new RelayCommand(() => ExpandedChapter = CurrentChapter, () => CanEdit && CurrentChapter is not null);
         PreviousChapterCommand = new RelayCommand(() => _seek(PreviousStart()));
         NextChapterCommand = new RelayCommand(() => { if (NextStart() is { } next) _seek(next); });
@@ -94,9 +95,14 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
 
     public TimeSpan Duration => _duration;
 
-    /// <summary>Whether a chapter can be added at the playhead: none starts within <see cref="SameChapterTolerance"/>.
+    /// <summary>Whether a range can be added before the clip end without repeating another range start.
     /// Holding the add key therefore adds one chapter, not one per key repeat.</summary>
-    public bool CanAddChapter => CanEdit && !ChapterPlacement.HasChapterAt(Starts, _playhead, SameChapterTolerance);
+    public bool CanAddChapter => CanAdd(false);
+    public bool CanAddMoment => CanAdd(true);
+    private bool CanAdd(bool moment) => CanEdit && _playhead >= TimeSpan.Zero && _playhead < _duration &&
+        !_chapters.Any(c => c.IsMoment == moment && c.Start == _playhead);
+    public string? TimingConflict => ChapterTiming.Conflict(ToChapters(), _duration);
+    public RelayCommand AddMomentCommand { get; }
 
     /// <summary>Whether something is typed into a chapter but not committed yet.</summary>
     public bool HasOpenEdits => _chapters.Any(chapter => chapter.HasOpenEdits);
@@ -119,10 +125,14 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
 
     /// <summary>Adds a chapter at the playhead; <paramref name="expand"/> opens its editor with the title to type.
     /// Returns null when a chapter already starts there.</summary>
-    public ChapterRowViewModel? AddAtPlayhead(bool expand)
+    public ChapterRowViewModel? AddAtPlayhead(bool expand, bool moment = false)
     {
-        if (!CanAddChapter) return null;
-        var row = new ChapterRowViewModel(this, new VideoChapter(NewUid(), _playhead, "", "", []), _suggest);
+        if (!CanAdd(moment)) return null;
+        var proposed = new VideoChapter(NewUid(), _playhead, "", "", [])
+        { End = moment ? _playhead : TimeSpan.FromTicks(Math.Min(_duration.Ticks, (_playhead + TimeSpan.FromMinutes(10)).Ticks)) };
+        var updated = ChapterTiming.Apply(ToChapters(), proposed, _duration);
+        foreach (var existing in _chapters) existing.End = updated.Single(c => c.Uid == existing.Uid).End;
+        var row = new ChapterRowViewModel(this, updated.Single(c => c.Uid == proposed.Uid), _suggest);
         _chapters.Add(row);
         Sort();
         SyncRows();
@@ -161,7 +171,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         Publish();
     }
 
-    internal void Seek(ChapterRowViewModel row) => _seek(row.Start);
+    internal void Seek(ChapterRowViewModel row) { ExpandedChapter = row; _seek(row.Start); }
 
     internal void ToggleExpanded(ChapterRowViewModel row) => ExpandedChapter = ExpandedChapter == row ? null : row;
 
@@ -190,7 +200,26 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
     internal void MoveTo(ChapterRowViewModel row, TimeSpan start)
     {
         if (!CanEdit) return;
-        row.Start = start < TimeSpan.Zero ? TimeSpan.Zero : start;
+        if (!row.IsMoment && start >= row.End) { row.TimingError = "Start must precede this chapter’s end."; return; }
+        ApplyTiming(row, row.ToChapter() with { Position = start, End = row.IsMoment ? start : row.End });
+    }
+
+    internal void SetEnd(ChapterRowViewModel row, TimeSpan end) => ApplyTiming(row, row.ToChapter() with { End = end });
+    internal void SetEndAtPlayhead(ChapterRowViewModel row) => SetEnd(row, _playhead);
+
+    private void ApplyTiming(ChapterRowViewModel row, VideoChapter proposed)
+    {
+        if (!CanEdit) return;
+        IReadOnlyList<VideoChapter> updated;
+        try { updated = ChapterTiming.Apply(ToChapters(), proposed, _duration); }
+        catch (ArgumentException exception) { row.TimingError = exception.Message; return; }
+        row.TimingError = null;
+        foreach (var existing in _chapters)
+        {
+            var value = updated.Single(c => c.Uid == existing.Uid);
+            existing.Start = value.Position;
+            existing.End = value.End;
+        }
         Sort();
         SyncRows();
         Publish();
@@ -250,7 +279,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         var starts = Starts;
         for (var index = 0; index < _chapters.Count; index++)
         {
-            var end = index + 1 < _chapters.Count ? _chapters[index + 1].Start : _duration;
+            var end = _chapters[index].End;
             _chapters[index].IsCurrent = _playhead >= _chapters[index].Start && _playhead < end;
         }
         _placeholder.Start = _playhead;
@@ -259,6 +288,8 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         var current = Rows.IndexOf(_placeholder);
         if (current >= 0 && current != target) Rows.Move(current, target);
         OnPropertyChanged(nameof(CanAddChapter));
+        OnPropertyChanged(nameof(CanAddMoment));
+        AddMomentCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CurrentChapter));
         AddChapterCommand.RaiseCanExecuteChanged();
         RenameCurrentCommand.RaiseCanExecuteChanged();
@@ -266,7 +297,9 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
 
     private void Publish()
     {
-        Marks = _chapters.Select(chapter => (IChapterMark)new ChapterMark(chapter.Start, chapter.Title)).ToArray();
+        Marks = _chapters.Select(chapter => (IChapterMark)new ChapterMark(chapter.Start, chapter.Title) { End = chapter.End }).ToArray();
+        FollowPlayhead();
+        OnPropertyChanged(nameof(TimingConflict));
         OnPropertyChanged(nameof(HasChapters));
         PublishTagGroups();
     }

@@ -13,11 +13,8 @@ public readonly record struct SegmentExtent(double Left, double Right)
 public static class ScrubTimeline
 {
     /// <summary>
-    /// Builds contiguous spans covering [0, <paramref name="duration"/>). Marks are ordered by start; starts
-    /// before zero clamp to zero, marks at or beyond the duration are dropped, and a later mark repeating an
-    /// earlier start is dropped (the first in input order wins). When no mark starts at zero, an untitled
-    /// leading span covers the footage before the first chapter. Returns no spans when the duration is not
-    /// positive.
+    /// Builds the actual explicit range spans, retaining gaps and ignoring moments. Ranges are clipped to
+    /// the duration for display without changing their stored times. Duplicate external entries are retained.
     /// </summary>
     public static IReadOnlyList<ChapterSpan> BuildSpans(IEnumerable<IChapterMark> marks, TimeSpan duration)
     {
@@ -27,31 +24,10 @@ public static class ScrubTimeline
             return [];
         }
 
-        var starts = new List<(TimeSpan Start, string Title)>();
-        foreach (var mark in marks
-            .Select(m => (Start: m.Start < TimeSpan.Zero ? TimeSpan.Zero : m.Start, Title: m.Title ?? string.Empty))
-            .Where(m => m.Start < duration)
-            .OrderBy(m => m.Start))
-        {
-            if (starts.Count == 0 || starts[^1].Start != mark.Start)
-            {
-                starts.Add(mark);
-            }
-        }
-
-        if (starts.Count == 0 || starts[0].Start > TimeSpan.Zero)
-        {
-            starts.Insert(0, (TimeSpan.Zero, string.Empty));
-        }
-
-        var spans = new ChapterSpan[starts.Count];
-        for (var i = 0; i < starts.Count; i++)
-        {
-            var end = i + 1 < starts.Count ? starts[i + 1].Start : duration;
-            spans[i] = new ChapterSpan(starts[i].Start, end, starts[i].Title);
-        }
-
-        return spans;
+        return marks.Where(m => m.End > m.Start && m.Start < duration && m.End > TimeSpan.Zero)
+            .OrderBy(m => m.Start)
+            .Select(m => new ChapterSpan(m.Start < TimeSpan.Zero ? TimeSpan.Zero : m.Start,
+                m.End > duration ? duration : m.End, m.Title ?? string.Empty)).ToArray();
     }
 
     /// <summary>Position of <paramref name="time"/> on a track <paramref name="width"/> wide, clamped to [0, width].</summary>
@@ -78,90 +54,27 @@ public static class ScrubTimeline
 
     /// <summary>
     /// Index of the span containing <paramref name="time"/>. A time on a boundary belongs to the span that
-    /// starts there; times before the first span map to it and times past the end map to the last.
-    /// Returns -1 when there are no spans.
+    /// starts there. Returns -1 for gaps, points outside all ranges, and an empty timeline.
     /// </summary>
     /// <param name="spans">Spans in start order, as built by <see cref="BuildSpans"/>.</param>
     public static int SpanIndexAt(IReadOnlyList<ChapterSpan> spans, TimeSpan time)
     {
         ArgumentNullException.ThrowIfNull(spans);
-        if (spans.Count == 0)
-        {
-            return -1;
-        }
-
-        int low = 0, high = spans.Count - 1;
-        while (low < high)
-        {
-            var mid = (low + high + 1) / 2;
-            if (spans[mid].Start <= time)
-            {
-                low = mid;
-            }
-            else
-            {
-                high = mid - 1;
-            }
-        }
-
-        return low;
+        for (var i = 0; i < spans.Count; i++)
+            if (time >= spans[i].Start && time < spans[i].End) return i;
+        return -1;
     }
 
     /// <summary>
-    /// Lays spans out across [0, <paramref name="width"/>], one extent per span, with exactly
-    /// <paramref name="gap"/> between neighbours and none at the outer ends. A span too short to show
-    /// <paramref name="minWidth"/> after its gaps pushes its boundaries outward, borrowing width from its
-    /// neighbours, so every segment stays at least <paramref name="minWidth"/> wide and gaps never shrink to
-    /// fit it. Only when the width cannot hold every segment at <paramref name="minWidth"/> plus all gaps do
-    /// the gaps shrink, and then the minimum, until everything fits.
+    /// Maps actual endpoints proportionally. Gaps and tiny chapters retain their true extent; the legacy
+    /// gap and minimum-width arguments remain for source compatibility with gallery callers.
     /// </summary>
     public static IReadOnlyList<SegmentExtent> LayoutSegments(
         IReadOnlyList<ChapterSpan> spans, TimeSpan duration, double width, double gap, double minWidth)
     {
         ArgumentNullException.ThrowIfNull(spans);
-        var count = spans.Count;
-        if (count == 0)
-        {
-            return [];
-        }
-
-        width = Math.Max(0, width);
-        gap = count > 1 ? Math.Max(0, gap) : 0;
-        minWidth = Math.Max(0, minWidth);
-        if (count * minWidth + (count - 1) * gap > width)
-        {
-            gap = count > 1 ? Math.Max(0, (width - count * minWidth) / (count - 1)) : 0;
-            minWidth = Math.Min(minWidth, width / count);
-        }
-
-        double Required(int i) => minWidth + gap / 2 * ((i > 0 ? 1 : 0) + (i < count - 1 ? 1 : 0));
-
-        var bounds = new double[count + 1];
-        bounds[count] = width;
-        for (var i = 1; i < count; i++)
-        {
-            bounds[i] = TimeToX(spans[i].Start, duration, width);
-        }
-
-        for (var i = 1; i < count; i++)
-        {
-            bounds[i] = Math.Max(bounds[i], bounds[i - 1] + Required(i - 1));
-        }
-
-        for (var i = count - 1; i > 0; i--)
-        {
-            bounds[i] = Math.Min(bounds[i], bounds[i + 1] - Required(i));
-        }
-
-        var extents = new SegmentExtent[count];
-        for (var i = 0; i < count; i++)
-        {
-            var left = bounds[i] + (i > 0 ? gap / 2 : 0);
-            var right = bounds[i + 1] - (i < count - 1 ? gap / 2 : 0);
-            extents[i] = new SegmentExtent(left, Math.Max(left, right));
-        }
-
-        return extents;
+        return spans.Select(span => new SegmentExtent(TimeToX(span.Start, duration, width),
+            TimeToX(span.End, duration, width))).ToArray();
     }
 
     /// <summary>

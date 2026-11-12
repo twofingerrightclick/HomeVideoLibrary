@@ -1,6 +1,10 @@
 namespace HomeVideoLibrary.Core;
 
-public sealed record VideoChapter(ulong Uid, TimeSpan Position, string Title, string Description, IReadOnlyList<string> Tags);
+public sealed record VideoChapter(ulong Uid, TimeSpan Position, string Title, string Description, IReadOnlyList<string> Tags)
+{
+    public TimeSpan End { get; init; } = Position;
+    public bool IsMoment => End == Position;
+}
 
 public sealed record VideoThumbnail(Guid Id, TimeSpan Position, string ImagePath);
 

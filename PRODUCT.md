@@ -25,7 +25,7 @@ Import home videos into a chosen library folder, browse them as a chronological 
 - Import copies source videos into the configured library and produces validated MKV files. Originals are preserved.
 - Descriptions, arbitrary video and chapter tags, chapter markers and descriptions, and up to 20 chosen thumbnails belong inside the MKV, rather than only in SQLite.
 - SQLite holds video paths and album membership. Search across titles, descriptions, chapters, and tags runs in memory over a model read from the MKVs, so it can always be rebuilt.
-- Playback includes seeking, a collapsible right inspector, chapter navigation, and the M shortcut to mark a chapter.
+- Playback includes seeking, a collapsible right inspector, chapter navigation, and C/M shortcuts to add chapters and moments.
 - Albums support multi-selection, drag-and-drop, and adding videos that are not already members.
 - Secondary editing supports trim, merge, split into two clips, and saving outputs as new videos. Cuts and joins copy the streams where they can (the button reads SAVE) and re-encode only when they must (RENDER). Edits run as background jobs, so the app stays usable.
 - Deleting a video moves its MKV to the operating system's Trash and then forgets it, never the reverse, and only after the user confirms. Restoring it means importing it again from the Trash; its album memberships are not kept. A drive without a Trash gets a second, explicit "delete permanently" question for those videos only. A video whose file is missing can only be removed from the library (its row), never "trashed".

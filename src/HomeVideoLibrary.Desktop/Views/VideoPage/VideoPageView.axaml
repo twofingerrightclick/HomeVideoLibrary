@@ -87,7 +87,7 @@
           <TabItem Header="INFO" ui:Vcr.Icon="{StaticResource Vcr.Icon.Info}">
             <ScrollViewer><local:InfoTab Margin="4,4,8,12"/></ScrollViewer>
           </TabItem>
-          <TabItem Header="CHAPTERS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Chapters}">
+          <TabItem Header="CHAPTERS &amp; MOMENTS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Chapters}">
             <ScrollViewer><local:ChaptersTab Margin="4,4,8,12"/></ScrollViewer>
           </TabItem>
           <TabItem Header="TAGS" ui:Vcr.Icon="{StaticResource Vcr.Icon.Tag}">

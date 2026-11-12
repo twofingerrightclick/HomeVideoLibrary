@@ -97,7 +97,7 @@ A toolbar (◀ LIBRARY, title, the UNSAVED light, REVERT, SAVE and a More menu),
 right inspector that can be hidden and resized.
 
 - **Transport deck:** scrub bar with chapter marks and an in/out range while editing, track search, REW, PLAY/PAUSE, FF,
-  LCD TIME and TOTAL counters, MARK (M), volume with mute, and a fullscreen key with an inspector latch.
+  LCD TIME and TOTAL counters, MOMENT (M), volume with mute, and a fullscreen key with an inspector latch.
 - **Inspector tabs** (Cmd/Ctrl+1 to 5): INFO (title, description, recording date, file, albums), CHAPTERS, TAGS, FRAMES
   (the chosen thumbnails stored in the MKV) and EDIT.
 - **Chapters**: clicking a row's start time seeks there; clicking the rest of the row expands it in place into its own editor (title, start, description, tags). One row is open at a time.
@@ -141,7 +141,7 @@ chords such as Cmd/Ctrl+S still work there) and plays the sound of the on-screen
 |---|---|
 | Global | Cmd/Ctrl+F search, Cmd/Ctrl+I import, Cmd/Ctrl+, settings |
 | Library | Arrows/Home/End/Page move between tapes; Enter play; Space / Shift+Space select / range; Cmd/Ctrl+A select all; Esc clears selection, then search; Cmd/Ctrl+N new album from selection; F2 rename the focused album; Delete/Backspace move to Trash, or remove from the shown album; Cmd+Backspace / Ctrl+Delete move to Trash in any view; Cmd/Ctrl+Shift+M merge |
-| Video page | Space / K play; Left / Right seek 5 s (Shift 1 s); J / L seek 10 s; Home / End; [ ] or Page Up / Down previous / next chapter; Up / Down volume; 0 mute; M add chapter; I / O trim in / out; F2 rename chapter; Delete / Backspace remove the focused chapter; Shift+C capture frame; F fullscreen; Esc leaves fullscreen, then the page; Cmd/Ctrl+S save; Cmd/Ctrl+\ inspector; Cmd/Ctrl+1 to 5 tabs |
+| Video page | Space / K play; Left / Right seek 5 s (Shift 1 s); J / L seek 10 s; Home / End; [ ] or Page Up / Down previous / next chapter; Up / Down volume; 0 mute; C add chapter; M add moment; I / O trim in / out; F2 rename chapter; Delete / Backspace remove the focused chapter; Shift+C capture frame; F fullscreen; Esc leaves fullscreen, then the page; Cmd/Ctrl+S save; Cmd/Ctrl+\ inspector; Cmd/Ctrl+1 to 5 tabs |
 | Merge page | Alt+Up / Down move the selected clip; Esc back |
 
 ## Sound
@@ -161,3 +161,5 @@ Button sounds are off by default and toggled in Settings, which saves the choice
 - **Don't** distribute watermarked reference imagery.
 - **Don't** preload thumbnail bitmaps for the entire library.
 - **Don't** write hover captures into MKV metadata.
+
+Chapters retain the existing yellow accent; moments use a neutral gray downward triangle in the list and timeline. Hovering near the timeline triangle reveals its exact timestamp and title. Chapters keep the bookmark icon. Moment actions are outlined, solid tactile VCR keys, including the shared fullscreen transport, without a bright yellow fill.

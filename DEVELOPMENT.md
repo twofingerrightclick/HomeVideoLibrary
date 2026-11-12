@@ -94,14 +94,14 @@ When a library opens, background jobs (in slices, so your own edits and trashes 
 
 ## Video page
 
-Click a tape (or press Enter) to open its page: the video and a transport deck styled like a VCR (scrub bar, track search, rewind and fast-forward, LCD time and total, MARK, volume, fullscreen), and an inspector on the right that can be hidden (Cmd/Ctrl+\) and resized. The toolbar has **LIBRARY** (Esc), an UNSAVED light, **REVERT**, **SAVE**, and a **More** menu (Add to album, Show file location, Move to Trash).
+Click a tape (or press Enter) to open its page: the video and a transport deck styled like a VCR (scrub bar, track search, rewind and fast-forward, LCD time and total, MOMENT, volume, fullscreen), and an inspector on the right that can be hidden (Cmd/Ctrl+\) and resized. The toolbar has **LIBRARY** (Esc), an UNSAVED light, **REVERT**, **SAVE**, and a **More** menu (Add to album, Show file location, Move to Trash).
 
 Hovering the scrub bar shows a tooltip above it with the chapter title, time and a frame; chapters appear as marks on the bar. Fullscreen (F) hides the toolbar and inspector; the deck's controls are drawn by a transparent native window over the video, and hide after 2.5 s without pointer movement while the video plays.
 
 The inspector's tabs switch with Cmd/Ctrl+1 to 5:
 
 - **INFO**: title, description, optional recording date (`1997`, `1997-07` or `1997-07-03`), file details and the albums the video is in.
-- **CHAPTERS**: press **M** (or MARK) to add a chapter at the playhead; its row opens in place with the title focused. Click a chapter's start time to play from it; click elsewhere on the row to expand it into an editor for title, start, description and tags (one row open at a time; Esc collapses it). Each row has keys to play from it, edit (F2) and remove (Delete).
+- **CHAPTERS AND MOMENTS**: press **C** to add a chapter or **M** (or MOMENT) to add a moment at the playhead; its row opens in place with the title focused. Click a chapter's start time to play from it; click elsewhere on the row to expand it into an editor for title, start, end, description and tags (one row open at a time; Esc collapses it). Each row has keys to play from it, edit (F2) and remove (Delete).
 - **TAGS**: video tags as chips with suggestions from the rest of the library, and the chapter tags in use, each linking to its chapter.
 - **FRAMES**: **CAPTURE** (Shift+C) chooses the frame at the playhead as one of up to twenty thumbnails stored in the MKV; trims, splits and merges carry them along. Click one to play from it.
 - **EDIT**: trim, split and merge (below).
@@ -132,7 +132,7 @@ Before any work starts, a plan is computed from the actual file and shown live. 
 
 The edit runs as a **render job** in the Activity drawer. Render jobs (edits, Trash moves, the identity backfill) run one at a time in the order started; the others show as "Queued (#n)" with a cancel key, and imports run in a separate lane alongside them. A finished job has **OPEN** for its output, and a chime plays when button sounds are on. Keep using the app meanwhile; closing the window asks first. Cancellation or failure removes every uncommitted output; a successful edit publishes all its outputs in one catalog transaction.
 
-Single-source edits keep every track, track tag and attachment from the original. Title, description, tags, recording date, chapters and chosen thumbnails are rewritten on the new timeline: a chapter active at the cut starts at zero, later chapters and thumbnails shift with the cut, and merged clips that lack a chapter at their start get one named after the clip. Outputs are staged and validated (track layout, length, and a decode around every cut or join) before publication.
+Single-source edits keep every track, track tag and attachment from the original. Title, description, tags, recording date, chapters and chosen thumbnails are rewritten on the new timeline: ranges are intersected with retained footage and both timestamps shift; moments use the half-open retained interval so a moment at a split belongs only to the second output. Merged clips with a leading range gap receive a chapter named after the clip. Outputs are staged and validated (track layout, length, and a decode around every cut or join) before publication.
 
 Run focused editing tests with `dotnet test tests/HomeVideoLibrary.Tests --filter FullyQualifiedName~ClipEditing` (and `~EditPlanning` for the planner).
 
@@ -185,3 +185,9 @@ dotnet ef migrations has-pending-model-changes --project src/HomeVideoLibrary.In
 ```
 
 The factory requires an explicit absolute database path and never selects a user's library by default. Migration generation does not initialize that path. Do not use `EnsureCreated`, manual schema SQL, `user_version`, or hand-maintained schema versions. Keep the model, generated migrations and snapshot in sync; the catalog migration tests also check for pending model differences. Initialization uses `MigrateAsync` without an enclosing caller transaction, applies local WAL or network DELETE journal policy before migration work and reapplies it afterward. Empty EF bookkeeping left by an interrupted first migration is retryable. EF owns migration locking; caller cancellation is passed through without custom lock checks, timeouts or repairs. See [the accepted scope and verification](docs/ef-core-migration-spec.md).
+
+### Chapters and Moments timing
+
+Chapters store explicit start/end timestamps; moments have equal timestamps and a neutral gray downward triangle on the timeline. Older start-only entries read as moments and gain an explicit equal end on their next save. C creates a chapter ending at the earliest of ten minutes later, the clip end, or the next range; M creates a moment. Moments never shorten ranges. SET END TIME edits the selected entry after seeking: equal start/end converts to a moment, later end converts to a chapter. Range insertions shorten a preceding overlap; moving a range retains its end and rejects a start at or after it. Deletion leaves gaps. External overlaps remain visible and must be resolved before saving. Shift+C still captures a frame; typing in text fields suppresses C/M shortcuts.
+
+Chapters retain the existing yellow accent; moments use a neutral gray downward triangle in the list and timeline. Hovering near the timeline triangle reveals its exact timestamp and title. Chapters keep the bookmark icon. Moment actions are outlined, solid tactile VCR keys, including the shared fullscreen transport, without a bright yellow fill.
