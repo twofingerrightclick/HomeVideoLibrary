@@ -10,7 +10,7 @@ public static class ChapterTiming
         var ranges = chapters.Where(c => !c.IsMoment).OrderBy(c => c.Position).ToArray();
         for (var i = 1; i < ranges.Length; i++)
             if (ranges[i - 1].End > ranges[i].Position)
-                return "Chapters overlap. Adjust their start or end times before saving.";
+                return "Chapters overlap. Adjust their start or end times before saving chapter changes.";
         return null;
     }
 

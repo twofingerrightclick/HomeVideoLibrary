@@ -92,6 +92,15 @@ public static class ScrubTimeline
         return new SegmentExtent(TimeToX(from, duration, width), TimeToX(to, duration, width));
     }
 
+    /// <summary>A moment's exact timestamp, retaining stored subsecond precision.</summary>
+    public static string FormatMomentTimestamp(TimeSpan time)
+    {
+        var whole = FormatTimestamp(time);
+        var fraction = time.Ticks % TimeSpan.TicksPerSecond;
+        return fraction <= 0 ? whole : whole + "." + fraction.ToString("D7", System.Globalization.CultureInfo.InvariantCulture)
+            .TrimEnd('0').PadRight(3, '0');
+    }
+
     /// <summary>Formats as <c>m:ss</c>, or <c>h:mm:ss</c> from one hour; negative times format as zero.</summary>
     public static string FormatTimestamp(TimeSpan time)
     {

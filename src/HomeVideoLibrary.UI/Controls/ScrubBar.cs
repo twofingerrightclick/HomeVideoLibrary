@@ -703,7 +703,7 @@ public class ScrubBar : TemplatedControl
         HoverTime = time;
         HoverChapterTitle = moment is not null ? (string.IsNullOrEmpty(moment.Title) ? "Moment" : moment.Title)
             : index >= 0 && !string.IsNullOrEmpty(_spans[index].Title) ? _spans[index].Title : null;
-        var text = ScrubTimeline.FormatTimestamp(time);
+        var text = moment is null ? ScrubTimeline.FormatTimestamp(time) : ScrubTimeline.FormatMomentTimestamp(time);
         if (_hoverTimeText is not null)
         {
             _hoverTimeText.Text = text;

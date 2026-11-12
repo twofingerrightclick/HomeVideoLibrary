@@ -205,9 +205,12 @@ public sealed class ChapterRowViewModel : ViewModelBase
             StartError = $"Use h:mm:ss, m:ss or seconds, before the end ({Timecode.Format(_panel.Duration)}).";
             return;
         }
+        StartError = null;
+        if (start != Start) _panel.MoveTo(this, start);
+        else TimingError = null;
+        if (TimingError is not null) return;
         _draftStart = null;
         OnPropertyChanged(nameof(StartField));
-        if (start != Start) _panel.MoveTo(this, start);
-        else _panel.DraftChanged();
+        _panel.DraftChanged();
     }
 }

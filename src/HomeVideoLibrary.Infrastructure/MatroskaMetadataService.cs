@@ -67,7 +67,8 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
         try
         {
             var original = await ReadStateAsync(path, scratch, cancellationToken);
-            Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration);
+            Validate(metadata, original.Container.DurationNanoseconds is { } nanoseconds ? TimeSpan.FromTicks(nanoseconds / 100) : video.Duration,
+                validateChapterTiming: !MatroskaMetadataXml.SameChapters(MetadataText.Normalize(original.Written).Chapters, metadata.Chapters));
             var plan = await PlanWriteAsync(original, metadata, null, keepThumbnails: false, scratch, cancellationToken);
             await WriteWithRollbackAsync(path, original, metadata, plan, scratch, cancellationToken);
         }
@@ -484,9 +485,9 @@ public sealed partial class MatroskaMetadataService(LibraryCatalog catalog, Medi
     private static VideoThumbnailRef ToRef(ThumbnailEntry entry) =>
         new(entry.Id, TimeSpan.FromTicks(entry.PositionTicks), entry.Name, entry.Sha256);
 
-    private static void Validate(VideoMetadata metadata, TimeSpan duration)
+    private static void Validate(VideoMetadata metadata, TimeSpan duration, bool validateChapterTiming = true)
     {
-        if (ChapterTiming.Conflict(metadata.Chapters, duration) is { } conflict) throw new ArgumentException(conflict, nameof(metadata));
+        if (validateChapterTiming && ChapterTiming.Conflict(metadata.Chapters, duration) is { } conflict) throw new ArgumentException(conflict, nameof(metadata));
         if (metadata.Thumbnails.Count > MaxThumbnails) throw new ArgumentException("Choose at most twenty thumbnails.", nameof(metadata));
         if (metadata.Chapters.FirstOrDefault(chapter => chapter.Uid == 0) is { } unidentified)
             throw new ArgumentException($"Chapter \"{unidentified.Title}\" has no ID.", nameof(metadata));

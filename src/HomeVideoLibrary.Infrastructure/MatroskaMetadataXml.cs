@@ -155,7 +155,7 @@ internal static class MatroskaMetadataXml
         }
     }
 
-    private static bool SameChapters(IReadOnlyList<VideoChapter> left, IReadOnlyList<VideoChapter> right) =>
+    internal static bool SameChapters(IReadOnlyList<VideoChapter> left, IReadOnlyList<VideoChapter> right) =>
         left.Count == right.Count && left.OrderBy(chapter => chapter.Uid).Zip(right.OrderBy(chapter => chapter.Uid)).All(pair =>
             pair.First.Uid == pair.Second.Uid && pair.First.Position == pair.Second.Position && pair.First.End == pair.Second.End && pair.First.Title == pair.Second.Title &&
             pair.First.Description == pair.Second.Description && pair.First.Tags.SequenceEqual(pair.Second.Tags));

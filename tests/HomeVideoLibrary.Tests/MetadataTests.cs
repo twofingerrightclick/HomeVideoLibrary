@@ -13,6 +13,31 @@ public sealed class MetadataTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task UnrelatedSavePreservesForeignOverlapButChapterEditsRequireResolution()
+    {
+        var (catalog, video) = await CreateVideoAsync();
+        var path = catalog.GetVideoPath(video.RelativePath);
+        var chaptersPath = Path.Combine(_root, "overlaps.xml");
+        await File.WriteAllTextAsync(chaptersPath, """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Chapters><EditionEntry>
+              <ChapterAtom><ChapterUID>11</ChapterUID><ChapterTimeStart>00:00:00.000000000</ChapterTimeStart><ChapterTimeEnd>00:00:01.500000000</ChapterTimeEnd></ChapterAtom>
+              <ChapterAtom><ChapterUID>12</ChapterUID><ChapterTimeStart>00:00:01.000000000</ChapterTimeStart><ChapterTimeEnd>00:00:02.000000000</ChapterTimeEnd></ChapterAtom>
+            </EditionEntry></Chapters>
+            """);
+        await ToolAsync(_tools.MkvPropEdit, [path, "--chapters", chaptersPath]);
+        var service = new MatroskaMetadataService(catalog, _tools);
+        var read = await service.ReadAsync(video);
+        await service.SaveAsync(video, read with { Description = "Unrelated edit", Tags = ["family"] });
+        var saved = await service.ReadAsync(video);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), saved.Chapters[0].End);
+        Assert.Equal(TimeSpan.FromSeconds(1), saved.Chapters[1].Position);
+        Assert.Equal(TimeSpan.FromSeconds(2), saved.Chapters[1].End);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SaveAsync(video, saved with
+        { Chapters = [saved.Chapters[0] with { Title = "Changed chapter" }, saved.Chapters[1]] }));
+    }
+
+    [Fact]
     public async Task MissingEndsMigrateToMomentsAndExplicitEndsSurviveSave()
     {
         var (catalog, video) = await CreateVideoAsync();

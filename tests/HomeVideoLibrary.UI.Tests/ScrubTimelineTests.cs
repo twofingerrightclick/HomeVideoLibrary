@@ -11,6 +11,15 @@ public class ScrubTimelineTests
 
     private static ChapterSpan Span(double start, double end, string title) => new(Sec(start), Sec(end), title);
 
+    [Theory]
+    [InlineData(62.75, "1:02.750")]
+    [InlineData(62, "1:02")]
+    [InlineData(62.7501, "1:02.7501")]
+    public void MomentTimestampRetainsSubsecondPrecision(double seconds, string expected)
+    {
+        Assert.Equal(expected, ScrubTimeline.FormatMomentTimestamp(Sec(seconds)));
+    }
+
     [Fact]
     public void ExplicitRangesIgnoreMomentsAndPreserveGaps()
     {
