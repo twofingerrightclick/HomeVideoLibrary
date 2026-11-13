@@ -114,36 +114,10 @@
 
   <!-- Where a chapter added at the playhead would land: yellow, matching the scrub bar's slice marker. -->
   <ControlTheme x:Key="{x:Type c:ChapterPlaceholderRow}" TargetType="c:ChapterPlaceholderRow">
-    <Setter Property="MinHeight" Value="38"/>
-    <Setter Property="FontSize" Value="{DynamicResource Vcr.FontSize.Body}"/>
+    <Setter Property="MinHeight" Value="2"/>
     <Setter Property="Template">
       <ControlTemplate>
-        <Border Background="{DynamicResource Vcr.Brush.Yellow.Soft}"
-                BorderBrush="#80F2C521"
-                BorderThickness="1"
-                CornerRadius="3">
-          <Grid ColumnDefinitions="3,Auto,*">
-            <Border CornerRadius="1.5" Margin="0,6" Background="{DynamicResource Vcr.Brush.Yellow}"/>
-            <Panel Grid.Column="1" MinWidth="62" Margin="9,0,4,0" VerticalAlignment="Center">
-              <TextBlock Text="{TemplateBinding StartGhostText}"
-                         FontFamily="{DynamicResource Vcr.Font.Segment}"
-                         FontSize="11"
-                         Foreground="#3D3410"
-                         HorizontalAlignment="Right"/>
-              <TextBlock Text="{TemplateBinding StartText}"
-                         FontFamily="{DynamicResource Vcr.Font.Segment}"
-                         FontSize="11"
-                         Foreground="{DynamicResource Vcr.Brush.Yellow}"
-                         HorizontalAlignment="Right"/>
-            </Panel>
-            <StackPanel Grid.Column="2" Margin="8,0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-              <PathIcon Data="{DynamicResource Vcr.Icon.Slice}" Width="12" Height="12" Foreground="{DynamicResource Vcr.Brush.Yellow}"/>
-              <TextBlock FontStyle="Italic" Foreground="{DynamicResource Vcr.Brush.Yellow}" VerticalAlignment="Center">
-                <Run Text="New chapter at "/><Run Text="{TemplateBinding StartText}"/>
-              </TextBlock>
-            </StackPanel>
-          </Grid>
-        </Border>
+        <Border Height="2" Background="{DynamicResource Vcr.Brush.Yellow}" VerticalAlignment="Center"/>
       </ControlTemplate>
     </Setter>
   </ControlTheme>
