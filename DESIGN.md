@@ -100,7 +100,7 @@ right inspector that can be hidden and resized.
   LCD TIME and TOTAL counters, MOMENT (M), volume with mute, and a fullscreen key with an inspector latch.
 - **Inspector tabs** (Cmd/Ctrl+1 to 5): INFO (title, description, recording date, file, albums), CHAPTERS, TAGS, FRAMES
   (the chosen thumbnails stored in the MKV) and EDIT.
-- **Chapters and Moments**: clicking a row's start time seeks there; clicking the rest expands its editor. Start and end are read-only, with millisecond precision. SET START TIME and SET END TIME use the playhead. Beneath each row, an arrow key uses the previous range's end or next range's start, falling back to the clip boundary. Moments are ignored as neighbors; invalid actions are disabled. Title, description, and tags remain editable. One row is open at a time.
+- **Chapters and Moments**: clicking a row's title or time seeks there without changing playback state. Only Edit (or F2) opens its editor; newly created entries open automatically. There is no row play button. Start and end are read-only, with millisecond precision. SET START TIME and SET END TIME use the playhead. Beneath each row, an arrow key uses the previous range's end or next range's start, falling back to the clip boundary. Moments are ignored as neighbors; invalid actions are disabled. Title, description, and tags remain editable. One row is open at a time.
 - **Editing is explicit:** nothing is written until SAVE. An amber UNSAVED light shows while edits are pending.
 - **Fullscreen:** the controls come from a transparent native overlay window over the video and hide, with the
   pointer, 2.5 s after the pointer last moved while the video plays.

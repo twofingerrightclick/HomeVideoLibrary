@@ -101,7 +101,7 @@ Hovering the scrub bar shows a tooltip above it with the chapter title, time and
 The inspector's tabs switch with Cmd/Ctrl+1 to 5:
 
 - **INFO**: title, description, optional recording date (`1997`, `1997-07` or `1997-07-03`), file details and the albums the video is in.
-- **CHAPTERS AND MOMENTS**: press **C** to add a chapter or **M** (or MOMENT) to add a moment at the playhead; its row opens in place with the title focused. Click a chapter's start time to play from it; click elsewhere on the row to expand it into an editor for title, start, end, description and tags (one row open at a time; Esc collapses it). Each row has keys to play from it, edit (F2) and remove (Delete).
+- **CHAPTERS AND MOMENTS**: press **C** to add a chapter or **M** (or MOMENT) to add a moment at the playhead; its row opens in place with the title focused. Click a chapter or moment title or time to seek there while preserving playing/paused state. Use Edit (or F2) to open its editor (one row open at a time; Esc collapses it). Each row has Edit and Remove (Delete) keys; no separate play key. Moments show only Time and Set time; chapters have start/end playhead and boundary controls. Enter commits and collapses a moment title, while chapter titles stay open.
 - **TAGS**: video tags as chips with suggestions from the rest of the library, and the chapter tags in use, each linking to its chapter.
 - **FRAMES**: **CAPTURE** (Shift+C) chooses the frame at the playhead as one of up to twenty thumbnails stored in the MKV; trims, splits and merges carry them along. Click one to play from it.
 - **EDIT**: trim, split and merge (below).

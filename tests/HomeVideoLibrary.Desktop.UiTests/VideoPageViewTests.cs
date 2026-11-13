@@ -234,12 +234,12 @@ public sealed class VideoPageViewTests
         var chapters = page.Details.Chapters;
         Assert.Empty(host.GetVisualDescendants().OfType<ChapterDetailsView>());
 
-        Click(window, Row(host, 0));
+        Edit(window, Row(host, 0));
         var firstEditor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
         Assert.Same(Row(host, 0), firstEditor.FindAncestorOfType<ChapterListItem>());
         Assert.Same(TitleEditor(host), window.FocusManager!.GetFocusedElement());
         Assert.Equal("Wrapping paper everywhere", firstEditor.GetVisualDescendants().OfType<TextBox>().Single(box => box.Classes.Contains("area")).Text);
-        Click(window, Row(host, 1));
+        Edit(window, Row(host, 1));
         var secondEditor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
 
         Assert.NotSame(firstEditor, secondEditor);
@@ -251,29 +251,56 @@ public sealed class VideoPageViewTests
         Assert.Same(Row(host, 1), window.FocusManager!.GetFocusedElement());
     }
 
-    [AvaloniaFact]
-    public void Clicking_a_chapters_time_plays_from_it_and_clicking_elsewhere_on_the_row_expands_it()
+    [AvaloniaTheory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ClickingTitleOrTimeSeeksWithoutEditingOrChangingPlayback(bool moment, bool playing)
     {
         var (window, host) = Window();
-        var page = Page(TwoChapters);
+        var entry = new VideoChapter(1, TimeSpan.FromSeconds(15), "A memory", "", [])
+            { End = TimeSpan.FromSeconds(moment ? 15 : 35) };
+        var page = Page(VideoMetadata.Empty with { Chapters = [entry] });
         page.SelectedTab = (int)InspectorTab.Chapters;
         Show(host, page);
-        var chapters = page.Details.Chapters;
-        var time = Row(host, 1).GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
-
-        var point = time.TranslatePoint(new Point(time.Bounds.Width / 2, time.Bounds.Height / 2), window)!.Value;
+        if (page.Player.IsPlaying != playing) page.Player.PlayPauseCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var item = Row(host, 0);
+        PointerPressedEventArgs? lastPointer = null;
+        item.PointerPressed += (_, args) => lastPointer = args;
+        var title = item.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Name == "PART_TitleText");
+        var point = title.TranslatePoint(new Point(4, title.Bounds.Height / 2), window)!.Value;
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(TimeSpan.FromSeconds(30), page.Player.Position);
-        Assert.Same(chapters.Chapters[1], chapters.ExpandedChapter);
-
-        Click(window, Row(host, 1));
-        Assert.Null(chapters.ExpandedChapter);
+        Assert.Equal(TimeSpan.FromSeconds(15), page.Player.Position);
+        Assert.Equal(playing, page.Player.IsPlaying);
+        Assert.Null(page.Details.Chapters.ExpandedChapter);
+        // Repeated clicks must not open the inline title editor either.
+        item.RaiseEvent(new TappedEventArgs(Gestures.DoubleTappedEvent, lastPointer!) { Source = title });
+        Assert.False(item.IsEditing);
+        var time = item.GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
+        page.Player.Seek(TimeSpan.FromSeconds(2));
+        Dispatcher.UIThread.RunJobs();
+        point = time.TranslatePoint(new Point(4, time.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(TimeSpan.FromSeconds(15), page.Player.Position);
+        Assert.Equal(playing, page.Player.IsPlaying);
+        Assert.Null(page.Details.Chapters.ExpandedChapter);
+        Edit(window, item);
+        Assert.Same(page.Details.Chapters.Chapters.Single(), page.Details.Chapters.ExpandedChapter);
+        Assert.Equal(playing, page.Player.IsPlaying);
+        Assert.DoesNotContain(item.GetVisualDescendants().OfType<PlasticButton>(), button =>
+            Equals(ToolTip.GetTip(button), "Play from here"));
     }
 
-    [AvaloniaFact]
-    public void A_chapter_added_from_another_tab_opens_expanded_and_takes_its_typed_title()
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_annotation_added_from_another_tab_opens_expanded_and_takes_its_typed_title(bool moment)
     {
         var (window, host) = Window();
         var page = Page();
@@ -281,8 +308,8 @@ public sealed class VideoPageViewTests
         page.Player.Seek(TimeSpan.FromSeconds(12));
         PageView(host).Focus();
 
-        window.KeyPressQwerty(PhysicalKey.C, RawInputModifiers.None);
-        window.KeyReleaseQwerty(PhysicalKey.C, RawInputModifiers.None);
+        window.KeyPressQwerty(moment ? PhysicalKey.M : PhysicalKey.C, RawInputModifiers.None);
+        window.KeyReleaseQwerty(moment ? PhysicalKey.M : PhysicalKey.C, RawInputModifiers.None);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal((int)InspectorTab.Chapters, page.SelectedTab);
         Assert.Same(TitleEditor(host), window.FocusManager!.GetFocusedElement());
@@ -293,7 +320,7 @@ public sealed class VideoPageViewTests
         var added = Assert.Single(page.Details.Chapters.Chapters);
         Assert.Equal("Snowball fight", added.Title);
         Assert.Equal("Snowball fight", Row(host, 0).Title);
-        Assert.False(added.IsMoment);
+        Assert.Equal(moment, added.IsMoment);
         Assert.True(page.Details.IsDirty);
         Assert.True(page.Details.SaveCommand.CanExecute(null));
     }
@@ -531,9 +558,12 @@ public sealed class VideoPageViewTests
     private static TextBox TitleEditor(ContentControl host) =>
         host.GetVisualDescendants().OfType<ChapterDetailsView>().Single().GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "TitleField");
 
-    private static void Click(Window window, Control control)
+    private static void Edit(Window window, ChapterListItem row)
     {
-        var point = control.TranslatePoint(new Point(control.Bounds.Width / 2, 19), window)!.Value;
+        var button = row.GetVisualDescendants().OfType<PlasticButton>().Single(button =>
+            Equals(ToolTip.GetTip(button), "Edit (F2)"));
+        var point = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseMove(point);
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();

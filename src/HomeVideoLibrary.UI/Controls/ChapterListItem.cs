@@ -89,6 +89,10 @@ public class ChapterListItem : ContentControl
     public static readonly StyledProperty<ICommand?> SeekCommandProperty =
         AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(SeekCommand));
 
+    /// <summary>An explicit full-editor action. When supplied, F2 invokes it and double-click no longer renames inline.</summary>
+    public static readonly StyledProperty<ICommand?> EditCommandProperty =
+        AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(EditCommand));
+
     /// <summary>Executed with the new title string.</summary>
     public static readonly StyledProperty<ICommand?> CommitTitleCommandProperty =
         AvaloniaProperty.Register<ChapterListItem, ICommand?>(nameof(CommitTitleCommand));
@@ -192,6 +196,12 @@ public class ChapterListItem : ContentControl
         set => SetValue(SeekCommandProperty, value);
     }
 
+    public ICommand? EditCommand
+    {
+        get => GetValue(EditCommandProperty);
+        set => SetValue(EditCommandProperty, value);
+    }
+
     public ICommand? CommitTitleCommand
     {
         get => GetValue(CommitTitleCommandProperty);
@@ -277,7 +287,8 @@ public class ChapterListItem : ContentControl
         if (e.Key == Key.F2 && !IsExpanded)
         {
             e.Handled = true;
-            SetCurrentValue(IsEditingProperty, true);
+            if (EditCommand is { } edit) Execute(edit, null);
+            else SetCurrentValue(IsEditingProperty, true);
         }
         else if (e.Key is Key.Enter or Key.Space)
         {
@@ -290,7 +301,7 @@ public class ChapterListItem : ContentControl
     {
         // Double-clicks on the host's trailing actions (e.g. a delete key), the start time (a seek) or its expanded
         // editor are not rename gestures, and an expanded row is edited in its expanded content.
-        if (IsExpanded || IsWithin(e.Source, _actions) || IsWithin(e.Source, _expanded) || IsWithin(e.Source, _start) && SeekCommand is not null)
+        if (EditCommand is not null || IsExpanded || IsWithin(e.Source, _actions) || IsWithin(e.Source, _expanded) || IsWithin(e.Source, _start) && SeekCommand is not null)
         {
             return;
         }

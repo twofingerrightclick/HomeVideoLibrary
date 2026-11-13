@@ -178,9 +178,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         Publish();
     }
 
-    internal void Seek(ChapterRowViewModel row) { ExpandedChapter = row; _seek(row.Start); }
-
-    internal void ToggleExpanded(ChapterRowViewModel row) => ExpandedChapter = ExpandedChapter == row ? null : row;
+    internal void Seek(ChapterRowViewModel row) => _seek(row.Start);
 
     internal void Rename(ChapterRowViewModel row, string title)
     {
