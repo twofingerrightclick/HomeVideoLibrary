@@ -34,7 +34,7 @@ public sealed class SeekRequestedEventArgs(TimeSpan time) : RoutedEventArgs(Scru
 public class ScrubBar : TemplatedControl
 {
     private const double SegmentGap = 3;
-    private const double MomentHalfWidth = 4;
+    private const double MomentRadius = 4;
     private const double MinSegmentWidth = 2;
     private const double GrooveInset = 2;
     private const double GrooveHeight = 10;
@@ -565,15 +565,7 @@ public class ScrubBar : TemplatedControl
         foreach (var moment in (ChapterSegments ?? []).Where(mark => mark.Start == mark.End && mark.Start >= TimeSpan.Zero && mark.Start < Duration))
         {
             var x = Snap(TrackLeft + ScrubTimeline.TimeToX(moment.Start, Duration, trackWidth));
-            var triangle = new StreamGeometry();
-            using (var shape = triangle.Open())
-            {
-                shape.BeginFigure(new Point(x - MomentHalfWidth, centerY - MomentHalfWidth), true);
-                shape.LineTo(new Point(x + MomentHalfWidth, centerY - MomentHalfWidth));
-                shape.LineTo(new Point(x, centerY + MomentHalfWidth));
-                shape.EndFigure(true);
-            }
-            context.DrawGeometry(MomentBrush, null, triangle);
+            context.DrawEllipse(MomentBrush, null, new Point(x, centerY), MomentRadius, MomentRadius);
         }
 
         if (ScrubTimeline.LayoutRange(RangeStart, RangeEnd, Duration, trackWidth) is { } range)
@@ -691,9 +683,8 @@ public class ScrubBar : TemplatedControl
     private bool IsInsideMoment(Point point, double centerX)
     {
         var dy = point.Y - Snap(Bounds.Height / 2);
-        // The rendered downward triangle narrows linearly from its top edge to its bottom vertex.
-        return dy >= -MomentHalfWidth && dy <= MomentHalfWidth &&
-            Math.Abs(point.X - centerX) <= (MomentHalfWidth - dy) / 2;
+        var dx = point.X - centerX;
+        return dx * dx + dy * dy <= MomentRadius * MomentRadius;
     }
 
     private void UpdateHover(Point point)

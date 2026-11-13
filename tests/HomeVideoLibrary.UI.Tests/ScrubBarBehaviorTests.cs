@@ -17,11 +17,11 @@ public sealed class ScrubBarBehaviorTests
     [InlineData(0, 6, false)]
     [InlineData(3, 3, false)]
     [InlineData(-3, 3, false)]
-    [InlineData(3, 0, false)]
+    [InlineData(3, 0, true)]
     [InlineData(0, 0, true)]
     [InlineData(2, -2, true)]
     [InlineData(0, 3, true)]
-    public void MomentHoverMatchesTriangleGeometryAndRetainsPointerHeightOnRefresh(double dx, double dy, bool inside)
+    public void MomentHoverMatchesDotGeometryAndRetainsPointerHeightOnRefresh(double dx, double dy, bool inside)
     {
         var moment = TimeSpan.FromMinutes(20);
         var (window, bar) = Host(new ScrubBar { Duration = Length, ChapterSegments = [

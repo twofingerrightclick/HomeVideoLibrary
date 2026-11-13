@@ -58,6 +58,6 @@ Each implementation stage is assigned sequentially to one agent. Astra owns the 
 - Verify each changed stage with build checks and focused behavior tests only.
 - Review against both this specification and CODING_STANDARDS.md using the code-review skill. Record honest limitations, especially unverified platform behavior and native runtime dependencies.
 
-Chapter list icons retain the yellow bookmark; moments use a neutral gray downward triangle. The timeline retains its original red playback bar and segment styling; only direct triangle hover replaces chapter details with moment details.
+Chapter list icons retain the yellow bookmark; moments use a white dot. The timeline retains its original red playback bar and segment styling; only direct dot hover replaces chapter details with moment details.
 
 Annotation start/end timestamps are read-only. Playhead-based Set start time and Set end time buttons edit the selected entry. Separate arrow buttons below each timing row set start to the previous range's end (fallback clip start) or end to the next range's start (fallback clip end), ignoring moments. Invalid operations are disabled, including moving a range start across its end. Moment start movement keeps both timestamps equal; a later end converts it into a range under the shared overlap rules.

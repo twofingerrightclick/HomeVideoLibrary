@@ -86,7 +86,7 @@
 
     <Style Selector="^:moment /template/ PathIcon#PART_TypeIcon">
       <Setter Property="Data" Value="{StaticResource Vcr.Icon.Moment}"/>
-      <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
+      <Setter Property="Foreground" Value="White"/>
     </Style>
     <Style Selector="^:moment /template/ Panel#PART_Start TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Dim}"/>
