@@ -44,8 +44,8 @@
                              ExpandedContent="{Binding Editor}"
                              ExpandedContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
                              ToolTip.Tip="Click to jump here; use Edit to change the chapter or moment">
-            <StackPanel Orientation="Horizontal" Spacing="4" Classes="rowActions">
-              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Edit}" Command="{Binding EditCommand}"
+            <StackPanel Orientation="Horizontal" Spacing="12" Classes="rowActions">
+              <c:PlasticButton Classes="toolbar icon" MinWidth="38" Icon="{StaticResource Vcr.Icon.Edit}" Command="{Binding EditCommand}"
                                ToolTip.Tip="Edit (F2)"/>
               <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DeleteCommand}"
                                ToolTip.Tip="Remove chapter or moment (Delete)"/>
