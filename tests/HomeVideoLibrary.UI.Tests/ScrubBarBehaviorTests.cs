@@ -12,6 +12,30 @@ public sealed class ScrubBarBehaviorTests
 {
     private static readonly TimeSpan Length = TimeSpan.FromMinutes(40);
 
+    [AvaloniaTheory]
+    [InlineData(0, -6, false)]
+    [InlineData(0, 6, false)]
+    [InlineData(3, 3, false)]
+    [InlineData(-3, 3, false)]
+    [InlineData(3, 0, false)]
+    [InlineData(0, 0, true)]
+    [InlineData(2, -2, true)]
+    [InlineData(0, 3, true)]
+    public void MomentHoverMatchesTriangleGeometryAndRetainsPointerHeightOnRefresh(double dx, double dy, bool inside)
+    {
+        var moment = TimeSpan.FromMinutes(20);
+        var (window, bar) = Host(new ScrubBar { Duration = Length, ChapterSegments = [
+            new ChapterMark(TimeSpan.Zero, "Range") { End = Length }, new ChapterMark(moment, "Moment")] });
+        var center = At(bar, 0.5);
+        window.MouseMove(center + new Avalonia.Vector(dx, dy));
+        Assert.Equal(inside ? "Moment" : "Range", bar.HoverChapterTitle);
+
+        bar.ChapterSegments = [new ChapterMark(TimeSpan.Zero, "Updated range") { End = Length },
+            new ChapterMark(moment, "Updated moment")];
+        Assert.Equal(inside ? "Updated moment" : "Updated range", bar.HoverChapterTitle);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void MomentHoverUsesItsExactTimeAndTitleInsideARange()
     {

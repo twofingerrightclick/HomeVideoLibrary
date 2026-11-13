@@ -159,7 +159,7 @@ public class ScrubBar : TemplatedControl
 
     private IReadOnlyList<ChapterSpan> _spans = [];
     private IReadOnlyList<ChapterSpan> _trackSpans = [];
-    private double? _hoverX;
+    private Point? _hoverPoint;
     private bool _isScrubbing;
     private TimeSpan? _scrubPosition;
     private TimeSpan? _pendingSeek;
@@ -424,13 +424,13 @@ public class ScrubBar : TemplatedControl
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        var x = e.GetPosition(this).X;
+        var point = e.GetPosition(this);
         if (IsScrubbing)
         {
-            ScrubPosition = TimeAt(x);
+            ScrubPosition = TimeAt(point.X);
         }
 
-        UpdateHover(x);
+        UpdateHover(point);
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
@@ -456,11 +456,11 @@ public class ScrubBar : TemplatedControl
         e.Handled = true;
         Focus(NavigationMethod.Pointer);
         e.Pointer.Capture(this);
-        var x = e.GetPosition(this).X;
-        ScrubPosition = TimeAt(x);
+        var point = e.GetPosition(this);
+        ScrubPosition = TimeAt(point.X);
         IsScrubbing = true;
         RaiseEvent(new RoutedEventArgs(ScrubStartedEvent));
-        UpdateHover(x);
+        UpdateHover(point);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -688,7 +688,15 @@ public class ScrubBar : TemplatedControl
 
     private TimeSpan TimeAt(double x) => ScrubTimeline.XToTime(x - TrackLeft, Duration, TrackWidth);
 
-    private void UpdateHover(double x)
+    private bool IsInsideMoment(Point point, double centerX)
+    {
+        var dy = point.Y - Snap(Bounds.Height / 2);
+        // The rendered downward triangle narrows linearly from its top edge to its bottom vertex.
+        return dy >= -MomentHalfWidth && dy <= MomentHalfWidth &&
+            Math.Abs(point.X - centerX) <= (MomentHalfWidth - dy) / 2;
+    }
+
+    private void UpdateHover(Point point)
     {
         if (Duration <= TimeSpan.Zero || !IsEffectivelyEnabled)
         {
@@ -696,11 +704,12 @@ public class ScrubBar : TemplatedControl
             return;
         }
 
-        _hoverX = x;
+        _hoverPoint = point;
+        var x = point.X;
         var time = TimeAt(x);
         var moment = (ChapterSegments ?? []).Where(mark => mark.Start == mark.End && mark.Start >= TimeSpan.Zero && mark.Start < Duration)
             .OrderBy(mark => Math.Abs(Snap(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth)) - x))
-            .FirstOrDefault(mark => Math.Abs(Snap(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth)) - x) <= MomentHalfWidth);
+            .FirstOrDefault(mark => IsInsideMoment(point, Snap(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth))));
         if (moment is not null) time = moment.Start;
         var index = ScrubTimeline.SpanIndexAt(_spans, time);
         HoverTime = time;
@@ -741,7 +750,7 @@ public class ScrubBar : TemplatedControl
 
     private void ClearHover()
     {
-        _hoverX = null;
+        _hoverPoint = null;
         HoverTime = null;
         HoverChapterTitle = null;
         if (_popup is not null)
@@ -791,7 +800,7 @@ public class ScrubBar : TemplatedControl
     {
         _spans = ScrubTimeline.BuildSpans(ChapterSegments ?? [], Duration);
         _trackSpans = ScrubTimeline.TrackSpans(_spans, Duration);
-        if (_hoverX is { } x) UpdateHover(x);
+        if (_hoverPoint is { } point) UpdateHover(point);
         InvalidateVisual();
     }
 
