@@ -13,12 +13,14 @@ namespace HomeVideoLibrary.UI.Tests;
 
 public sealed class ScrubRenderingTests
 {
-    [AvaloniaFact]
-    public void ListHoverEnlargesOnlyItsChapterWithoutOpeningTimelinePreview()
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ListHoverEnlargesOnlyItsChapterWithoutOpeningTimelinePreview(bool overlapping)
     {
         var duration = TimeSpan.FromSeconds(60);
         var (window, bar) = Host(new ScrubBar { Duration = duration, Position = duration, ChapterSegments = [
-            new ChapterMark(TimeSpan.Zero, "First") { End = TimeSpan.FromSeconds(30) },
+            new ChapterMark(TimeSpan.Zero, "First") { End = TimeSpan.FromSeconds(overlapping ? 40 : 30) },
             new ChapterMark(TimeSpan.FromSeconds(30), "Second") { End = duration }] });
         int RedHeight(double fraction)
         {
@@ -38,9 +40,9 @@ public sealed class ScrubRenderingTests
         }
         var first = RedHeight(0.25);
         var second = RedHeight(0.75);
-        bar.HighlightedChapterStart = TimeSpan.Zero;
-        Assert.True(RedHeight(0.25) > first);
-        Assert.Equal(second, RedHeight(0.75));
+        bar.HighlightedChapterStart = TimeSpan.FromSeconds(30);
+        Assert.Equal(first, RedHeight(0.25));
+        Assert.True(RedHeight(0.75) > second);
         Assert.Null(bar.HoverTime);
         bar.HighlightedChapterStart = null;
         Assert.Equal(first, RedHeight(0.25));

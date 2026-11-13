@@ -562,8 +562,10 @@ public class ScrubBar : TemplatedControl
         var hoverIndex = HoverTime is { } hover && _trackSpans.Count > 1 && ScrubTimeline.SpanIndexAt(_spans, hover) >= 0
             ? ScrubTimeline.SpanIndexAt(_trackSpans, hover) : -1;
 
-        var listHoverIndex = HighlightedChapterStart is { } start && _spans.Any(span => span.Start == start)
-            ? ScrubTimeline.SpanIndexAt(_trackSpans, start) : -1;
+        var listHoverIndex = -1;
+        if (HighlightedChapterStart is { } start && _spans.Any(span => span.Start == start))
+            for (var i = 0; i < _trackSpans.Count; i++)
+                if (_trackSpans[i].Start == start) { listHoverIndex = i; break; }
 
         var extents = ScrubTimeline.LayoutSegments(_trackSpans, Duration, trackWidth, SegmentGap, MinSegmentWidth);
         for (var i = 0; i < extents.Count; i++)
