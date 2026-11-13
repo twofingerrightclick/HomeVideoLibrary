@@ -23,30 +23,33 @@
         </TextBox>
     </StackPanel>
     <TextBlock Classes="legend" Text="{Binding TypeLabel}"/>
-    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-      <StackPanel Spacing="4">
-        <TextBlock Classes="legend" Text="START"/>
-        <TextBlock Text="{Binding StartText}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
-                   AutomationProperties.Name="Start time"/>
-      </StackPanel>
-      <c:PlasticButton Grid.Column="1" VerticalAlignment="Bottom" Content="SET START TIME" Command="{Binding MoveToPlayheadCommand}"
+    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,8,Auto,Auto,Auto"
+          ColumnSpacing="12" RowSpacing="6">
+      <TextBlock Grid.ColumnSpan="2" Text="START" Classes="legend" FontWeight="SemiBold"
+                 Foreground="{DynamicResource Vcr.Brush.Legend}"/>
+      <TextBlock Grid.Row="1" Text="{Binding StartText}" VerticalAlignment="Center"
+                 FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                 AutomationProperties.Name="Start time"/>
+      <c:PlasticButton Grid.Row="1" Grid.Column="1" Classes="toolbar" MinWidth="132"
+                       HorizontalAlignment="Stretch" Content="SET START TIME" Command="{Binding MoveToPlayheadCommand}"
                        ToolTip.Tip="Set this entry’s start to the playhead"/>
-    </Grid>
-    <c:PlasticButton Classes="toolbar" Content="SET START TIME TO PREVIOUS CHAPTER END"
-                     Icon="{StaticResource Page.Icon.BoundaryLeft}" Command="{Binding SetStartToPreviousEndCommand}"
-                     HorizontalAlignment="Left" ToolTip.Tip="Use the previous range chapter’s end, or the clip start. Moments are ignored."/>
-    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-      <StackPanel Spacing="4">
-        <TextBlock Classes="legend" Text="END"/>
-        <TextBlock Text="{Binding EndText}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
-                   AutomationProperties.Name="End time"/>
-      </StackPanel>
-      <c:PlasticButton Grid.Column="1" VerticalAlignment="Bottom" Content="SET END TIME" Command="{Binding SetEndTimeCommand}"
+      <c:PlasticButton Grid.Row="2" Grid.ColumnSpan="2" Classes="toolbar" HorizontalAlignment="Stretch"
+                       Content="SET START TIME TO PREVIOUS CHAPTER END"
+                       Icon="{StaticResource Page.Icon.BoundaryLeft}" Command="{Binding SetStartToPreviousEndCommand}"
+                       ToolTip.Tip="Use the previous range chapter’s end, or the clip start. Moments are ignored."/>
+      <TextBlock Grid.Row="4" Grid.ColumnSpan="2" Text="END" Classes="legend" FontWeight="SemiBold"
+                 Foreground="{DynamicResource Vcr.Brush.Legend}"/>
+      <TextBlock Grid.Row="5" Text="{Binding EndText}" VerticalAlignment="Center"
+                 FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                 AutomationProperties.Name="End time"/>
+      <c:PlasticButton Grid.Row="5" Grid.Column="1" Classes="toolbar" MinWidth="132"
+                       HorizontalAlignment="Stretch" Content="SET END TIME" Command="{Binding SetEndTimeCommand}"
                        ToolTip.Tip="Set this entry’s end to the playhead. Equal start and end makes a moment."/>
+      <c:PlasticButton Grid.Row="6" Grid.ColumnSpan="2" Classes="toolbar" HorizontalAlignment="Stretch"
+                       Content="SET END TIME TO NEXT CHAPTER START"
+                       Icon="{StaticResource Page.Icon.BoundaryRight}" Command="{Binding SetEndToNextStartCommand}"
+                       ToolTip.Tip="Use the next range chapter’s start, or the clip end. Moments are ignored."/>
     </Grid>
-    <c:PlasticButton Classes="toolbar" Content="SET END TIME TO NEXT CHAPTER START"
-                     Icon="{StaticResource Page.Icon.BoundaryRight}" Command="{Binding SetEndToNextStartCommand}"
-                     HorizontalAlignment="Left" ToolTip.Tip="Use the next range chapter’s start, or the clip end. Moments are ignored."/>
     <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding TimingError}"
                IsVisible="{Binding TimingError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
     <TextBlock Classes="legend" Text="DESCRIPTION" Margin="0,4,0,0"/>
