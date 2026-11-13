@@ -34,6 +34,7 @@ public sealed class SeekRequestedEventArgs(TimeSpan time) : RoutedEventArgs(Scru
 public class ScrubBar : TemplatedControl
 {
     private const double SegmentGap = 3;
+    private const double MomentHalfWidth = 4;
     private const double MinSegmentWidth = 2;
     private const double GrooveInset = 2;
     private const double GrooveHeight = 10;
@@ -157,6 +158,8 @@ public class ScrubBar : TemplatedControl
         RoutedEvent.Register<ScrubBar, SeekRequestedEventArgs>(nameof(SeekRequested), RoutingStrategies.Bubble);
 
     private IReadOnlyList<ChapterSpan> _spans = [];
+    private IReadOnlyList<ChapterSpan> _trackSpans = [];
+    private double? _hoverX;
     private bool _isScrubbing;
     private TimeSpan? _scrubPosition;
     private TimeSpan? _pendingSeek;
@@ -546,11 +549,10 @@ public class ScrubBar : TemplatedControl
         var trackWidth = TrackWidth;
         var playX = Snap(TrackLeft + ScrubTimeline.TimeToX(ScrubPosition ?? _pendingSeek ?? Position, Duration, trackWidth));
         var bufferedX = Snap(TrackLeft + ScrubTimeline.TimeToX(BufferedPosition, Duration, trackWidth));
-        var hoverIndex = HoverTime is { } hover && _spans.Count > 1 ? ScrubTimeline.SpanIndexAt(_spans, hover) : -1;
+        var hoverIndex = HoverTime is { } hover && _trackSpans.Count > 1 && ScrubTimeline.SpanIndexAt(_spans, hover) >= 0
+            ? ScrubTimeline.SpanIndexAt(_trackSpans, hover) : -1;
 
-        IReadOnlyList<SegmentExtent> extents = _spans.Count == 0
-            ? []
-            : ScrubTimeline.LayoutSegments(_spans, Duration, trackWidth, SegmentGap, MinSegmentWidth);
+        var extents = ScrubTimeline.LayoutSegments(_trackSpans, Duration, trackWidth, SegmentGap, MinSegmentWidth);
         for (var i = 0; i < extents.Count; i++)
         {
             var left = Snap(TrackLeft + extents[i].Left);
@@ -566,9 +568,9 @@ public class ScrubBar : TemplatedControl
             var triangle = new StreamGeometry();
             using (var shape = triangle.Open())
             {
-                shape.BeginFigure(new Point(x - 4, centerY - 4), true);
-                shape.LineTo(new Point(x + 4, centerY - 4));
-                shape.LineTo(new Point(x, centerY + 4));
+                shape.BeginFigure(new Point(x - MomentHalfWidth, centerY - MomentHalfWidth), true);
+                shape.LineTo(new Point(x + MomentHalfWidth, centerY - MomentHalfWidth));
+                shape.LineTo(new Point(x, centerY + MomentHalfWidth));
                 shape.EndFigure(true);
             }
             context.DrawGeometry(MomentBrush, null, triangle);
@@ -694,10 +696,11 @@ public class ScrubBar : TemplatedControl
             return;
         }
 
+        _hoverX = x;
         var time = TimeAt(x);
-        var moment = (ChapterSegments ?? []).Where(mark => mark.Start == mark.End)
-            .OrderBy(mark => Math.Abs(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth) - x))
-            .FirstOrDefault(mark => Math.Abs(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth) - x) <= 6);
+        var moment = (ChapterSegments ?? []).Where(mark => mark.Start == mark.End && mark.Start >= TimeSpan.Zero && mark.Start < Duration)
+            .OrderBy(mark => Math.Abs(Snap(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth)) - x))
+            .FirstOrDefault(mark => Math.Abs(Snap(TrackLeft + ScrubTimeline.TimeToX(mark.Start, Duration, TrackWidth)) - x) <= MomentHalfWidth);
         if (moment is not null) time = moment.Start;
         var index = ScrubTimeline.SpanIndexAt(_spans, time);
         HoverTime = time;
@@ -738,6 +741,7 @@ public class ScrubBar : TemplatedControl
 
     private void ClearHover()
     {
+        _hoverX = null;
         HoverTime = null;
         HoverChapterTitle = null;
         if (_popup is not null)
@@ -786,6 +790,8 @@ public class ScrubBar : TemplatedControl
     private void RebuildSpans()
     {
         _spans = ScrubTimeline.BuildSpans(ChapterSegments ?? [], Duration);
+        _trackSpans = ScrubTimeline.TrackSpans(_spans, Duration);
+        if (_hoverX is { } x) UpdateHover(x);
         InvalidateVisual();
     }
 

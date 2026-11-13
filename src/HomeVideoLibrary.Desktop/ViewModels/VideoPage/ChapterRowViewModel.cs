@@ -30,11 +30,15 @@ public sealed class ChapterRowViewModel : ViewModelBase
         CommitTitleCommand = new RelayCommand<string>(title => panel.Rename(this, title));
         CommitDraftTitleCommand = new RelayCommand(() => panel.Rename(this, TitleText));
         CommitDraftEndCommand = new RelayCommand(CommitEnd);
-        SetEndTimeCommand = new RelayCommand(() => panel.SetEndAtPlayhead(this), () => panel.CanEdit);
+        SetEndTimeCommand = new RelayCommand(() => panel.SetEndAtPlayhead(this), () => panel.CanEndAtPlayhead(this));
+        SetStartToPreviousEndCommand = new RelayCommand(() => panel.MoveTo(this, panel.PreviousRangeEnd(this)),
+            () => panel.CanMoveTo(this, panel.PreviousRangeEnd(this)));
+        SetEndToNextStartCommand = new RelayCommand(() => panel.SetEnd(this, panel.NextRangeStart(this)),
+            () => panel.CanSetEnd(this, panel.NextRangeStart(this)));
         CommitDraftStartCommand = new RelayCommand(CommitStart);
         EditCommand = new RelayCommand(() => panel.ExpandedChapter = this, () => panel.CanEdit);
         DeleteCommand = new RelayCommand(() => panel.Delete(this), () => panel.CanEdit);
-        MoveToPlayheadCommand = new RelayCommand(() => panel.MoveToPlayhead(this), () => panel.CanEdit);
+        MoveToPlayheadCommand = new RelayCommand(() => panel.MoveToPlayhead(this), () => panel.CanMoveToPlayhead(this));
     }
 
     public ulong Uid { get; }
@@ -48,7 +52,7 @@ public sealed class ChapterRowViewModel : ViewModelBase
     public TimeSpan End
     {
         get => _end;
-        internal set { if (SetProperty(ref _end, value)) { OnPropertyChanged(nameof(EndField)); OnPropertyChanged(nameof(IsMoment)); OnPropertyChanged(nameof(TypeLabel)); } }
+        internal set { if (SetProperty(ref _end, value)) { OnPropertyChanged(nameof(EndField)); OnPropertyChanged(nameof(EndText)); OnPropertyChanged(nameof(IsMoment)); OnPropertyChanged(nameof(TypeLabel)); } }
     }
     public bool IsMoment => Start == End;
     public string TypeLabel => IsMoment ? "MOMENT" : "CHAPTER";
@@ -56,8 +60,11 @@ public sealed class ChapterRowViewModel : ViewModelBase
     public string EndField { get => _draftEnd ?? Timecode.Format(End); set { if (SetProperty(ref _draftEnd, value)) _panel.DraftChanged(); } }
     public RelayCommand CommitDraftEndCommand { get; }
     public RelayCommand SetEndTimeCommand { get; }
+    public RelayCommand SetStartToPreviousEndCommand { get; }
+    public RelayCommand SetEndToNextStartCommand { get; }
 
     public string StartText => Timecode.Format(Start);
+    public string EndText => Timecode.Format(End);
 
     /// <summary>The committed title; empty for an untitled chapter.</summary>
     public string Title
@@ -187,6 +194,8 @@ public sealed class ChapterRowViewModel : ViewModelBase
         DeleteCommand.RaiseCanExecuteChanged();
         MoveToPlayheadCommand.RaiseCanExecuteChanged();
         SetEndTimeCommand.RaiseCanExecuteChanged();
+        SetStartToPreviousEndCommand.RaiseCanExecuteChanged();
+        SetEndToNextStartCommand.RaiseCanExecuteChanged();
     }
 
     private void CommitEnd()

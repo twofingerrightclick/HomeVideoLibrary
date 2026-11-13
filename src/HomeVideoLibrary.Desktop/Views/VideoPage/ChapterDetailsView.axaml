@@ -6,10 +6,13 @@
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChapterDetailsView"
              x:DataType="vp:ChapterRowViewModel"
              IsEnabled="{Binding CanEdit}">
+  <UserControl.Resources>
+    <StreamGeometry x:Key="Page.Icon.BoundaryLeft">M7,2 L1,8 L7,14 L8.5,12.5 L5,9 H15 V7 H5 L8.5,3.5 Z</StreamGeometry>
+    <StreamGeometry x:Key="Page.Icon.BoundaryRight">M9,2 L15,8 L9,14 L7.5,12.5 L11,9 H1 V7 H11 L7.5,3.5 Z</StreamGeometry>
+  </UserControl.Resources>
   <!-- An expanded chapter row's editor. It is built when the row expands and dropped when it collapses. -->
   <StackPanel Spacing="6" Margin="12,2,10,10">
-    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-      <StackPanel Spacing="4">
+    <StackPanel Spacing="4">
         <TextBlock Classes="legend" Text="TITLE"/>
         <TextBox x:Name="TitleField" Text="{Binding TitleText, Mode=TwoWay}" Watermark="Untitled chapter or moment"
                  views:FieldBehaviors.FocusOnAttach="True" views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftTitleCommand}"
@@ -18,31 +21,32 @@
             <KeyBinding Gesture="Enter" Command="{Binding CommitDraftTitleCommand}"/>
           </TextBox.KeyBindings>
         </TextBox>
-      </StackPanel>
-      <StackPanel Grid.Column="1" Spacing="4" Width="108">
-        <TextBlock Classes="legend" Text="START"/>
-        <TextBox Text="{Binding StartField, Mode=TwoWay}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
-                 views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftStartCommand}" AutomationProperties.Name="Chapter start">
-          <TextBox.KeyBindings>
-            <KeyBinding Gesture="Enter" Command="{Binding CommitDraftStartCommand}"/>
-          </TextBox.KeyBindings>
-        </TextBox>
-      </StackPanel>
-    </Grid>
-    <TextBlock Classes="legend" Foreground="{DynamicResource Vcr.Brush.Red.Led}" TextWrapping="Wrap" Text="{Binding StartError}"
-               IsVisible="{Binding StartError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    </StackPanel>
     <TextBlock Classes="legend" Text="{Binding TypeLabel}"/>
     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
       <StackPanel Spacing="4">
+        <TextBlock Classes="legend" Text="START"/>
+        <TextBlock Text="{Binding StartText}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                   AutomationProperties.Name="Start time"/>
+      </StackPanel>
+      <c:PlasticButton Grid.Column="1" VerticalAlignment="Bottom" Content="SET START TIME" Command="{Binding MoveToPlayheadCommand}"
+                       ToolTip.Tip="Set this entry’s start to the playhead"/>
+    </Grid>
+    <c:PlasticButton Classes="toolbar" Content="SET START TIME TO PREVIOUS CHAPTER END"
+                     Icon="{StaticResource Page.Icon.BoundaryLeft}" Command="{Binding SetStartToPreviousEndCommand}"
+                     HorizontalAlignment="Left" ToolTip.Tip="Use the previous range chapter’s end, or the clip start. Moments are ignored."/>
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <StackPanel Spacing="4">
         <TextBlock Classes="legend" Text="END"/>
-        <TextBox Text="{Binding EndField, Mode=TwoWay}" AutomationProperties.Name="End time"
-                 views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftEndCommand}">
-          <TextBox.KeyBindings><KeyBinding Gesture="Enter" Command="{Binding CommitDraftEndCommand}"/></TextBox.KeyBindings>
-        </TextBox>
+        <TextBlock Text="{Binding EndText}" FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                   AutomationProperties.Name="End time"/>
       </StackPanel>
       <c:PlasticButton Grid.Column="1" VerticalAlignment="Bottom" Content="SET END TIME" Command="{Binding SetEndTimeCommand}"
                        ToolTip.Tip="Set this entry’s end to the playhead. Equal start and end makes a moment."/>
     </Grid>
+    <c:PlasticButton Classes="toolbar" Content="SET END TIME TO NEXT CHAPTER START"
+                     Icon="{StaticResource Page.Icon.BoundaryRight}" Command="{Binding SetEndToNextStartCommand}"
+                     HorizontalAlignment="Left" ToolTip.Tip="Use the next range chapter’s start, or the clip end. Moments are ignored."/>
     <TextBlock Classes="meta" TextWrapping="Wrap" Text="{Binding TimingError}"
                IsVisible="{Binding TimingError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
     <TextBlock Classes="legend" Text="DESCRIPTION" Margin="0,4,0,0"/>

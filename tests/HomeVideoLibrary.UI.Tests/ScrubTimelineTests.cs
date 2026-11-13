@@ -11,6 +11,16 @@ public class ScrubTimelineTests
 
     private static ChapterSpan Span(double start, double end, string title) => new(Sec(start), Sec(end), title);
 
+    [Fact]
+    public void AdjacentRangesKeepIncumbentSegmentGapsAndTinyRangeWidth()
+    {
+        var extents = ScrubTimeline.LayoutSegments([Span(0, 300, "A"), Span(300, 300.5, "Tiny"), Span(300.5, 600, "B")],
+            TenMinutes, 1000, 3, 2);
+        Assert.Equal(2, extents[1].Width, 6);
+        Assert.Equal(3, extents[1].Left - extents[0].Right, 6);
+        Assert.Equal(3, extents[2].Left - extents[1].Right, 6);
+    }
+
     [Theory]
     [InlineData(62.75, "1:02.750")]
     [InlineData(62, "1:02")]

@@ -197,6 +197,30 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
 
     internal void MoveToPlayhead(ChapterRowViewModel row) => MoveTo(row, _playhead);
 
+    internal TimeSpan PreviousRangeEnd(ChapterRowViewModel row) => _chapters
+        .Where(c => c.Uid != row.Uid && !c.IsMoment && c.Start < row.Start)
+        .OrderBy(c => c.Start).LastOrDefault()?.End ?? TimeSpan.Zero;
+
+    internal TimeSpan NextRangeStart(ChapterRowViewModel row) => _chapters
+        .Where(c => c.Uid != row.Uid && !c.IsMoment && c.Start > row.Start)
+        .OrderBy(c => c.Start).FirstOrDefault()?.Start ?? _duration;
+
+    internal bool CanMoveToPlayhead(ChapterRowViewModel row) => CanMoveTo(row, _playhead);
+    internal bool CanEndAtPlayhead(ChapterRowViewModel row) => CanSetEnd(row, _playhead);
+
+    internal bool CanMoveTo(ChapterRowViewModel row, TimeSpan start) =>
+        (row.IsMoment || start < row.End) && CanApplyTiming(row.ToChapter() with
+        { Position = start, End = row.IsMoment ? start : row.End });
+
+    internal bool CanSetEnd(ChapterRowViewModel row, TimeSpan end) => CanApplyTiming(row.ToChapter() with { End = end });
+
+    private bool CanApplyTiming(VideoChapter proposed)
+    {
+        if (!CanEdit) return false;
+        try { ChapterTiming.Apply(ToChapters(), proposed, _duration); return true; }
+        catch (ArgumentException) { return false; }
+    }
+
     internal void MoveTo(ChapterRowViewModel row, TimeSpan start)
     {
         if (!CanEdit) return;
@@ -281,6 +305,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
         {
             var end = _chapters[index].End;
             _chapters[index].IsCurrent = _playhead >= _chapters[index].Start && _playhead < end;
+            _chapters[index].UpdateCommands();
         }
         _placeholder.Start = _playhead;
         _placeholder.IsShown = CanAddChapter;

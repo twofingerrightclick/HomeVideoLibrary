@@ -229,5 +229,6 @@ public sealed class ChaptersPanelViewModel : ObservableObject
         }
     }
 
-    private void PublishMarks() => Marks = [.. _chapters.Select(c => new ChapterMark(c.Start, c.Title))];
+    private void PublishMarks() => Marks = [.. _chapters.Select((c, index) => new ChapterMark(c.Start, c.Title)
+        { End = index + 1 < _chapters.Count ? _chapters[index + 1].Start : Duration })];
 }

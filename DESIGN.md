@@ -100,7 +100,7 @@ right inspector that can be hidden and resized.
   LCD TIME and TOTAL counters, MOMENT (M), volume with mute, and a fullscreen key with an inspector latch.
 - **Inspector tabs** (Cmd/Ctrl+1 to 5): INFO (title, description, recording date, file, albums), CHAPTERS, TAGS, FRAMES
   (the chosen thumbnails stored in the MKV) and EDIT.
-- **Chapters**: clicking a row's start time seeks there; clicking the rest of the row expands it in place into its own editor (title, start, description, tags). One row is open at a time.
+- **Chapters and Moments**: clicking a row's start time seeks there; clicking the rest expands its editor. Start and end are read-only, with millisecond precision. SET START TIME and SET END TIME use the playhead. Beneath each row, an arrow key uses the previous range's end or next range's start, falling back to the clip boundary. Moments are ignored as neighbors; invalid actions are disabled. Title, description, and tags remain editable. One row is open at a time.
 - **Editing is explicit:** nothing is written until SAVE. An amber UNSAVED light shows while edits are pending.
 - **Fullscreen:** the controls come from a transparent native overlay window over the video and hide, with the
   pointer, 2.5 s after the pointer last moved while the video plays.
@@ -162,4 +162,4 @@ Button sounds are off by default and toggled in Settings, which saves the choice
 - **Don't** preload thumbnail bitmaps for the entire library.
 - **Don't** write hover captures into MKV metadata.
 
-Chapters retain the existing yellow accent; moments use a neutral gray downward triangle in the list and timeline. Hovering near the timeline triangle reveals its exact timestamp and title. Chapters keep the bookmark icon. Moment actions are outlined, solid tactile VCR keys, including the shared fullscreen transport, without a bright yellow fill.
+Chapter list icons retain the yellow bookmark; moments use a neutral gray downward triangle in the list and timeline. Hovering directly over a timeline triangle reveals its exact timestamp and title, taking priority over the chapter there. The timeline keeps its original chassis track, red played fill and glow, rounded segments, spacing, and hover growth, including a playable base track without chapters. Explicit range gaps do not acquire chapter titles. Moment and timing actions are outlined, solid tactile VCR keys, including the shared fullscreen transport, without a bright yellow fill.

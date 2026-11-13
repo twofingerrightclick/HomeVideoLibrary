@@ -65,16 +65,94 @@ public static class ScrubTimeline
         return -1;
     }
 
-    /// <summary>
-    /// Maps actual endpoints proportionally. Gaps and tiny chapters retain their true extent; the legacy
-    /// gap and minimum-width arguments remain for source compatibility with gallery callers.
-    /// </summary>
+    /// <summary>Applies the incumbent segment gaps and minimum widths within each contiguous run,
+    /// without extending ranges across genuine gaps or outside their explicit endpoints.</summary>
     public static IReadOnlyList<SegmentExtent> LayoutSegments(
         IReadOnlyList<ChapterSpan> spans, TimeSpan duration, double width, double gap, double minWidth)
     {
         ArgumentNullException.ThrowIfNull(spans);
-        return spans.Select(span => new SegmentExtent(TimeToX(span.Start, duration, width),
-            TimeToX(span.End, duration, width))).ToArray();
+        var result = new List<SegmentExtent>(spans.Count);
+        for (var first = 0; first < spans.Count;)
+        {
+            var last = first;
+            while (last + 1 < spans.Count && spans[last].End == spans[last + 1].Start) last++;
+            var start = spans[first].Start;
+            var end = spans[last].End;
+            var left = TimeToX(start, duration, width);
+            var right = TimeToX(end, duration, width);
+            var local = Enumerable.Range(first, last - first + 1)
+                .Select(i => new ChapterSpan(spans[i].Start - start, spans[i].End - start, spans[i].Title)).ToArray();
+            result.AddRange(LayoutContiguousSegments(local, end - start, right - left, gap, minWidth)
+                .Select(extent => new SegmentExtent(left + extent.Left, left + extent.Right)));
+            first = last + 1;
+        }
+        return result;
+    }
+
+    /// <summary>Drawing-only intervals for the full playable track. Empty footage remains distinct from
+    /// annotations: it supplies playback progress, but never a chapter title or current-range state.</summary>
+    public static IReadOnlyList<ChapterSpan> TrackSpans(IReadOnlyList<ChapterSpan> ranges, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return [];
+        var result = new List<ChapterSpan>();
+        var cursor = TimeSpan.Zero;
+        foreach (var range in ranges)
+        {
+            if (range.Start > cursor) result.Add(new ChapterSpan(cursor, range.Start, ""));
+            result.Add(range);
+            if (range.End > cursor) cursor = range.End;
+        }
+        if (cursor < duration) result.Add(new ChapterSpan(cursor, duration, ""));
+        return result;
+    }
+
+    private static IReadOnlyList<SegmentExtent> LayoutContiguousSegments(
+        IReadOnlyList<ChapterSpan> spans, TimeSpan duration, double width, double gap, double minWidth)
+    {
+        ArgumentNullException.ThrowIfNull(spans);
+        var count = spans.Count;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        width = Math.Max(0, width);
+        gap = count > 1 ? Math.Max(0, gap) : 0;
+        minWidth = Math.Max(0, minWidth);
+        if (count * minWidth + (count - 1) * gap > width)
+        {
+            gap = count > 1 ? Math.Max(0, (width - count * minWidth) / (count - 1)) : 0;
+            minWidth = Math.Min(minWidth, width / count);
+        }
+
+        double Required(int i) => minWidth + gap / 2 * ((i > 0 ? 1 : 0) + (i < count - 1 ? 1 : 0));
+
+        var bounds = new double[count + 1];
+        bounds[count] = width;
+        for (var i = 1; i < count; i++)
+        {
+            bounds[i] = TimeToX(spans[i].Start, duration, width);
+        }
+
+        for (var i = 1; i < count; i++)
+        {
+            bounds[i] = Math.Max(bounds[i], bounds[i - 1] + Required(i - 1));
+        }
+
+        for (var i = count - 1; i > 0; i--)
+        {
+            bounds[i] = Math.Min(bounds[i], bounds[i + 1] - Required(i));
+        }
+
+        var extents = new SegmentExtent[count];
+        for (var i = 0; i < count; i++)
+        {
+            var left = bounds[i] + (i > 0 ? gap / 2 : 0);
+            var right = bounds[i + 1] - (i < count - 1 ? gap / 2 : 0);
+            extents[i] = new SegmentExtent(left, Math.Max(left, right));
+        }
+
+        return extents;
     }
 
     /// <summary>

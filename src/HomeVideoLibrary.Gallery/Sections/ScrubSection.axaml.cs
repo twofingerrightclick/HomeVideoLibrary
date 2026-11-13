@@ -16,14 +16,14 @@ public partial class ScrubSection : UserControl, IScreenshotScript
 
     private static readonly IReadOnlyList<ChapterMark> Chapters =
     [
-        new(At(0, 0), "Arriving at Grandma's"),
-        new(At(4, 35), "Opening presents"),
-        new(At(13, 20), "Dad's new camcorder"),
-        new(At(13, 25), "Lens cap still on"),
-        new(At(13, 30), "Sledding on Miller Hill"),
-        new(At(22, 40), "Snowball fight"),
-        new(At(29, 5), "Christmas dinner"),
-        new(At(37, 50), "Carols by the piano"),
+        new(At(0, 0), "Arriving at Grandma's") { End = At(4, 35) },
+        new(At(4, 35), "Opening presents") { End = At(13, 20) },
+        new(At(13, 20), "Dad's new camcorder") { End = At(13, 25) },
+        new(At(13, 25), "Lens cap still on") { End = At(13, 30) },
+        new(At(13, 30), "Sledding on Miller Hill") { End = At(22, 40) },
+        new(At(22, 40), "Snowball fight") { End = At(29, 5) },
+        new(At(29, 5), "Christmas dinner") { End = At(37, 50) },
+        new(At(37, 50), "Carols by the piano") { End = TapeLength },
     ];
 
     private IReadOnlyList<IChapterMark> _liveChapters = Chapters;
@@ -172,7 +172,7 @@ public partial class ScrubSection : UserControl, IScreenshotScript
 
         // Chapter lists are snapshots: publish a new list instead of mutating the one the bar holds.
         var index = ChapterPlacement.PlaceholderIndex(starts, LiveBar.Position);
-        _liveChapters = [.. _liveChapters.Take(index), new ChapterMark(LiveBar.Position, $"Chapter {_liveChapters.Count + 1}"), .. _liveChapters.Skip(index)];
+        _liveChapters = [.. _liveChapters.Take(index), new ChapterMark(LiveBar.Position, $"Moment {_liveChapters.Count + 1}"), .. _liveChapters.Skip(index)];
         LiveBar.ChapterSegments = _liveChapters;
         LiveBar.PreviewMarkerPosition = null;
         UpdateLiveReadout();

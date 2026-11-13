@@ -8,6 +8,55 @@ namespace HomeVideoLibrary.Tests;
 public sealed class ChaptersAndMomentsTests
 {
     [Fact]
+    public async Task BoundaryButtonsUseClipFallbacksIgnoreMomentsAndPreserveMomentSemantics()
+    {
+        var metadata = new FakeMetadata { Stored = VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.FromSeconds(1), "First", "", []) { End = TimeSpan.FromSeconds(2) },
+            new VideoChapter(2, TimeSpan.FromSeconds(3.125), "Moment", "", []),
+            new VideoChapter(3, TimeSpan.FromSeconds(6), "Ignored moment", "", []),
+            new VideoChapter(4, TimeSpan.FromSeconds(7), "Last", "", []) { End = TimeSpan.FromSeconds(9) }] } };
+        await using var page = Create(metadata, new FakePlayback());
+        await page.LoadAsync();
+        var chapters = page.Details.Chapters;
+        var first = chapters.Chapters.Single(c => c.Uid == 1);
+        var moment = chapters.Chapters.Single(c => c.Uid == 2);
+        var last = chapters.Chapters.Single(c => c.Uid == 4);
+        Assert.Contains(".125", moment.StartText);
+        Assert.Contains(".125", moment.EndText);
+        first.SetStartToPreviousEndCommand.Execute(null);
+        Assert.Equal(TimeSpan.Zero, first.Start);
+        last.SetEndToNextStartCommand.Execute(null);
+        Assert.Equal(chapters.Duration, last.End);
+        moment.SetStartToPreviousEndCommand.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(2), moment.Start);
+        Assert.Equal(moment.Start, moment.End);
+        moment.SetEndToNextStartCommand.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(7), moment.End);
+        Assert.False(moment.IsMoment);
+        Assert.Equal(TimeSpan.FromSeconds(2), first.End);
+    }
+
+    [Fact]
+    public async Task BoundaryAndPlayheadActionsDisableInvalidMovesWithoutMutatingNeighbors()
+    {
+        var metadata = new FakeMetadata { Stored = VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.Zero, "Overlapping previous", "", []) { End = TimeSpan.FromSeconds(8) },
+            new VideoChapter(2, TimeSpan.FromSeconds(4), "Selected", "", []) { End = TimeSpan.FromSeconds(6) }] } };
+        await using var page = Create(metadata, new FakePlayback());
+        await page.LoadAsync();
+        var row = page.Details.Chapters.Chapters[1];
+        Assert.False(row.SetStartToPreviousEndCommand.CanExecute(null));
+        row.SetStartToPreviousEndCommand.Execute(null);
+        page.Player.Seek(TimeSpan.FromSeconds(7));
+        Assert.False(row.MoveToPlayheadCommand.CanExecute(null));
+        page.Player.Seek(TimeSpan.FromSeconds(3));
+        Assert.False(row.SetEndTimeCommand.CanExecute(null));
+        Assert.Equal(TimeSpan.FromSeconds(4), row.Start);
+        Assert.Equal(TimeSpan.FromSeconds(6), row.End);
+        Assert.Equal(TimeSpan.FromSeconds(8), page.Details.Chapters.Chapters[0].End);
+    }
+
+    [Fact]
     public async Task UnchangedForeignOverlapAllowsUnrelatedEditsButChapterChangesRequireResolution()
     {
         var metadata = new FakeMetadata { Stored = VideoMetadata.Empty with { Chapters = [
@@ -82,10 +131,11 @@ public sealed class ChaptersAndMomentsTests
         await page.LoadAsync();
         var row = page.Details.Chapters.Chapters[0];
         page.Player.Seek(TimeSpan.FromSeconds(5));
+        Assert.False(row.MoveToPlayheadCommand.CanExecute(null));
         row.MoveToPlayheadCommand.Execute(null);
         Assert.Equal(TimeSpan.Zero, row.Start);
         Assert.Equal(TimeSpan.FromSeconds(3), row.End);
-        Assert.NotNull(row.TimingError);
+        Assert.Null(row.TimingError);
         Assert.Equal(TimeSpan.FromSeconds(4), page.Details.Chapters.Chapters[1].Start);
     }
 }

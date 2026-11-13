@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
@@ -16,11 +17,82 @@ namespace HomeVideoLibrary.Desktop.UiTests;
 
 public sealed class VideoPageViewTests
 {
+    [AvaloniaFact]
+    public void TimingEditorUsesReadOnlyTimesAndPlayheadAndNeighborButtons()
+    {
+        var (_, host) = Window();
+        var page = Page(VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.Zero, "Before", "", []) { End = TimeSpan.FromSeconds(10) },
+            new VideoChapter(2, TimeSpan.FromSeconds(15), "Selected", "", []) { End = TimeSpan.FromSeconds(35) },
+            new VideoChapter(3, TimeSpan.FromSeconds(20), "Ignored moment", "", []),
+            new VideoChapter(4, TimeSpan.FromSeconds(40), "After", "", []) { End = TimeSpan.FromSeconds(50) }] });
+        Show(host, page);
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        var row = page.Details.Chapters.Chapters.Single(c => c.Uid == 2);
+        page.Details.Chapters.ExpandedChapter = row;
+        Dispatcher.UIThread.RunJobs();
+        var editor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
+        Assert.DoesNotContain(editor.GetVisualDescendants().OfType<TextBox>(), box =>
+            Avalonia.Automation.AutomationProperties.GetName(box) is "Chapter start" or "End time");
+        Button Key(string text) => Assert.Single(editor.GetVisualDescendants().OfType<Button>(), key => Equals(key.Content, text));
+        Key("SET START TIME TO PREVIOUS CHAPTER END").Command!.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(10), row.Start);
+        Key("SET END TIME TO NEXT CHAPTER START").Command!.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(40), row.End);
+        page.Player.Seek(TimeSpan.FromSeconds(12));
+        Key("SET START TIME").Command!.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(12), row.Start);
+        Assert.Same(row, page.Details.Chapters.ExpandedChapter);
+        page.Player.Seek(TimeSpan.FromSeconds(30));
+        Key("SET END TIME").Command!.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(30), row.End);
+    }
+
     private static readonly VideoMetadata TwoChapters = VideoMetadata.Empty with
     {
         Chapters = [new VideoChapter(1, TimeSpan.Zero, "Opening presents", "Wrapping paper everywhere", []),
             new VideoChapter(2, TimeSpan.FromSeconds(30), "Sledding", "", [])],
     };
+
+    [AvaloniaFact]
+    public void DesktopTimelineShowsChapterTitleAndMomentOnlyInsideItsMarkerWindow()
+    {
+        var (window, host) = Window();
+        var page = Page(VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.Zero, "Chapter title", "", []) { End = TimeSpan.FromSeconds(40) },
+            new VideoChapter(2, TimeSpan.FromSeconds(20), "Moment title", "", [])] });
+        Show(host, page);
+        var bar = host.GetVisualDescendants().OfType<ScrubBar>().Single();
+        void Hover(double seconds)
+        {
+            var x = 2 + (bar.Bounds.Width - 4) * seconds / 60;
+            var point = bar.TranslatePoint(new Point(x, bar.Bounds.Height / 2), window)!.Value;
+            window.MouseMove(point);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Hover(10);
+        Assert.Equal("Chapter title", bar.HoverChapterTitle);
+        var popup = bar.GetVisualDescendants().OfType<Popup>().Single();
+        var hoverTitle = popup.Child!.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Name == "PART_HoverTitle");
+        Assert.Equal("Chapter title", hoverTitle.Text);
+        Assert.True(hoverTitle.IsVisible);
+        Hover(20);
+        Assert.Equal("Moment title", bar.HoverChapterTitle);
+        Assert.Equal("Moment title", hoverTitle.Text);
+        Hover(20 + 5 * 60 / (bar.Bounds.Width - 4));
+        Assert.Equal("Chapter title", bar.HoverChapterTitle);
+        Hover(50);
+        Assert.Null(bar.HoverChapterTitle);
+
+        page.Player.Seek(TimeSpan.FromSeconds(45));
+        page.AddChapterCommand.Execute(null);
+        var added = page.Details.Chapters.ExpandedChapter!;
+        added.TitleText = "New C chapter";
+        added.CommitDraftTitleCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("New C chapter", bar.HoverChapterTitle);
+        Assert.Equal("New C chapter", hoverTitle.Text);
+    }
 
     [AvaloniaFact]
     public void FullscreenOverlayCreatesBothTypesAndLeavesPUnbound()
