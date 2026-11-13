@@ -16,10 +16,15 @@
   </UserControl.Styles>
   <StackPanel Spacing="10">
     <c:SectionHeader Title="CHAPTERS AND MOMENTS"/>
-      <StackPanel Orientation="Horizontal" Spacing="4">
-        <c:PlasticButton Classes="toolbar" Foreground="{DynamicResource Vcr.Brush.Yellow}" Icon="{StaticResource Vcr.Icon.Chapter}" Content="CHAPTER  C" Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (C)"/>
-        <c:PlasticButton Classes="toolbar" BorderBrush="{DynamicResource Vcr.Brush.Legend.Dim}" Icon="{StaticResource Vcr.Icon.Moment}" Content="MOMENT  M" Command="{Binding AddMomentCommand}" ToolTip.Tip="Add a moment at the playhead (M)"/>
-      </StackPanel>
+    <StackPanel Spacing="6">
+      <c:PlasticButton Classes="toolbar" BorderBrush="{DynamicResource Vcr.Brush.Legend.Dim}"
+                       Icon="{StaticResource Vcr.Icon.Moment}" Content="MOMENT (M)"
+                       Command="{Binding AddMomentCommand}" ToolTip.Tip="Add a moment at the playhead (M)"/>
+      <c:PlasticButton Classes="toolbar" Foreground="{DynamicResource Vcr.Brush.Yellow}"
+                       BorderBrush="{DynamicResource Vcr.Brush.Yellow}"
+                       Icon="{StaticResource Vcr.Icon.Chapter}" Content="CHAPTER (C)"
+                       Command="{Binding AddChapterCommand}" ToolTip.Tip="Add a chapter at the playhead (C)"/>
+    </StackPanel>
 
     <TextBlock Classes="meta" TextWrapping="Wrap" IsVisible="{Binding !Details.Chapters.HasChapters}"
                Text="Press C for a chapter or M for a moment at the playhead."/>
