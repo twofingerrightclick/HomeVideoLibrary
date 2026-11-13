@@ -48,6 +48,30 @@ public sealed class VideoPageViewTests
         Assert.Equal(TimeSpan.FromSeconds(30), row.End);
     }
 
+    [AvaloniaFact]
+    public void MomentEditorShowsOnlyOneTimeActionAndMovingKeepsItAMoment()
+    {
+        var (_, host) = Window();
+        var page = Page(VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.FromSeconds(10), "A moment", "", [])] });
+        Show(host, page);
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        var row = page.Details.Chapters.Chapters.Single();
+        page.Details.Chapters.ExpandedChapter = row;
+        Dispatcher.UIThread.RunJobs();
+        var editor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
+        var actions = editor.GetVisualDescendants().OfType<PlasticButton>().Where(button => button.IsEffectivelyVisible).ToArray();
+        var setTime = Assert.Single(actions);
+        Assert.Equal("SET TIME", setTime.Content);
+        Assert.DoesNotContain(editor.GetVisualDescendants().OfType<TextBlock>(), text =>
+            text.IsEffectivelyVisible && text.Text is "START" or "END");
+        page.Player.Seek(TimeSpan.FromSeconds(25));
+        setTime.Command!.Execute(null);
+        Assert.Equal(TimeSpan.FromSeconds(25), row.Start);
+        Assert.True(row.IsMoment);
+        Assert.Same(row, page.Details.Chapters.ExpandedChapter);
+    }
+
     private static readonly VideoMetadata TwoChapters = VideoMetadata.Empty with
     {
         Chapters = [new VideoChapter(1, TimeSpan.Zero, "Opening presents", "Wrapping paper everywhere", []),

@@ -23,7 +23,18 @@
         </TextBox>
     </StackPanel>
     <TextBlock Classes="legend" Text="{Binding TypeLabel}"/>
-    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,8,Auto,Auto,Auto"
+    <Grid IsVisible="{Binding IsMoment}" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto"
+          ColumnSpacing="12" RowSpacing="6">
+      <TextBlock Grid.ColumnSpan="2" Text="TIME" Classes="legend" FontWeight="SemiBold"
+                 Foreground="{DynamicResource Vcr.Brush.Legend}"/>
+      <TextBlock Grid.Row="1" Text="{Binding StartText}" VerticalAlignment="Center"
+                 FontFamily="{DynamicResource Vcr.Font.Segment}" FontSize="12"
+                 AutomationProperties.Name="Moment time"/>
+      <c:PlasticButton Grid.Row="1" Grid.Column="1" Classes="toolbar" MinWidth="132"
+                       HorizontalAlignment="Stretch" Content="SET TIME" Command="{Binding MoveToPlayheadCommand}"
+                       ToolTip.Tip="Set this moment to the playhead"/>
+    </Grid>
+    <Grid IsVisible="{Binding !IsMoment}" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,8,Auto,Auto,Auto"
           ColumnSpacing="12" RowSpacing="6">
       <TextBlock Grid.ColumnSpan="2" Text="START" Classes="legend" FontWeight="SemiBold"
                  Foreground="{DynamicResource Vcr.Brush.Legend}"/>
@@ -44,7 +55,7 @@
                  AutomationProperties.Name="End time"/>
       <c:PlasticButton Grid.Row="5" Grid.Column="1" Classes="toolbar" MinWidth="132"
                        HorizontalAlignment="Stretch" Content="SET END TIME" Command="{Binding SetEndTimeCommand}"
-                       ToolTip.Tip="Set this entry’s end to the playhead. Equal start and end makes a moment."/>
+                       ToolTip.Tip="Set this chapter’s end to the playhead."/>
       <c:PlasticButton Grid.Row="6" Grid.ColumnSpan="2" Classes="toolbar" HorizontalAlignment="Stretch"
                        Content="SET END TIME TO NEXT CHAPTER START"
                        Icon="{StaticResource Page.Icon.BoundaryRight}" Command="{Binding SetEndToNextStartCommand}"
