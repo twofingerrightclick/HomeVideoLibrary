@@ -24,7 +24,13 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Opened += (_, _) => AppErrors.Run(() => ViewModel.RestoreLibraryAsync(), "Restore library");
-        Opened += (_, _) => AppErrors.Run(async () => Classes.Set("reduced-motion", await ReducedMotion.IsRequestedAsync()), "Reduced motion");
+        Opened += (_, _) => AppErrors.Run(async () =>
+        {
+            var reduced = await ReducedMotion.IsRequestedAsync();
+            Classes.Set("reduced-motion", reduced);
+            // Dialogs have their own visual roots. Publish the preference to every window's theme.
+            if (Application.Current is { } app) app.Resources["Vcr.ReducedMotion"] = reduced;
+        }, "Reduced motion");
         Activated += (_, _) => AppErrors.Run(() => ViewModel.WindowActivatedAsync(), "Refresh on activation");
         Closing += WindowClosing;
         DataContextChanged += (_, _) => Subscribe(DataContext as MainWindowViewModel);

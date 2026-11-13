@@ -197,6 +197,13 @@
   <TransformOperations x:Key="Vcr.Travel.RubberPressed">translate(0px, 1.5px) scale(0.985)</TransformOperations>
   <TransformOperations x:Key="Vcr.Travel.Lift">translate(0px, -2px)</TransformOperations>
   <x:TimeSpan x:Key="Vcr.Motion.Press">0:0:0.06</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.Button.Press">0:0:0.03</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.MinimumPress">0:0:0.09</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.Release">0:0:0.13</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.Rubber.Press">0:0:0.045</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.Rubber.MinimumPress">0:0:0.11</x:TimeSpan>
+  <x:TimeSpan x:Key="Vcr.Motion.Rubber.Release">0:0:0.16</x:TimeSpan>
+  <x:Boolean x:Key="Vcr.ReducedMotion">False</x:Boolean>
   <x:TimeSpan x:Key="Vcr.Motion.Hover">0:0:0.14</x:TimeSpan>
 
   <!-- Radii. -->

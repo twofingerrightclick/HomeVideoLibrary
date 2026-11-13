@@ -44,6 +44,7 @@ public sealed class PlayerViewModel : ViewModelBase, IAsyncDisposable
     private TimeSpan _position;
     private bool _isPlaying, _isMuted;
     private double _volume;
+    private double _speed = 1;
     // The newest seek not yet sent; while one is in flight, later requests replace it so only the latest is sent next.
     private TimeSpan? _queuedSeek;
     private Task _seeking = Task.CompletedTask;
@@ -88,6 +89,31 @@ public sealed class PlayerViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _volume;
         set { if (SetProperty(ref _volume, Math.Clamp(value, 0, 1))) ApplyVolume(); }
+    }
+
+    public static IReadOnlyList<double> SpeedPresets { get; } = Array.AsReadOnly<double>([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
+
+    /// <summary>Playback multiplier; retained when a metadata save releases and reopens the player.</summary>
+    public double Speed
+    {
+        get => _speed;
+        set
+        {
+            if (!double.IsFinite(value)) return;
+            var previous = _speed;
+            if (!SetProperty(ref _speed, Math.Clamp(value, 0.25, 2))) return;
+            if (State == PlaybackState.Open) _ = ApplySpeedAsync(_speed, previous);
+        }
+    }
+
+    private async Task ApplySpeedAsync(double speed, double previous)
+    {
+        try { await _playback.SetSpeedAsync(speed); }
+        catch (Exception exception)
+        {
+            if (_speed == speed) SetProperty(ref _speed, previous, nameof(Speed));
+            _report(exception.Message);
+        }
     }
 
     public bool IsMuted
@@ -182,6 +208,7 @@ public sealed class PlayerViewModel : ViewModelBase, IAsyncDisposable
             throw;
         }
         await _playback.SetVolumeAsync(EffectiveVolume);
+        await ApplySpeedAsync(Speed, 1);
         IsPlaying = play;
         State = PlaybackState.Open;
     }

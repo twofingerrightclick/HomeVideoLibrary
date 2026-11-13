@@ -60,7 +60,7 @@ public sealed record VideoRecord(Guid Id, string RelativePath, string DisplayNam
     /// <summary>The instant used for ordering, in UTC: the embedded date when present, else the import-time date.</summary>
     public DateTimeOffset RecordedAt => (EmbeddedRecordedAt ?? CatalogRecordedAt).ToUniversalTime();
 
-    public string Label => !string.IsNullOrWhiteSpace(Description) ? Description : !string.IsNullOrWhiteSpace(Title) ? Title : DisplayName;
+    public string Label => !string.IsNullOrWhiteSpace(Title) ? Title : DisplayName;
 
     /// <summary>When the record's content last changed, for tag recency: the file's write time, else its import time.</summary>
     public DateTimeOffset LastModifiedUtc => Stamp is { } stamp ? new DateTimeOffset(stamp.ModifiedTicks, TimeSpan.Zero) : ImportedAt.ToUniversalTime();

@@ -92,6 +92,10 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.True(await viewModel.NavigateAsync(() => null)); // The trim keeps running in the activity drawer.
         Assert.True(job.IsRunning);
 
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.True(job.IsRunning);
+        job.Cancel();
+        await job.Completion;
         Assert.True(await viewModel.RequestCloseAsync());
         Assert.Equal(JobState.Cancelled, job.State);
         Assert.Null(viewModel.Page);
@@ -120,8 +124,11 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.Null(viewModel.Page);
         Assert.True(job.IsRunning);
 
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.Contains("Activity", Assert.Single(_interaction.Errors));
+        job.Cancel();
+        await job.Completion;
         Assert.True(await viewModel.RequestCloseAsync());
-        Assert.Equal(1, _interaction.CloseAsked);
         Assert.Equal(JobState.Cancelled, job.State);
     }
 
@@ -182,7 +189,7 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
-    public async Task CloseAsksJobsBeforeLeavingPage()
+    public async Task CloseRefusesActiveJobsBeforeLeavingTheDirtyPage()
     {
         var viewModel = await OpenEditorAsync();
         var page = viewModel.Page;
@@ -193,20 +200,20 @@ public sealed class EditorNavigationTests : IDisposable
             return JobOutcome.Done("never");
         });
 
-        _interaction.CloseChoice = CloseChoice.KeepOpen;
         Assert.False(await viewModel.RequestCloseAsync());
-        Assert.Equal(1, _interaction.CloseAsked);
+        Assert.Single(_interaction.Errors);
         Assert.Equal(0, _interaction.Asked);
         Assert.Same(page, viewModel.Page);
         Assert.Equal("unsaved", Page(viewModel).Details.Title);
         Assert.Equal(0, _metadata.Saves);
         Assert.True(job.IsRunning);
 
-        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        job.Cancel();
+        await job.Completion;
         _interaction.Answers.Enqueue(LeaveChoice.KeepEditing);
         Assert.False(await viewModel.RequestCloseAsync());
         Assert.Same(page, viewModel.Page);
-        Assert.True(job.IsRunning);
+        Assert.Equal(JobState.Cancelled, job.State);
 
         _interaction.Answers.Enqueue(LeaveChoice.Discard);
         Assert.True(await viewModel.RequestCloseAsync());
@@ -215,7 +222,7 @@ public sealed class EditorNavigationTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelAndQuitOffersASaveTheJobsBlockAndCancelsThemToSave()
+    public async Task CloseRefusesASaveBlockedByAJobUntilTheUserCancelsTheJob()
     {
         var viewModel = await OpenEditorAsync();
         var page = Page(viewModel);
@@ -226,7 +233,11 @@ public sealed class EditorNavigationTests : IDisposable
             return JobOutcome.Done("never");
         }, [page.Id]);
         Assert.NotNull(page.SaveBlocker);
-        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        Assert.False(await viewModel.RequestCloseAsync());
+        Assert.True(job.IsRunning);
+        Assert.Equal(0, _metadata.Saves);
+        job.Cancel();
+        await job.Completion;
         _interaction.Answers.Enqueue(LeaveChoice.Save);
 
         Assert.True(await viewModel.RequestCloseAsync());
@@ -234,28 +245,24 @@ public sealed class EditorNavigationTests : IDisposable
         Assert.Equal([null], _interaction.CannotSave);
         Assert.Equal(JobState.Cancelled, job.State);
         Assert.Equal(1, _metadata.Saves);
-        Assert.Empty(_interaction.Errors);
+        Assert.Single(_interaction.Errors);
     }
 
     [Fact]
-    public async Task QuitWhenDoneCanBeCancelledWhileItWaits()
+    public async Task FinishingAJobAfterARefusedCloseDoesNotQuitAutomatically()
     {
         var (viewModel, _) = await OpenLibraryAsync();
         var gate = new TaskCompletionSource<JobOutcome>();
         var job = viewModel.Jobs.Enqueue("render", JobLane.Render, (_, _) => gate.Task);
-        _interaction.CloseChoice = CloseChoice.WaitForJobs;
-
-        var close = viewModel.RequestCloseAsync();
-        Assert.True(viewModel.IsWaitingToQuit);
-        viewModel.CancelQuitCommand.Execute(null);
-        Assert.False(await close);
-        Assert.False(viewModel.IsWaitingToQuit);
+        Assert.False(await viewModel.RequestCloseAsync());
         Assert.True(job.IsRunning);
 
-        var quit = viewModel.RequestCloseAsync();
         gate.SetResult(JobOutcome.Done("ok"));
-        Assert.True(await quit);
+        await job.Completion;
         Assert.Equal(JobState.Succeeded, job.State);
+        Assert.NotNull(viewModel.Model);
+        Assert.Null(LibraryLock.TryAcquire(Library));
+        Assert.True(await viewModel.RequestCloseAsync());
     }
 
     [Fact]
@@ -363,6 +370,7 @@ public sealed class EditorNavigationTests : IDisposable
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;
         public Task SeekAsync(TimeSpan position) => Task.CompletedTask;
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;
+        public Task SetSpeedAsync(double speed) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

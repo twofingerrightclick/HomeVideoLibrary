@@ -214,7 +214,7 @@ public sealed class TrashTests : IDisposable
     }
 
     [Fact]
-    public async Task ATrashEndingWhileTheAppClosesOffersNoPermanentDeletion()
+    public async Task ARefusedCloseLeavesTheNormalTrashFallbackAvailable()
     {
         var (vm, videos) = await OpenAsync("first");
         var render = new TaskCompletionSource();
@@ -225,18 +225,18 @@ public sealed class TrashTests : IDisposable
         });
         _trash.Answers.Enqueue(TrashResult.Unavailable);
         _interaction.ConfirmAnswers.Enqueue(true);
-        _interaction.ConfirmAnswers.Enqueue(true);
+        _interaction.ConfirmAnswers.Enqueue(false);
         var request = await vm.Trash.MoveToTrashAsync([videos[0].Id]);
-        _interaction.CloseChoice = CloseChoice.WaitForJobs;
 
-        var closing = vm.RequestCloseAsync();
+        Assert.False(await vm.RequestCloseAsync());
         render.SetResult();
-        Assert.True(await closing);
         await request!.Completion;
 
-        Assert.Equal("MOVE TO TRASH", Assert.Single(_interaction.Confirmations).Title);
+        Assert.Equal(2, _interaction.Confirmations.Count);
+        Assert.Equal("MOVE TO TRASH", _interaction.Confirmations[0].Title);
         Assert.Single(vm.Jobs.Jobs, job => job.Title.StartsWith("Move", StringComparison.Ordinal));
         Assert.True(File.Exists(PathOf(vm, videos[0])));
+        Assert.NotNull(vm.Model);
     }
 
     [Fact]
@@ -390,6 +390,7 @@ public sealed class TrashTests : IDisposable
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;
         public Task SeekAsync(TimeSpan position) => Task.CompletedTask;
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;
+        public Task SetSpeedAsync(double speed) => Task.CompletedTask;
         public ValueTask DisposeAsync() => new(closing());
     }
 }

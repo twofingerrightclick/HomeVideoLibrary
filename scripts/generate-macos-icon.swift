@@ -7,11 +7,14 @@ guard CommandLine.arguments.count == 3 else {
 let source = URL(fileURLWithPath: CommandLine.arguments[1])
 let output = URL(fileURLWithPath: CommandLine.arguments[2])
 guard let image = NSImage(contentsOf: source) else { fatalError("Cannot read source icon") }
-let manager = FileManager.default
-let temporary = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-let iconset = temporary.appendingPathComponent("AppIcon.iconset")
-try manager.createDirectory(at: iconset, withIntermediateDirectories: true)
-defer { try? manager.removeItem(at: temporary) }
+var chunks = Data()
+func lengthBytes(_ value: Int) -> Data {
+    var bigEndian = UInt32(value).bigEndian
+    return withUnsafeBytes(of: &bigEndian) { Data($0) }
+}
+let types = [16: ["icp4", "ic11"], 32: ["icp5", "ic12"],
+             128: ["ic07", "ic13"], 256: ["ic08", "ic14"],
+             512: ["ic09", "ic10"]]
 
 // macOS requires square representations. Transparent padding keeps the original
 // portrait artwork intact, without cropping or stretching the VHS spines.
@@ -36,15 +39,14 @@ for points in [16, 32, 128, 256, 512] {
                              width: width, height: height),
                    from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
-        let suffix = scale == 2 ? "@2x" : ""
-        let name = "icon_\(points)x\(points)\(suffix).png"
-        try bitmap.representation(using: .png, properties: [:])!
-            .write(to: iconset.appendingPathComponent(name))
+        let png = bitmap.representation(using: .png, properties: [:])!
+        chunks.append(Data(types[points]![scale - 1].utf8))
+        chunks.append(lengthBytes(png.count + 8))
+        chunks.append(png)
     }
 }
-let converter = Process()
-converter.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-converter.arguments = ["-c", "icns", iconset.path, "-o", output.path]
-try converter.run()
-converter.waitUntilExit()
-guard converter.terminationStatus == 0 else { fatalError("iconutil failed") }
+// ICNS stores PNG representations in typed, big-endian length-prefixed chunks.
+var container = Data("icns".utf8)
+container.append(lengthBytes(chunks.count + 8))
+container.append(chunks)
+try container.write(to: output, options: .atomic)

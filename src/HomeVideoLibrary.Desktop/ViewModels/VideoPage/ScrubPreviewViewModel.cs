@@ -6,7 +6,7 @@ namespace HomeVideoLibrary.Desktop.ViewModels.VideoPage;
 /// <summary>The frame shown in the scrub bar's hover tooltip. The bar reports <see cref="HoverTime"/>; the time falls in
 /// a slot of the video (<see cref="SlotLength"/> long), and each slot's frame is captured once through
 /// <see cref="PreviewCache"/> after the pointer rests on it for <see cref="Debounce"/>, then decoded off the UI thread.
-/// <see cref="Image"/> is only ever the frame of the slot under the pointer; while that frame loads there is none.
+/// <see cref="Image"/> retains the previous frame while the slot under the pointer loads, avoiding a flashing preview.
 /// Recently shown frames stay decoded, so moving back over the bar shows them at once. Requests for slots the pointer
 /// has left are cancelled.</summary>
 public sealed class ScrubPreviewViewModel : ViewModelBase, IDisposable
@@ -46,7 +46,7 @@ public sealed class ScrubPreviewViewModel : ViewModelBase, IDisposable
         set { if (SetProperty(ref _hoverTime, value)) Show(value); }
     }
 
-    /// <summary>The frame of the slot under the pointer, or null while it loads or when there is none.</summary>
+    /// <summary>The latest available frame; retained while the next loads, cleared when the pointer leaves.</summary>
     public Bitmap? Image { get => _image; private set => SetProperty(ref _image, value); }
 
     public static TimeSpan SlotLengthFor(TimeSpan duration) =>
@@ -64,8 +64,16 @@ public sealed class ScrubPreviewViewModel : ViewModelBase, IDisposable
         if (slot == _slot) return;
         _slot = slot;
         _request?.Cancel();
-        Image = slot is { } shown ? Decoded(shown) : null;
-        if (slot is not { } wanted || Image is not null) return;
+        if (slot is not { } wanted)
+        {
+            Image = null;
+            return;
+        }
+        if (Decoded(wanted) is { } cached)
+        {
+            Image = cached;
+            return;
+        }
         var request = _request = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _ = LoadAsync(_previews, wanted, request);
     }
@@ -94,13 +102,13 @@ public sealed class ScrubPreviewViewModel : ViewModelBase, IDisposable
                 using var stream = File.OpenRead(path);
                 return Bitmap.DecodeToWidth(stream, DecodeWidth);
             }, cancellationToken);
-            if (_lifetime.IsCancellationRequested || Decoded(slot) is not null)
+            if (cancellationToken.IsCancellationRequested || Decoded(slot) is not null)
             {
                 frame.Dispose();
                 return;
             }
-            Keep(slot, frame);
             if (_slot == slot) Image = frame;
+            Keep(slot, frame);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)

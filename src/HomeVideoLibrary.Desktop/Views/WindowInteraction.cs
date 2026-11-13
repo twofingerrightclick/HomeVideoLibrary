@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using HomeVideoLibrary.Desktop.ViewModels;
+using HomeVideoLibrary.Infrastructure;
 
 namespace HomeVideoLibrary.Desktop.Views;
 
@@ -9,7 +10,7 @@ public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
 {
     private static readonly FilePickerFileType VideoFiles = new("Videos")
     {
-        Patterns = ["*.mp4", "*.m4v", "*.mov", "*.mkv", "*.avi", "*.mts", "*.m2ts", "*.ts", "*.mpg", "*.mpeg", "*.vob", "*.wmv", "*.3gp", "*.webm", "*.dv", "*.flv"],
+        Patterns = VideoCandidates.Extensions.Select(extension => "*" + extension).ToArray(),
         MimeTypes = ["video/*"],
         AppleUniformTypeIdentifiers = ["public.movie"],
     };
@@ -26,19 +27,6 @@ public sealed class WindowInteraction(Func<Window?> owner) : IInteraction
         if (cannotSave is null) keys.Add(new("SAVE AND LEAVE", LeaveChoice.Save, "primary", IsDefault: true));
         else message += $" They cannot be saved now. {cannotSave}";
         return new PromptWindow<LeaveChoice>("UNSAVED CHANGES", message, LeaveChoice.KeepEditing, keys).AskAsync(window);
-    }
-
-    public Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs)
-    {
-        if (owner() is not { } window) return Task.FromResult(CloseChoice.KeepOpen);
-        var jobs = activeJobs == 1 ? "1 import or edit is" : $"{activeJobs} imports or edits are";
-        return new PromptWindow<CloseChoice>("STILL WORKING",
-            $"{jobs} still running or queued. Finished videos are already safe in the library.", CloseChoice.KeepOpen,
-            [
-                new("KEEP OPEN", CloseChoice.KeepOpen, IsCancel: true),
-                new("CANCEL AND QUIT", CloseChoice.CancelJobs, "destructive"),
-                new("QUIT WHEN DONE", CloseChoice.WaitForJobs, "primary", IsDefault: true),
-            ]).AskAsync(window);
     }
 
     public Task ShowErrorAsync(string title, string message) => owner() is { } window

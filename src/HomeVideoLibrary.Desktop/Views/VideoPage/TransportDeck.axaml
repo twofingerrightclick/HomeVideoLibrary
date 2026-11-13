@@ -30,6 +30,37 @@
                 HoverTime="{Binding Preview.HoverTime, Mode=OneWayToSource}"
                 HoverPreview="{Binding Preview.Image}"/>
     <WrapPanel ItemSpacing="14" LineSpacing="8" VerticalAlignment="Bottom">
+      <c:LegendFrame Legend="SPEED">
+        <c:PlasticButton x:Name="SpeedButton" Classes="toolbar" Width="54"
+                         Content="{Binding Player.Speed, StringFormat='{}{0:0.##}×'}"
+                         ToolTip.Tip="Playback speed" AutomationProperties.Name="Playback speed">
+          <c:PlasticButton.Flyout>
+            <Flyout Placement="TopEdgeAlignedLeft" ShowMode="Standard" Opened="SpeedMenuOpened" Closed="SpeedMenuClosed">
+              <StackPanel Width="248" Spacing="12">
+                <c:SectionHeader Title="PLAYBACK SPEED"/>
+                <Slider x:Name="SpeedSlider" Classes="volume" Minimum="0.25" Maximum="2"
+                        SmallChange="0.05" LargeChange="0.25"
+                        Value="{Binding Player.Speed, Mode=TwoWay}" AutomationProperties.Name="Playback speed"/>
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Classes="meta" Text="0.25×"/>
+                  <TextBlock Grid.Column="1" Classes="meta" Text="2×"/>
+                </Grid>
+                <ItemsControl ItemsSource="{x:Static vp:PlayerViewModel.SpeedPresets}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6"/></ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:Double">
+                      <c:PlasticButton Classes="toolbar" Width="57" Content="{Binding StringFormat='{}{0:0.##}×'}"
+                                       Click="ChooseSpeed"/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Flyout>
+          </c:PlasticButton.Flyout>
+        </c:PlasticButton>
+      </c:LegendFrame>
       <c:LegendFrame Legend="TRACK SEARCH">
         <StackPanel Orientation="Horizontal" Spacing="4">
           <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Previous}" Command="{Binding Details.Chapters.PreviousChapterCommand}" ToolTip.Tip="Previous chapter ( [ )"/>

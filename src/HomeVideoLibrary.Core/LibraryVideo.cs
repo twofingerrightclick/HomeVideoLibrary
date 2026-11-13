@@ -7,7 +7,7 @@ public sealed record LibraryVideo(Guid Id, string RelativePath, string DisplayNa
     public string Title { get; init; } = "";
     public string Description { get; init; } = "";
     public string? SourceFingerprint { get; init; }
-    public string Label => !string.IsNullOrWhiteSpace(Description) ? Description : !string.IsNullOrWhiteSpace(Title) ? Title : DisplayName;
+    public string Label => !string.IsNullOrWhiteSpace(Title) ? Title : DisplayName;
 }
 
 public sealed record VideoAlbum(Guid Id, string Name);

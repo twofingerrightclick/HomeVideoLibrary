@@ -59,6 +59,8 @@ internal sealed class FakePlayback : IVideoPlayback
     public List<string> Calls { get; } = [];
     public List<TimeSpan> Seeks { get; } = [];
     public List<int> Volumes { get; } = [];
+    public List<double> Speeds { get; } = [];
+    public Exception? SpeedError { get; set; }
     public bool Closed { get; private set; }
     public int Opens { get; private set; }
     public bool LastPlay { get; private set; }
@@ -113,6 +115,11 @@ internal sealed class FakePlayback : IVideoPlayback
     }
 
     public Task SetVolumeAsync(int volume) { Volumes.Add(volume); return Task.CompletedTask; }
+    public Task SetSpeedAsync(double speed)
+    {
+        Speeds.Add(speed);
+        return SpeedError is { } error ? Task.FromException(error) : Task.CompletedTask;
+    }
     public ValueTask DisposeAsync() { Calls.Add("dispose"); return ValueTask.CompletedTask; }
 }
 

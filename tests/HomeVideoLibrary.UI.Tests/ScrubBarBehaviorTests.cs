@@ -1,6 +1,10 @@
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Media.Imaging;
 using HomeVideoLibrary.UI.Controls;
 using HomeVideoLibrary.UI.Logic;
 using Xunit;
@@ -11,6 +15,42 @@ namespace HomeVideoLibrary.UI.Tests;
 public sealed class ScrubBarBehaviorTests
 {
     private static readonly TimeSpan Length = TimeSpan.FromMinutes(40);
+
+    [AvaloniaFact]
+    public void Loading_a_hover_frame_keeps_the_preview_size_and_hand_cursor()
+    {
+        Border? tooltip = null;
+        Popup? popup = null;
+        var scrub = new ScrubBar { Duration = Length };
+        scrub.TemplateApplied += (_, e) =>
+        {
+            tooltip = e.NameScope.Find<Border>("PART_Tooltip");
+            popup = e.NameScope.Find<Popup>("PART_Popup");
+        };
+        var (window, bar) = Host(scrub);
+        try
+        {
+            Assert.NotNull(tooltip);
+            Assert.NotNull(popup);
+            var frame = Assert.IsType<Border>(Assert.IsType<StackPanel>(tooltip.Child).Children[0]);
+            tooltip.Measure(Size.Infinity);
+            var emptySize = tooltip.DesiredSize;
+            Assert.True(frame.IsVisible);
+
+            using var image = new RenderTargetBitmap(new PixelSize(32, 18));
+            bar.HoverPreview = image;
+            tooltip.Measure(Size.Infinity);
+            Assert.Equal(emptySize, tooltip.DesiredSize);
+            bar.HoverPreview = null;
+            tooltip.Measure(Size.Infinity);
+            Assert.Equal(emptySize, tooltip.DesiredSize);
+            Assert.Equal("Hand", tooltip.Cursor?.ToString());
+            Assert.Equal("Hand", popup.Cursor?.ToString());
+            Assert.False(tooltip.IsHitTestVisible);
+            Assert.False(popup.IsHitTestVisible);
+        }
+        finally { window.Close(); }
+    }
 
     [AvaloniaTheory]
     [InlineData(0, -6, false)]

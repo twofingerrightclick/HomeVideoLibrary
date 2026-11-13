@@ -158,7 +158,6 @@ public sealed class TrashKeyTests : IDisposable
         }
         public Task<LeaveChoice> AskLeaveAsync(string title, string? cannotSave) => Task.FromResult(LeaveChoice.KeepEditing);
         public Task ShowErrorAsync(string title, string message) => Task.CompletedTask;
-        public Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs) => Task.FromResult(CloseChoice.CancelJobs);
         public Task<PickedFiles> PickVideosAsync() => Task.FromResult(PickedFiles.None);
         public Task<string?> PickFolderAsync(string title) => Task.FromResult<string?>(null);
         public Task ShowSettingsAsync(SettingsViewModel settings) => Task.CompletedTask;

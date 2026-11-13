@@ -34,7 +34,7 @@ public sealed class ScrubPreviewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_frame_shows_only_for_its_own_slot()
+    public void The_previous_frame_stays_visible_until_the_next_slot_is_ready()
     {
         using var preview = Preview();
         preview.HoverTime = TimeSpan.FromMinutes(10);
@@ -42,15 +42,40 @@ public sealed class ScrubPreviewTests : IDisposable
         WaitFor(() => preview.Image is not null);
         var first = preview.Image;
 
+        var release = _frames.ReleaseCapture = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         preview.HoverTime = TimeSpan.FromMinutes(50);
-        Assert.Null(preview.Image);
+        Assert.Same(first, preview.Image);
         _time.Advance(ScrubPreviewViewModel.Debounce);
-        WaitFor(() => preview.Image is not null);
-        Assert.NotSame(first, preview.Image);
+        WaitFor(() => _frames.Captured.Count == 2);
+        Assert.Same(first, preview.Image);
+        release.SetResult();
+        WaitFor(() => preview.Image is not null && !ReferenceEquals(first, preview.Image));
 
         preview.HoverTime = TimeSpan.FromMinutes(10);
         Assert.Same(first, preview.Image);
         Assert.Equal(2, _frames.Captured.Count);
+    }
+
+    [AvaloniaFact]
+    public void Leaving_the_timeline_clears_the_frame_and_cancels_the_pending_capture()
+    {
+        using var preview = Preview();
+        preview.HoverTime = TimeSpan.FromMinutes(10);
+        _time.Advance(ScrubPreviewViewModel.Debounce);
+        WaitFor(() => preview.Image is not null);
+
+        var release = _frames.ReleaseCapture = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        preview.HoverTime = TimeSpan.FromMinutes(50);
+        _time.Advance(ScrubPreviewViewModel.Debounce);
+        WaitFor(() => _frames.Captured.Count == 2);
+        preview.HoverTime = null;
+        Assert.Null(preview.Image);
+        release.SetResult();
+
+        preview.HoverTime = TimeSpan.FromMinutes(30);
+        _time.Advance(ScrubPreviewViewModel.Debounce);
+        WaitFor(() => preview.Image is not null);
+        Assert.Equal(3, _frames.Captured.Count);
     }
 
     [AvaloniaFact]
@@ -92,11 +117,13 @@ public sealed class ScrubPreviewTests : IDisposable
 
         public ConcurrentQueue<TimeSpan> Queue { get; } = new();
         public IReadOnlyCollection<TimeSpan> Captured => Queue;
+        public TaskCompletionSource? ReleaseCapture { get; set; }
 
         public async Task CaptureFrameAsync(string mkvPath, TimeSpan position, string outputPath, int maxWidth = 960,
             CancellationToken cancellationToken = default)
         {
             Queue.Enqueue(position);
+            if (ReleaseCapture is { } release) await release.Task.WaitAsync(cancellationToken);
             await File.WriteAllBytesAsync(outputPath, _image, cancellationToken);
         }
 

@@ -96,7 +96,7 @@ the platform default; digital counters use DSEG7 Classic.
 A toolbar (◀ LIBRARY, title, the UNSAVED light, REVERT, SAVE and a More menu), the video over a transport deck, and a
 right inspector that can be hidden and resized.
 
-- **Transport deck:** scrub bar with chapter marks and an in/out range while editing, track search, REW, PLAY/PAUSE, FF,
+- **Transport deck:** scrub bar with chapter marks and an in/out range while editing, a SPEED dropup to the left of track search with a slider and 0.25×–2× quarter-step presets, REW, PLAY/PAUSE, FF,
   LCD TIME and TOTAL counters, MOMENT (M), volume with mute, and a fullscreen key with an inspector latch.
 - **Inspector tabs** (Cmd/Ctrl+1 to 5): INFO (title, description, recording date, file, albums), CHAPTERS, TAGS, FRAMES
   (the chosen thumbnails stored in the MKV) and EDIT.

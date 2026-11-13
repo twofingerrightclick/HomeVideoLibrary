@@ -12,6 +12,8 @@
   -->
   <ControlTheme x:Key="Vcr.Theme.PlasticButton" TargetType="Button">
     <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="ui:ButtonPressFeedback.IsEnabled" Value="True"/>
+    <Setter Property="ui:ButtonPressFeedback.MinimumDuration" Value="{DynamicResource Vcr.Motion.MinimumPress}"/>
     <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
@@ -43,8 +45,8 @@
                     RenderTransform="{DynamicResource Vcr.Travel.Rest}">
               <Border.Transitions>
                 <Transitions>
-                  <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
-                  <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.06"/>
+                  <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Release}" Easing="CubicEaseOut"/>
+                  <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Release}" Easing="CubicEaseOut"/>
                 </Transitions>
               </Border.Transitions>
               <c:GlyphLegendPanel Name="PART_Legend"
@@ -85,7 +87,7 @@
         <Setter Property="BoxShadow" Value="{DynamicResource Vcr.Shadow.Cap.Hover}"/>
       </Style>
     </Style>
-    <Style Selector="^:pressed">
+    <Style Selector="^:pressed, ^.vcr-pressed">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Pressed}"/>
       <Style Selector="^ /template/ Border#PART_Cap">
         <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Pressed}"/>
@@ -140,7 +142,7 @@
         <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary.Hover}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Primary.EdgeHover}"/>
       </Style>
-      <Style Selector="^:pressed">
+      <Style Selector="^:pressed, ^.vcr-pressed">
         <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Primary.Pressed}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Primary.EdgePressed}"/>
       </Style>
@@ -153,7 +155,7 @@
       <Style Selector="^:pointerover">
         <Setter Property="Background" Value="#D2443A"/>
       </Style>
-      <Style Selector="^:pressed">
+      <Style Selector="^:pressed, ^.vcr-pressed">
         <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Destructive.Pressed}"/>
       </Style>
     </Style>
@@ -165,7 +167,7 @@
       <Style Selector="^:pointerover">
         <Setter Property="Background" Value="#31C472"/>
       </Style>
-      <Style Selector="^:pressed">
+      <Style Selector="^:pressed, ^.vcr-pressed">
         <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Go.Pressed}"/>
       </Style>
     </Style>
@@ -173,6 +175,17 @@
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Chassis.Face}"/>
       <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
       <Setter Property="BorderBrush" Value="{DynamicResource Vcr.Brush.Plastic.Rim}"/>
+    </Style>
+    <Style Selector="^:pressed /template/ Border#PART_Cap, ^.vcr-pressed /template/ Border#PART_Cap">
+      <Setter Property="Transitions">
+        <Transitions>
+          <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Button.Press}" Easing="CubicEaseOut"/>
+          <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Button.Press}" Easing="CubicEaseOut"/>
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="^.vcr-reduced-motion /template/ Border#PART_Cap">
+      <Setter Property="Transitions" Value="{x:Null}"/>
     </Style>
   </ControlTheme>
 
@@ -182,6 +195,8 @@
        gasket ring instead of a hard well, softer and slower travel, duller sound. -->
   <ControlTheme x:Key="Vcr.Theme.RubberButton" TargetType="Button">
     <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="ui:ButtonPressFeedback.IsEnabled" Value="True"/>
+    <Setter Property="ui:ButtonPressFeedback.MinimumDuration" Value="{DynamicResource Vcr.Motion.Rubber.MinimumPress}"/>
     <Setter Property="ui:Vcr.Sound" Value="Rubber"/>
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
@@ -210,8 +225,8 @@
                     RenderTransform="{DynamicResource Vcr.Travel.Rest}">
               <Border.Transitions>
                 <Transitions>
-                  <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.09"/>
-                  <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.09"/>
+                  <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Rubber.Release}" Easing="CubicEaseOut"/>
+                  <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Rubber.Release}" Easing="CubicEaseOut"/>
                 </Transitions>
               </Border.Transitions>
               <c:GlyphLegendPanel Margin="{TemplateBinding Padding}"
@@ -244,7 +259,7 @@
     <Style Selector="^:pointerover">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome.Hover}"/>
     </Style>
-    <Style Selector="^:pressed">
+    <Style Selector="^:pressed, ^.vcr-pressed">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome.Pressed}"/>
       <Style Selector="^ /template/ Border#PART_Cap">
         <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.RubberPressed}"/>
@@ -269,25 +284,36 @@
       <Setter Property="Background" Value="#C2352C"/>
       <Setter Property="Foreground" Value="#FFF1EE"/>
       <Style Selector="^:pointerover"><Setter Property="Background" Value="#CF3F35"/></Style>
-      <Style Selector="^:pressed"><Setter Property="Background" Value="#A82C24"/></Style>
+      <Style Selector="^:pressed, ^.vcr-pressed"><Setter Property="Background" Value="#A82C24"/></Style>
     </Style>
     <Style Selector="^.green">
       <Setter Property="Background" Value="#1E9B57"/>
       <Setter Property="Foreground" Value="#F1FBF5"/>
       <Style Selector="^:pointerover"><Setter Property="Background" Value="#25AA61"/></Style>
-      <Style Selector="^:pressed"><Setter Property="Background" Value="#188449"/></Style>
+      <Style Selector="^:pressed, ^.vcr-pressed"><Setter Property="Background" Value="#188449"/></Style>
     </Style>
     <Style Selector="^.yellow">
       <Setter Property="Background" Value="#E3B81E"/>
       <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Yellow.Ink}"/>
       <Style Selector="^:pointerover"><Setter Property="Background" Value="#EEC52A"/></Style>
-      <Style Selector="^:pressed"><Setter Property="Background" Value="#C9A218"/></Style>
+      <Style Selector="^:pressed, ^.vcr-pressed"><Setter Property="Background" Value="#C9A218"/></Style>
     </Style>
       <!-- Declared after the dome colors: Avalonia applies equal-specificity styles in order, so a colored
          key would otherwise keep its bright dome and legend while disabled. -->
     <Style Selector="^.red:disabled, ^.green:disabled, ^.yellow:disabled">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Rubber.Dome}"/>
       <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
+    </Style>
+    <Style Selector="^:pressed /template/ Border#PART_Cap, ^.vcr-pressed /template/ Border#PART_Cap">
+      <Setter Property="Transitions">
+        <Transitions>
+          <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Rubber.Press}" Easing="CubicEaseOut"/>
+          <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Rubber.Press}" Easing="CubicEaseOut"/>
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="^.vcr-reduced-motion /template/ Border#PART_Cap">
+      <Setter Property="Transitions" Value="{x:Null}"/>
     </Style>
   </ControlTheme>
 
@@ -297,6 +323,8 @@
        that stays 1px in while checked. -->
   <ControlTheme x:Key="Vcr.Theme.LatchButton" TargetType="ToggleButton">
     <Setter Property="ClipToBounds" Value="False"/>
+    <Setter Property="ui:ButtonPressFeedback.IsEnabled" Value="True"/>
+    <Setter Property="ui:ButtonPressFeedback.MinimumDuration" Value="{DynamicResource Vcr.Motion.MinimumPress}"/>
     <Setter Property="ui:Vcr.Sound" Value="Plastic"/>
     <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic}"/>
     <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.OnCap}"/>
@@ -328,8 +356,8 @@
                     RenderTransform="{DynamicResource Vcr.Travel.Rest}">
               <Border.Transitions>
                 <Transitions>
-                  <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.06"/>
-                  <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.06"/>
+                  <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Release}" Easing="CubicEaseOut"/>
+                  <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Release}" Easing="CubicEaseOut"/>
                 </Transitions>
               </Border.Transitions>
               <Panel>
@@ -392,7 +420,7 @@
     <Style Selector="^.red /template/ Border#PART_Led">
       <Setter Property="Background" Value="#2E1C1A"/>
     </Style>
-    <Style Selector="^:pressed">
+    <Style Selector="^:pressed, ^.vcr-pressed">
       <Setter Property="Background" Value="{DynamicResource Vcr.Brush.Plastic.Pressed}"/>
       <Style Selector="^ /template/ Border#PART_Cap">
         <Setter Property="RenderTransform" Value="{DynamicResource Vcr.Travel.Pressed}"/>
@@ -430,6 +458,17 @@
     <Style Selector="^.icon">
       <Setter Property="Padding" Value="0"/>
       <Setter Property="MinWidth" Value="{DynamicResource Vcr.Size.Control}"/>
+    </Style>
+    <Style Selector="^:pressed /template/ Border#PART_Cap, ^.vcr-pressed /template/ Border#PART_Cap">
+      <Setter Property="Transitions">
+        <Transitions>
+          <TransformOperationsTransition Property="RenderTransform" Duration="{StaticResource Vcr.Motion.Button.Press}" Easing="CubicEaseOut"/>
+          <BoxShadowsTransition Property="BoxShadow" Duration="{StaticResource Vcr.Motion.Button.Press}" Easing="CubicEaseOut"/>
+        </Transitions>
+      </Setter>
+    </Style>
+    <Style Selector="^.vcr-reduced-motion /template/ Border#PART_Cap">
+      <Setter Property="Transitions" Value="{x:Null}"/>
     </Style>
   </ControlTheme>
 

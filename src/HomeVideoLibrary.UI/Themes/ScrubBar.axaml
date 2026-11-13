@@ -52,9 +52,12 @@
         <Panel>
           <Popup Name="PART_Popup"
                  Classes="pointer-preview"
+                 Cursor="Hand"
+                 IsHitTestVisible="False"
                  ShouldUseOverlayLayer="False"
                  IsLightDismissEnabled="False">
             <Border Name="PART_Tooltip"
+                    Cursor="Hand"
                     IsHitTestVisible="False"
                     Margin="0,0,0,2"
                     MinWidth="56"
@@ -65,8 +68,8 @@
                     CornerRadius="{DynamicResource Vcr.Radius.Field}"
                     BoxShadow="{DynamicResource Vcr.Shadow.Scrub.Tooltip}">
               <StackPanel Spacing="4" HorizontalAlignment="Center">
-                <Border IsVisible="{TemplateBinding HoverPreview, Converter={x:Static ObjectConverters.IsNotNull}}"
-                        Width="{DynamicResource Vcr.Size.ScrubPreview.Width}"
+                <!-- Reserve the frame area while loading; collapsing it resizes the native popup on every miss. -->
+                <Border Width="{DynamicResource Vcr.Size.ScrubPreview.Width}"
                         Height="{DynamicResource Vcr.Size.ScrubPreview.Height}"
                         Background="{DynamicResource Vcr.Brush.Chassis.Deep}"
                         CornerRadius="2"

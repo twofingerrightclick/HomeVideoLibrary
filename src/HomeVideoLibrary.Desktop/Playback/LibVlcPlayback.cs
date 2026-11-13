@@ -164,6 +164,13 @@ public sealed class LibVlcPlayback : IVideoPlayback
         return Task.CompletedTask;
     });
 
+    public Task SetSpeedAsync(double speed) => RunAsync(() =>
+    {
+        if (_player is { } player && player.SetRate((float)Math.Clamp(speed, 0.25, 2)) == -1)
+            throw new InvalidOperationException("The video could not be played at the selected speed.");
+        return Task.CompletedTask;
+    });
+
     private async Task RunAsync(Func<Task> operation) => await RunAsync(async () => { await operation(); return true; });
 
     private async Task<T> RunAsync<T>(Func<Task<T>> operation)

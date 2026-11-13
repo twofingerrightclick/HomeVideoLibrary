@@ -32,4 +32,6 @@ public interface IVideoPlayback : IAsyncDisposable
     Task SetPlayingAsync(bool play);
     Task SeekAsync(TimeSpan position);
     Task SetVolumeAsync(int volume);
+    /// <summary>Sets the playback multiplier (0.25..2). Throws if the engine rejects it.</summary>
+    Task SetSpeedAsync(double speed);
 }

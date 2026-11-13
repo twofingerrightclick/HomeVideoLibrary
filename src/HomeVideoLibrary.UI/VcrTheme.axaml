@@ -1,5 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:HomeVideoLibrary.UI">
   <!--
     Entry point. Include after FluentTheme:
       <FluentTheme/>
@@ -25,6 +26,13 @@
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Styles.Resources>
+
+  <Style Selector="Window">
+    <Setter Property="ui:ButtonPressFeedback.ReducedMotion" Value="{DynamicResource Vcr.ReducedMotion}"/>
+  </Style>
+  <Style Selector="Window.reduced-motion">
+    <Setter Property="ui:ButtonPressFeedback.ReducedMotion" Value="True"/>
+  </Style>
 
   <Style Selector="Button">
     <Setter Property="Theme" Value="{StaticResource Vcr.Theme.PlasticButton}"/>

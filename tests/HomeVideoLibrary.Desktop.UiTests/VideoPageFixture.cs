@@ -71,6 +71,7 @@ internal static class VideoPageFixture
         public Task SetPlayingAsync(bool play) => Task.CompletedTask;
         public Task SeekAsync(TimeSpan position) => Task.CompletedTask;
         public Task SetVolumeAsync(int volume) => Task.CompletedTask;
+        public Task SetSpeedAsync(double speed) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

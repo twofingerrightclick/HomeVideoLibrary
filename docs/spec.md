@@ -41,7 +41,7 @@ Each implementation stage is assigned sequentially to one agent. Astra owns the 
 ## Library interface
 
 - Dark modern shell with a left drawer for library navigation, search, and albums; a playback/content region; and a right metadata sidebar.
-- Render videos as stacked VHS spines, one per row in a centered stack, at a real spine's 187:25 proportions (about 94 pixels high in the widest stack), with handwritten-style labels containing the user's description, truncated when space runs out.
+- Render videos as stacked VHS spines, one per row in a centered stack, at a real spine's 187:25 proportions (about 94 pixels high in the widest stack), with handwritten-style labels containing the video's title (or filename when the title is blank), truncated when space runs out. Editing the description leaves the label unchanged.
 - Read chronologically by year. A floating light month/year label tracks the current scroll position.
 - Hovering a tape brings it slightly toward the viewer (a small scale-up and deeper shadow, with no movement) using Avalonia transforms.
 - Moving left to right over the spine previews the video's moments from pre-built frame strips (20 frames per video, kept as a rebuildable cache; the chosen thumbnails are not used). A floating image preview transitions between frames without heavy continuous playback requirements.

@@ -116,11 +116,26 @@
        IsVisible="{Binding Albums.CanStartAdding}" VerticalAlignment="Center"/>
      </StackPanel>
      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-      <c:PlasticButton Classes="primary" Content="IMPORT VIDEOS" Icon="{StaticResource Vcr.Icon.Import}" Command="{Binding Import.ImportCommand}"/>
+      <c:PlasticButton Classes="primary" Content="IMPORT VIDEOS" Icon="{StaticResource Vcr.Icon.Import}" IsEnabled="{Binding Import.CanImport}">
+       <c:PlasticButton.Flyout>
+        <MenuFlyout>
+         <MenuItem Header="Import files…" Command="{Binding Import.ImportCommand}"/>
+         <MenuItem Header="Import folder and subfolders…" Command="{Binding Import.ImportFolderCommand}"/>
+        </MenuFlyout>
+       </c:PlasticButton.Flyout>
+      </c:PlasticButton>
      </StackPanel>
     </Grid>
     <Border Classes="notice" IsVisible="{Binding HasToolWarning}"><TextBlock Text="{Binding ToolWarning}" TextWrapping="Wrap"/></Border>
     <Border Classes="notice" IsVisible="{Binding HasRecoveryNotice}"><TextBlock Text="{Binding RecoveryNotice}" TextWrapping="Wrap"/></Border>
+    <Border Classes="notice" IsVisible="{Binding Import.HasFolderScan}">
+     <StackPanel Spacing="6">
+      <TextBlock Text="{Binding Import.FolderScanSummary}" TextWrapping="Wrap"/>
+      <Expander Header="Scan details" IsVisible="{Binding Import.HasFolderScanDetails}">
+       <ScrollViewer MaxHeight="160"><SelectableTextBlock Text="{Binding Import.FolderScanDetails}" TextWrapping="Wrap"/></ScrollViewer>
+      </Expander>
+     </StackPanel>
+    </Border>
     <Border Classes="bezel" Padding="12,8" IsVisible="{Binding Albums.IsAddingVideos}">
      <Grid ColumnDefinitions="*,Auto">
       <TextBlock Text="{Binding Albums.ViewTitle}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
@@ -221,8 +236,6 @@
      VerticalAlignment="Center"/>
     <!-- Activity: background imports and edits. The flyout is a native popup, so it also opens over a playing video. -->
     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-     <c:PlasticButton Classes="toolbar destructive" Content="CANCEL QUIT" Command="{Binding CancelQuitCommand}" IsVisible="{Binding IsWaitingToQuit}"
-      ToolTip.Tip="Keep the app open instead of quitting when the jobs finish"/>
      <c:PlasticButton x:Name="ActivityButton" Classes="toolbar" MaxWidth="{StaticResource ActivityKeyMaxWidth}" HorizontalContentAlignment="Stretch"
       ToolTip.Tip="{Binding Jobs.FullSummary}" AutomationProperties.Name="{Binding Jobs.FullSummary, StringFormat='Activity: {0}'}">
       <!-- A Grid, not a StackPanel: a horizontal StackPanel measures the text unbounded, so it would clip instead of trim. -->

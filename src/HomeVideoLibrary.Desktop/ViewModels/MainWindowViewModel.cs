@@ -58,7 +58,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     private LibrarySnapshot _shown = LibrarySnapshot.Empty;
     private readonly SemaphoreSlim _navigation = new(1, 1);
     private Task<bool>? _closing;
-    private CancellationTokenSource? _quitWait;
     private Task? _opening;
     private object? _shownToast;
     private DateTime _lastActivationStat;
@@ -110,7 +109,6 @@ public sealed class MainWindowViewModel : ViewModelBase
         DeleteSelectedCommand = new RelayCommand(() => DeleteTarget?.Execute(null), () => DeleteTarget?.CanExecute(null) == true);
         BackCommand = new AsyncCommand(_ => NavigateAsync(() => null), () => Page is not null, context: "Back to library");
         FocusSearchCommand = new AsyncCommand(_ => FocusSearchAsync(), context: "Search");
-        CancelQuitCommand = new RelayCommand(() => _quitWait?.Cancel(), () => IsWaitingToQuit);
     }
 
     public string Title => "Home Video Library";
@@ -141,22 +139,6 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncCommand BackCommand { get; }
     /// <summary>Returns to the shelf (through the leave prompt) and asks the view to focus the search field.</summary>
     public AsyncCommand FocusSearchCommand { get; }
-
-    /// <summary>Keeps the app open while a close waits for jobs to finish ("quit when done").</summary>
-    public RelayCommand CancelQuitCommand { get; }
-    public bool IsWaitingToQuit => QuitWait is not null;
-
-    /// <summary>The wait of a close for jobs to finish; cancelling it keeps the app open.</summary>
-    private CancellationTokenSource? QuitWait
-    {
-        get => _quitWait;
-        set
-        {
-            _quitWait = value;
-            OnPropertyChanged(nameof(IsWaitingToQuit));
-            CancelQuitCommand.RaiseCanExecuteChanged();
-        }
-    }
 
     /// <summary>Raised when the view should move keyboard focus to the search field.</summary>
     public event Action? SearchFocusRequested;
@@ -366,13 +348,9 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally { _navigation.Release(); }
     }
 
-    /// <summary>Everything that must happen before the window closes, in order: waits for a library switch; asks whether
-    /// to wait for or cancel background jobs (only a question, so keeping the app open there changes nothing); settles
-    /// the page (finishing a save) and leaves it, asking about unsaved changes (when the jobs are to be cancelled, saving
-    /// there cancels them first if they block the save); cancels or waits for the jobs; then stops the library refresh and
-    /// releases the library. Returns false when the user keeps the app open, including by
-    /// <see cref="CancelQuitCommand"/> while waiting for jobs. Repeated calls while one is running share it; new work is
-    /// refused meanwhile.</summary>
+    /// <summary>Refuses to close while work is queued or running. Otherwise settles and leaves the page (asking about
+    /// unsaved changes), then releases the library. Repeated requests share the current close operation; a refused
+    /// close never schedules a later quit or cancels work.</summary>
     public Task<bool> RequestCloseAsync()
     {
         if (_closing is not { IsCompleted: false })
@@ -389,16 +367,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         try
         {
             if (_opening is { } opening) await opening;
-            var jobs = Jobs.HasActive ? await _dependencies.Interaction.AskCloseWithJobsAsync(Jobs.ActiveCount) : CloseChoice.WaitForJobs;
-            if (jobs == CloseChoice.KeepOpen) return false;
+            if (await RefuseCloseWhileWorkingAsync()) return false;
             if (Page is { } page)
             {
                 Status = "Finishing the current operation, then closing…";
                 await page.SettleForCloseAsync();
             }
-            if (!await NavigateAsync(() => null, jobs == CloseChoice.CancelJobs ? CancelJobsAsync : null)) return false;
-            if (jobs == CloseChoice.CancelJobs) await CancelJobsAsync();
-            else if (!await WaitForJobsAsync()) return false;
+            if (!await NavigateAsync(() => null)) return false;
+            if (await RefuseCloseWhileWorkingAsync()) return false;
             status = Status;
             await ReleaseLibraryAsync();
             return true;
@@ -406,26 +382,12 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally { Status = status; }
     }
 
-    private Task CancelJobsAsync()
+    private async Task<bool> RefuseCloseWhileWorkingAsync()
     {
-        Status = "Cancelling imports and edits, then closing…";
-        return Jobs.CancelAllAndWaitAsync();
-    }
-
-    /// <summary>Waits for the active jobs to end; false when the user cancels the quit meanwhile.</summary>
-    private async Task<bool> WaitForJobsAsync()
-    {
-        if (!Jobs.HasActive) return true;
-        Status = "Closing when the remaining imports and edits finish…";
-        using var quit = new CancellationTokenSource();
-        QuitWait = quit;
-        try
-        {
-            await Jobs.WhenIdleAsync().WaitAsync(quit.Token);
-            return true;
-        }
-        catch (OperationCanceledException) when (quit.IsCancellationRequested) { return false; }
-        finally { QuitWait = null; }
+        if (!Jobs.HasActive) return false;
+        await _dependencies.Interaction.ShowErrorAsync("CAN’T QUIT YET",
+            "Work is still running. Wait for it to finish, or cancel it in Activity, before quitting.");
+        return true;
     }
 
     /// <summary>Awaits a library switch or close and then re-checks the commands it held off: only once it has

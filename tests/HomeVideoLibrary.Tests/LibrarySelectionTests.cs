@@ -101,11 +101,37 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.Contains("Added 1 video to “Family”", vm.Status);
 
         var path = vm.Model.GetVideoPath(vm.Model.Snapshot.Find(videos[0].Id)!);
-        _files.Set(path, VideoMetadata.Empty with { Description = "renamed by a save" });
+        _files.Set(path, VideoMetadata.Empty with { Title = "renamed by a save" });
         await File.AppendAllTextAsync(path, " saved");
         await vm.Model.UpsertFromFileAsync(videos[0]);
         Assert.Same(before[0], Tape(vm, videos[0]));
         Assert.Equal("renamed by a save", before[0].Label);
+    }
+
+    [Theory]
+    [InlineData("Lake day", "Lake day")]
+    [InlineData("", "original filename")]
+    [InlineData("   ", "original filename")]
+    public async Task DescriptionChangesKeepTheTapeTitle(string title, string expectedLabel)
+    {
+        var (vm, videos) = await OpenAsync("original filename");
+        var video = videos[0];
+        var tape = Tape(vm, video);
+        var path = vm.Model!.GetVideoPath(tape.Record);
+        _files.Set(path, VideoMetadata.Empty with { Title = title });
+        await File.AppendAllTextAsync(path, " title saved");
+        await vm.Model.UpsertFromFileAsync(video);
+        Assert.Equal(expectedLabel, tape.Label);
+
+        _files.Set(path, VideoMetadata.Empty with { Title = title, Description = "A new description" });
+        await File.AppendAllTextAsync(path, " description saved");
+        await vm.Model.UpsertFromFileAsync(video);
+
+        Assert.Same(tape, Tape(vm, video));
+        Assert.Equal(expectedLabel, tape.Label);
+        Assert.Equal(title, tape.Record.Title);
+        Assert.Equal("A new description", tape.Record.Description);
+        Assert.Equal(expectedLabel, tape.Video.Label);
     }
 
     [Fact]
@@ -206,7 +232,7 @@ public sealed class LibrarySelectionTests : IDisposable
     }
 
     [Fact]
-    public async Task ClosingWithRunningJobsAsksAndKeepOpenLeavesThemRunning()
+    public async Task ClosingWithRunningImportsIsRefusedUntilTheUserCancelsThemInActivity()
     {
         var started = new TaskCompletionSource();
         _importer = _ => new BlockingImporter(started);
@@ -214,16 +240,15 @@ public sealed class LibrarySelectionTests : IDisposable
         vm.Import.Enqueue(["/somewhere/slow.mov"]);
         await started.Task;
 
-        _interaction.CloseChoice = CloseChoice.KeepOpen;
         Assert.False(await vm.RequestCloseAsync());
         Assert.True(vm.Import.IsImporting);
+        Assert.Contains("Activity", Assert.Single(_interaction.Errors));
 
-        _interaction.CloseChoice = CloseChoice.CancelJobs;
+        await vm.Jobs.CancelAllAndWaitAsync();
         var close = vm.RequestCloseAsync();
         var again = vm.RequestCloseAsync();
         Assert.True(await close);
         Assert.True(await again);
-        Assert.Equal(2, _interaction.CloseAsked);
         Assert.Equal(JobState.Cancelled, Assert.Single(vm.Jobs.Jobs).State);
         Assert.False(vm.Import.IsImporting);
     }
@@ -242,7 +267,6 @@ public sealed class LibrarySelectionTests : IDisposable
 
         vm.Import.Enqueue(["/somewhere/slow.mov"]);
         await started.Task;
-        _interaction.CloseChoice = CloseChoice.KeepOpen;
         Assert.False(await vm.RequestCloseAsync());
         Assert.True(announced);
         await vm.Jobs.CancelAllAndWaitAsync();

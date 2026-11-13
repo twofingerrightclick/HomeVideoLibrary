@@ -2,9 +2,6 @@ namespace HomeVideoLibrary.Desktop.ViewModels;
 
 public enum LeaveChoice { Save, Discard, KeepEditing }
 
-/// <summary>What to do with background jobs (imports, renders) when the window closes.</summary>
-public enum CloseChoice { WaitForJobs, CancelJobs, KeepOpen }
-
 /// <summary>Files chosen in a picker: local paths, and how many picked items had no local path.</summary>
 public sealed record PickedFiles(IReadOnlyList<string> Paths, int Unavailable)
 {
@@ -30,9 +27,6 @@ public interface IInteraction
 
     /// <summary>Asks <paramref name="confirmation"/>; true only when the user chose its confirm key.</summary>
     Task<bool> ConfirmAsync(Confirmation confirmation);
-
-    /// <summary>Asks whether to wait for <paramref name="activeJobs"/> running or queued jobs, cancel them, or keep the app open.</summary>
-    Task<CloseChoice> AskCloseWithJobsAsync(int activeJobs);
 
     /// <summary>Asks for video files to import; <see cref="PickedFiles.None"/> when cancelled.</summary>
     Task<PickedFiles> PickVideosAsync();

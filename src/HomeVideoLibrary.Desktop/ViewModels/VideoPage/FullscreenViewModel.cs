@@ -12,7 +12,7 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
     // One deadline, pushed back by every pointer move; a single wait runs until it passes.
     private DateTimeOffset _hideAt;
     private Task _waiting = Task.CompletedTask;
-    private bool _isFullscreen, _isHeld;
+    private bool _isFullscreen, _isHeld, _isMenuOpen;
 
     /// <param name="isPlaying">Whether the video plays; the owner calls <see cref="PlaybackChanged"/> when it changes.</param>
     public FullscreenViewModel(Func<bool> isPlaying, TimeProvider? time = null)
@@ -37,7 +37,7 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Whether the controls over the fullscreen video show.</summary>
-    public bool AreControlsShown => IsFullscreen && (!_isPlaying() || _isHeld || _time.GetUtcNow() < _hideAt);
+    public bool AreControlsShown => IsFullscreen && (!_isPlaying() || _isHeld || _isMenuOpen || _time.GetUtcNow() < _hideAt);
 
     /// <summary>Fullscreen with the controls hidden: the pointer hides too.</summary>
     public bool IsIdle => IsFullscreen && !AreControlsShown;
@@ -59,6 +59,14 @@ public sealed class FullscreenViewModel : ViewModelBase, IDisposable
     public void Hold(bool held)
     {
         _isHeld = held;
+        ShownChanged();
+    }
+
+    /// <summary>An open transport menu keeps the deck visible even when the pointer enters its popup.</summary>
+    public void HoldMenu(bool open)
+    {
+        _isMenuOpen = open;
+        if (!open) Wake();
         ShownChanged();
     }
 
