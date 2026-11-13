@@ -13,6 +13,40 @@ namespace HomeVideoLibrary.UI.Tests;
 
 public sealed class ScrubRenderingTests
 {
+    [AvaloniaFact]
+    public void ListHoverEnlargesOnlyItsChapterWithoutOpeningTimelinePreview()
+    {
+        var duration = TimeSpan.FromSeconds(60);
+        var (window, bar) = Host(new ScrubBar { Duration = duration, Position = duration, ChapterSegments = [
+            new ChapterMark(TimeSpan.Zero, "First") { End = TimeSpan.FromSeconds(30) },
+            new ChapterMark(TimeSpan.FromSeconds(30), "Second") { End = duration }] });
+        int RedHeight(double fraction)
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            using var frame = window.CaptureRenderedFrame()!;
+            using var buffer = frame.Lock();
+            var bytes = new byte[buffer.RowBytes * buffer.Size.Height];
+            Marshal.Copy(buffer.Address, bytes, 0, bytes.Length);
+            var red = buffer.Format == PixelFormat.Rgba8888 ? 0 : 2;
+            var x = (int)At(bar, fraction).X;
+            return Enumerable.Range(0, buffer.Size.Height).Count(y =>
+            {
+                var pixel = y * buffer.RowBytes + x * 4;
+                return bytes[pixel + red] > 100 && bytes[pixel + red] > bytes[pixel + 1] * 1.5;
+            });
+        }
+        var first = RedHeight(0.25);
+        var second = RedHeight(0.75);
+        bar.HighlightedChapterStart = TimeSpan.Zero;
+        Assert.True(RedHeight(0.25) > first);
+        Assert.Equal(second, RedHeight(0.75));
+        Assert.Null(bar.HoverTime);
+        bar.HighlightedChapterStart = null;
+        Assert.Equal(first, RedHeight(0.25));
+        window.Close();
+    }
+
     [AvaloniaTheory]
     [InlineData("empty")]
     [InlineData("moment")]

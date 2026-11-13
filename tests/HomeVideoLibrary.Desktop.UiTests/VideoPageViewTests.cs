@@ -72,6 +72,69 @@ public sealed class VideoPageViewTests
         Assert.Same(row, page.Details.Chapters.ExpandedChapter);
     }
 
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void EnterCommitsTitleButCollapsesOnlyMoments(bool moment)
+    {
+        var (window, host) = Window();
+        var entry = new VideoChapter(1, TimeSpan.FromSeconds(10), "", "", [])
+            { End = TimeSpan.FromSeconds(moment ? 10 : 30) };
+        var page = Page(VideoMetadata.Empty with { Chapters = [entry] });
+        Show(host, page);
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        var row = page.Details.Chapters.Chapters.Single();
+        page.Details.Chapters.ExpandedChapter = row;
+        Dispatcher.UIThread.RunJobs();
+        var title = TitleEditor(host);
+        title.Focus();
+        window.KeyTextInput("Family trip");
+        window.KeyPressQwerty(PhysicalKey.Enter, RawInputModifiers.None);
+        window.KeyReleaseQwerty(PhysicalKey.Enter, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Family trip", row.Title);
+        Assert.Equal(moment, row.IsMoment);
+        if (moment)
+        {
+            Assert.Null(page.Details.Chapters.ExpandedChapter);
+            Assert.Same(Row(host, 0), window.FocusManager!.GetFocusedElement());
+        }
+        else
+        {
+            Assert.Same(row, page.Details.Chapters.ExpandedChapter);
+            Assert.Same(title, window.FocusManager!.GetFocusedElement());
+        }
+    }
+
+    [AvaloniaFact]
+    public void HoveringChapterRowHighlightsTimelineWithoutSeekingOrOpeningPreview()
+    {
+        var (window, host) = Window();
+        var page = Page(VideoMetadata.Empty with { Chapters = [
+            new VideoChapter(1, TimeSpan.Zero, "Chapter", "", []) { End = TimeSpan.FromSeconds(30) },
+            new VideoChapter(2, TimeSpan.FromSeconds(10), "Moment", "", [])] });
+        Show(host, page);
+        page.SelectedTab = (int)InspectorTab.Chapters;
+        Dispatcher.UIThread.RunJobs();
+        var bar = host.GetVisualDescendants().OfType<ScrubBar>().Single();
+        void HoverTitle(int index)
+        {
+            var title = Row(host, index).GetVisualDescendants().OfType<TextBlock>().Single(text => text.Name == "PART_TitleText");
+            window.MouseMove(title.TranslatePoint(new Point(4, title.Bounds.Height / 2), window)!.Value);
+            Dispatcher.UIThread.RunJobs();
+        }
+        HoverTitle(0);
+        Assert.Equal(TimeSpan.Zero, bar.HighlightedChapterStart);
+        Assert.Null(bar.HoverTime);
+        Assert.Equal(TimeSpan.Zero, page.Player.Position);
+        HoverTitle(1);
+        Assert.Null(bar.HighlightedChapterStart);
+        HoverTitle(0);
+        page.SelectedTab = (int)InspectorTab.Info;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(bar.HighlightedChapterStart);
+    }
+
     private static readonly VideoMetadata TwoChapters = VideoMetadata.Empty with
     {
         Chapters = [new VideoChapter(1, TimeSpan.Zero, "Opening presents", "Wrapping paper everywhere", []),

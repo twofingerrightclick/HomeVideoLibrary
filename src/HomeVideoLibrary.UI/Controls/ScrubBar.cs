@@ -52,6 +52,16 @@ public class ScrubBar : TemplatedControl
     private static readonly TimeSpan LargeStep = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SmallStep = TimeSpan.FromSeconds(1);
 
+    public static readonly StyledProperty<TimeSpan?> HighlightedChapterStartProperty =
+        AvaloniaProperty.Register<ScrubBar, TimeSpan?>(nameof(HighlightedChapterStart));
+
+    /// <summary>The chapter hovered in an external list; highlights its segment without opening a preview.</summary>
+    public TimeSpan? HighlightedChapterStart
+    {
+        get => GetValue(HighlightedChapterStartProperty);
+        set => SetValue(HighlightedChapterStartProperty, value);
+    }
+
     public static readonly StyledProperty<IBrush?> MomentBrushProperty =
         AvaloniaProperty.Register<ScrubBar, IBrush?>(nameof(MomentBrush));
     public IBrush? MomentBrush { get => GetValue(MomentBrushProperty); set => SetValue(MomentBrushProperty, value); }
@@ -177,7 +187,7 @@ public class ScrubBar : TemplatedControl
             RangeEndProperty, RangeBrushProperty, RangeFillBrushProperty, TrackBrushProperty,
             BufferedBrushProperty, PlayedBrushProperty, SegmentSheenBrushProperty, MarkerBrushProperty,
             ThumbBrushProperty, ThumbIndexBrushProperty, FocusRingBrushProperty, GrooveShadowProperty, PlayedGlowProperty,
-            ThumbShadowProperty, HoverExpansionProperty, BackgroundProperty, BorderBrushProperty);
+            ThumbShadowProperty, HoverExpansionProperty, BackgroundProperty, BorderBrushProperty, HighlightedChapterStartProperty);
     }
 
     public IReadOnlyList<IChapterMark>? ChapterSegments
@@ -552,12 +562,16 @@ public class ScrubBar : TemplatedControl
         var hoverIndex = HoverTime is { } hover && _trackSpans.Count > 1 && ScrubTimeline.SpanIndexAt(_spans, hover) >= 0
             ? ScrubTimeline.SpanIndexAt(_trackSpans, hover) : -1;
 
+        var listHoverIndex = HighlightedChapterStart is { } start && _spans.Any(span => span.Start == start)
+            ? ScrubTimeline.SpanIndexAt(_trackSpans, start) : -1;
+
         var extents = ScrubTimeline.LayoutSegments(_trackSpans, Duration, trackWidth, SegmentGap, MinSegmentWidth);
         for (var i = 0; i < extents.Count; i++)
         {
             var left = Snap(TrackLeft + extents[i].Left);
             var right = Math.Max(left + 1, Snap(TrackLeft + extents[i].Right));
-            var grow = i == hoverIndex ? Snap(HoveredSegmentGrowth * expansion) : 0;
+            var grow = i == listHoverIndex ? Snap(HoveredSegmentGrowth)
+                : i == hoverIndex ? Snap(HoveredSegmentGrowth * expansion) : 0;
             var segment = new Rect(left, inner.Top - grow, right - left, inner.Height + 2 * grow);
             DrawSegment(context, segment, playX, bufferedX);
         }

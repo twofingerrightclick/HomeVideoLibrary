@@ -16,10 +16,7 @@
         <TextBlock Classes="legend" Text="TITLE"/>
         <TextBox x:Name="TitleField" Text="{Binding TitleText, Mode=TwoWay}" Watermark="Untitled chapter or moment"
                  views:FieldBehaviors.FocusOnAttach="True" views:FieldBehaviors.LostFocusCommand="{Binding CommitDraftTitleCommand}"
-                 AutomationProperties.Name="Chapter title">
-          <TextBox.KeyBindings>
-            <KeyBinding Gesture="Enter" Command="{Binding CommitDraftTitleCommand}"/>
-          </TextBox.KeyBindings>
+                 AutomationProperties.Name="Chapter title" KeyDown="OnTitleKeyDown">
         </TextBox>
     </StackPanel>
     <TextBlock Classes="legend" Text="{Binding TypeLabel}"/>

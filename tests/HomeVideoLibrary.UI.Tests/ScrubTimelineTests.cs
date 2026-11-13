@@ -22,10 +22,11 @@ public class ScrubTimelineTests
     }
 
     [Theory]
-    [InlineData(62.75, "1:02.750")]
+    [InlineData(62.75, "1:02")]
     [InlineData(62, "1:02")]
-    [InlineData(62.7501, "1:02.7501")]
-    public void MomentTimestampRetainsSubsecondPrecision(double seconds, string expected)
+    [InlineData(62.7501, "1:02")]
+    [InlineData(62.0000002, "1:02")]
+    public void MomentTimestampShowsWholeSeconds(double seconds, string expected)
     {
         Assert.Equal(expected, ScrubTimeline.FormatMomentTimestamp(Sec(seconds)));
     }

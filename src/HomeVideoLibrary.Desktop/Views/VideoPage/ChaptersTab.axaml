@@ -4,7 +4,7 @@
              xmlns:vp="using:HomeVideoLibrary.Desktop.ViewModels.VideoPage"
              xmlns:local="using:HomeVideoLibrary.Desktop.Views.VideoPage"
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChaptersTab"
-             x:DataType="vp:VideoPageViewModel">
+             x:DataType="vp:VideoPageViewModel" DetachedFromVisualTree="OnDetached">
   <UserControl.Styles>
     <!-- Row keys show on hover, keyboard focus and expansion only, so titles keep the row's width. -->
     <Style Selector="c|ChapterListItem StackPanel.rowActions">
@@ -30,7 +30,7 @@
     <ItemsControl ItemsSource="{Binding Details.Chapters.Rows}">
       <ItemsControl.DataTemplates>
         <DataTemplate DataType="vp:ChapterRowViewModel">
-          <c:ChapterListItem Margin="0,1"
+          <c:ChapterListItem Margin="0,1" PointerEntered="OnChapterEntered" PointerExited="OnChapterExited"
                              Start="{Binding Start}" End="{Binding End}"
                              Title="{Binding Title}"
                              IsCurrent="{Binding IsCurrent}"

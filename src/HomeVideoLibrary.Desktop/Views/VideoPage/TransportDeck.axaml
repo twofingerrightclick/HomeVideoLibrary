@@ -22,6 +22,7 @@
                 Duration="{Binding Player.Duration}"
                 Position="{Binding Player.Position}"
                 ChapterSegments="{Binding Details.Chapters.Marks}"
+                HighlightedChapterStart="{Binding Details.Chapters.HoveredChapter.Start}"
                 SeekCommand="{Binding Player.SeekCommand}"
                 PreviewMarkerPosition="{Binding ScrubMarker}"
                 RangeStart="{Binding Edit.RangeStart}"

@@ -56,6 +56,13 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
     public IReadOnlyList<ChapterRowViewModel> Chapters => _chapters;
     public bool HasChapters => _chapters.Count > 0;
     public IReadOnlyList<TimeSpan> Starts => _chapters.Select(chapter => chapter.Start).ToArray();
+    private ChapterRowViewModel? _hoveredChapter;
+    public ChapterRowViewModel? HoveredChapter
+    {
+        get => _hoveredChapter;
+        set => SetProperty(ref _hoveredChapter, value is { IsMoment: false } ? value : null);
+    }
+
     public IReadOnlyList<IChapterMark> Marks { get => _marks; private set => SetProperty(ref _marks, value); }
 
     /// <summary>Chapter tags, most used first, each with the chapters using it.</summary>
@@ -322,6 +329,7 @@ public sealed class ChaptersPanelViewModel : ViewModelBase
 
     private void Publish()
     {
+        if (_hoveredChapter is { } hovered && (hovered.IsMoment || !_chapters.Contains(hovered))) HoveredChapter = null;
         Marks = _chapters.Select(chapter => (IChapterMark)new ChapterMark(chapter.Start, chapter.Title) { End = chapter.End }).ToArray();
         FollowPlayhead();
         OnPropertyChanged(nameof(TimingConflict));

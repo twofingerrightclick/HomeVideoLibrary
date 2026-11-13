@@ -22,6 +22,16 @@ public sealed partial class ChapterDetailsView : UserControl
     public static IDataTemplate ViewTemplate { get; } =
         new FuncDataTemplate<ChapterRowViewModel?>((row, _) => row is null ? null : new ChapterDetailsView(), supportsRecycling: false);
 
+    private void OnTitleKeyDown(object? sender, KeyEventArgs args)
+    {
+        if (args.Key != Key.Enter || args.Handled || DataContext is not ChapterRowViewModel row) return;
+        args.Handled = true;
+        row.CommitDraftTitleCommand.Execute(null);
+        if (!row.IsMoment) return;
+        this.FindAncestorOfType<ChapterListItem>()?.Focus(NavigationMethod.Tab);
+        row.CollapseCommand.Execute(null);
+    }
+
     // Escape collapses the row (keeping what was typed) and leaves focus on the row, which outlives this editor.
     private void CollapseOnEscape(object? sender, KeyEventArgs args)
     {
