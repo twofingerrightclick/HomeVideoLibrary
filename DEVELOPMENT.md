@@ -169,7 +169,7 @@ Follow [CODING_STANDARDS.md](CODING_STANDARDS.md). Original source videos are pr
 
 ## Catalog schema and EF Core migrations
 
-EF Core is the sole schema and migration owner. Runtime catalog, album, cache and import operations still use parameterized SQL. The repository starts with exactly one `InitialCreate` migration: there are no installed libraries to upgrade and no automatic upgrade path for pre-release development catalogs. Create a fresh library directory for development. Keep an old catalog with its original app if its data matters; **the album database is not disposable**. Albums and memberships cannot be reconstructed from MKV metadata. Initialization never deletes, stamps or recreates an unsupported database, and never modifies MKVs.
+EF Core owns schema migrations and runtime catalog, album, cache and import persistence through DbSets. SQLite connection PRAGMAs and read-only schema/history inspection remain explicit SQL. The migration chain starts with `InitialCreate`; subsequent generated migrations add library naming and deletion history. There is no automatic upgrade path for pre-release development catalogs without valid EF history. Create a fresh library directory for development. Keep an old catalog with its original app if its data matters; **the album database is not disposable**. Albums and memberships cannot be reconstructed from MKV metadata. Initialization never deletes, stamps or recreates an unsupported database, and never modifies MKVs.
 
 Restore the pinned local tool before working on schema changes:
 

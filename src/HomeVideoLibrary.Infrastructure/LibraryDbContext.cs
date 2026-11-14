@@ -4,17 +4,31 @@ using Microsoft.EntityFrameworkCore.Design;
 
 namespace HomeVideoLibrary.Infrastructure;
 
-/// <summary>Owns the catalog schema. Runtime repositories deliberately retain their raw SQL and tolerant reads.</summary>
+/// <summary>Owns the catalog schema and mapped catalog rows.</summary>
 public sealed class LibraryDbContext(DbContextOptions<LibraryDbContext> options) : DbContext(options)
 {
+    internal DbSet<LibraryInfoRow> LibraryInfo => Set<LibraryInfoRow>();
+    internal DbSet<VideoRow> Videos => Set<VideoRow>();
+    internal DbSet<AlbumRow> Albums => Set<AlbumRow>();
+    internal DbSet<AlbumVideoRow> AlbumVideos => Set<AlbumVideoRow>();
+    internal DbSet<VideoCacheRow> VideoCache => Set<VideoCacheRow>();
+    internal DbSet<DeletionHistoryRow> DeletionHistory => Set<DeletionHistoryRow>();
+
     internal static DbContextOptions<LibraryDbContext> Options(string databasePath) =>
         new DbContextOptionsBuilder<LibraryDbContext>().UseSqlite(new SqliteConnectionStringBuilder
         {
             DataSource = databasePath, Pooling = false, ForeignKeys = true,
         }.ToString()).Options;
 
+    /// <summary>SQLite storage class, used where the original scalar API accepted text values only.</summary>
+    internal static string SqliteStorageType(string? value) => throw new NotSupportedException("Only usable in SQLite queries.");
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasDbFunction(typeof(LibraryDbContext).GetMethod(nameof(SqliteStorageType),
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!)
+            .HasName("typeof").IsBuiltIn();
+
         var library = modelBuilder.Entity<LibraryInfoRow>();
         library.ToTable("library_info");
         library.HasKey(row => row.Id);

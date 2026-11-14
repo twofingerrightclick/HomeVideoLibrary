@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq.Expressions;
 using HomeVideoLibrary.Core;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -26,10 +27,9 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
 
     public async Task<string> ReadNameAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT name FROM library_info WHERE id = 1";
-        return await command.ExecuteScalarAsync(cancellationToken) as string ?? DefaultName;
+        await using var context = await OpenContextAsync(cancellationToken);
+        return await context.LibraryInfo.AsNoTracking().Where(row => row.Id == 1 && LibraryDbContext.SqliteStorageType(row.Name) == "text")
+            .Select(row => row.Name).FirstOrDefaultAsync(cancellationToken) ?? DefaultName;
     }
 
     public async Task SaveNameAsync(string name, CancellationToken cancellationToken = default)
@@ -38,11 +38,15 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         name = name.Trim();
         if (name.Length > 120 || name.Any(char.IsControl))
             throw new ArgumentException("Use a library name of up to 120 characters on one line.", nameof(name));
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO library_info (id, name) VALUES (1, $name) ON CONFLICT(id) DO UPDATE SET name = excluded.name";
-        command.Parameters.AddWithValue("$name", name);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var context = await OpenContextAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+        if (await context.LibraryInfo.Where(row => row.Id == 1)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.Name, name), cancellationToken) == 0)
+        {
+            context.LibraryInfo.Add(new LibraryInfoRow { Id = 1, Name = name });
+            await SaveChangesAsync(context, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <summary>Creates the catalog using EF migrations. Pre-release catalogs without valid EF history must be
@@ -154,31 +158,35 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     /// <summary>Lists videos newest first, skipping rows that cannot be read.</summary>
     public async Task<IReadOnlyList<LibraryVideo>> ListAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        var videos = await ReadVideosAsync(connection, [], cancellationToken);
+        await using var context = await OpenContextAsync(cancellationToken);
+        var videos = await ReadVideosAsync(context, [], cancellationToken);
         return videos.OrderByDescending(video => video.RecordedAt).ThenBy(video => video.Id).ToArray();
     }
 
     /// <summary>Reads every video, album, membership and cache row in one consistent read transaction.</summary>
     public async Task<CatalogContents> LoadContentsAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
+        await using var context = await OpenContextAsync(cancellationToken);
+        var connection = (SqliteConnection)context.Database.GetDbConnection();
         await using var transaction = connection.BeginTransaction(deferred: true);
+        await context.Database.UseTransactionAsync(transaction, cancellationToken);
         var issues = new List<string>();
-        var videos = await ReadVideosAsync(connection, issues, cancellationToken, transaction);
+        var videos = await ReadVideosAsync(context, issues, cancellationToken);
         var known = videos.Select(video => video.Id).ToHashSet();
         var albums = new List<VideoAlbum>();
-        await ReadRowsAsync(connection, transaction, "SELECT id,name FROM albums ORDER BY name COLLATE NOCASE,id", issues, "album",
-            reader => albums.Add(new VideoAlbum(Guid.Parse(reader.GetString(0)), reader.GetString(1))), cancellationToken);
+        await ReadRowsAsync(context.Albums.AsNoTracking()
+                .OrderBy(row => EF.Functions.Collate(row.Name, "NOCASE")).ThenBy(row => row.Id),
+            issues, "album", row => row.Id,
+            row => albums.Add(new VideoAlbum(Guid.Parse(row.Id), row.Name)), cancellationToken);
         var memberships = new List<(Guid, Guid)>();
-        await ReadRowsAsync(connection, transaction, "SELECT album_id,video_id FROM album_videos", issues, "album membership",
-            reader => memberships.Add((Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)))), cancellationToken);
+        await ReadRowsAsync(context.AlbumVideos.AsNoTracking(), issues, "album membership", row => row.AlbumId,
+            row => memberships.Add((Guid.Parse(row.AlbumId), Guid.Parse(row.VideoId))), cancellationToken);
         var cache = new Dictionary<Guid, CatalogCacheEntry>();
-        await ReadRowsAsync(connection, transaction, "SELECT video_id,record_json,file_length,modified_ticks FROM video_cache", issues, "cache",
-            reader =>
+        await ReadRowsAsync(context.VideoCache.AsNoTracking(), issues, "cache", row => row.VideoId,
+            row =>
             {
-                var id = Guid.Parse(reader.GetString(0));
-                if (known.Contains(id)) cache[id] = new CatalogCacheEntry(reader.GetString(1), reader.GetInt64(2), reader.GetInt64(3));
+                var id = Guid.Parse(row.VideoId);
+                if (known.Contains(id)) cache[id] = new CatalogCacheEntry(row.RecordJson, row.FileLength, row.ModifiedTicks);
             }, cancellationToken);
         return new CatalogContents(videos, albums, memberships, cache, issues);
     }
@@ -187,25 +195,28 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     public async Task WriteCacheAsync(IReadOnlyList<CatalogCacheWrite> writes, CancellationToken cancellationToken = default)
     {
         if (writes.Count == 0) return;
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction();
+        await using var context = await OpenContextAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         foreach (var write in writes)
         {
-            await using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO video_cache(video_id,record_json,file_length,modified_ticks)
-                SELECT $id,$json,$length,$modified WHERE EXISTS(SELECT 1 FROM videos WHERE id=$id)
-                ON CONFLICT(video_id) DO UPDATE SET record_json=excluded.record_json,
-                    file_length=excluded.file_length, modified_ticks=excluded.modified_ticks
-                """;
-            command.Parameters.AddWithValue("$id", write.VideoId.ToString()); command.Parameters.AddWithValue("$json", write.Entry.RecordJson);
-            command.Parameters.AddWithValue("$length", write.Entry.FileLength); command.Parameters.AddWithValue("$modified", write.Entry.ModifiedTicks);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            var id = write.VideoId.ToString();
+            if (!await context.Videos.AnyAsync(row => row.Id == id, cancellationToken)) continue;
+            var entry = write.Entry;
+            if (await context.VideoCache.Where(row => row.VideoId == id).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(row => row.RecordJson, entry.RecordJson)
+                    .SetProperty(row => row.FileLength, entry.FileLength)
+                    .SetProperty(row => row.ModifiedTicks, entry.ModifiedTicks), cancellationToken) == 0)
+            {
+                context.VideoCache.Add(new VideoCacheRow
+                {
+                    VideoId = id, RecordJson = entry.RecordJson, FileLength = entry.FileLength, ModifiedTicks = entry.ModifiedTicks,
+                });
+                await SaveChangesAsync(context, cancellationToken);
+                context.ChangeTracker.Clear();
+            }
             if (write.Duration is not { } duration) continue;
-            await using var update = connection.CreateCommand(); update.Transaction = transaction;
-            update.CommandText = "UPDATE videos SET duration_ticks=$duration WHERE id=$id";
-            update.Parameters.AddWithValue("$id", write.VideoId.ToString()); update.Parameters.AddWithValue("$duration", duration.Ticks);
-            await update.ExecuteNonQueryAsync(cancellationToken);
+            await context.Videos.Where(row => row.Id == id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.DurationTicks, duration.Ticks), cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
     }
@@ -216,28 +227,29 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     public async Task DeleteVideosAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default, DeletionHistory? deletion = null)
     {
         if (ids.Count == 0) return;
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction();
+        await using var context = await OpenContextAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         if (deletion is not null)
         {
-            await using var history = connection.CreateCommand(); history.Transaction = transaction;
-            history.CommandText = """
-                INSERT INTO deletion_history(fingerprint,title,removed_at,kind,revision) VALUES($fingerprint,$title,$removed,$kind,$revision)
-                ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,removed_at=excluded.removed_at,kind=excluded.kind,revision=excluded.revision
-                """;
-            history.Parameters.AddWithValue("$fingerprint", deletion.Fingerprint);
-            history.Parameters.AddWithValue("$title", deletion.Title);
-            history.Parameters.AddWithValue("$removed", deletion.RemovedAt.ToUniversalTime().ToString("O"));
-            history.Parameters.AddWithValue("$kind", (int)deletion.Kind);
-            history.Parameters.AddWithValue("$revision", deletion.Revision.ToString());
-            await history.ExecuteNonQueryAsync(cancellationToken);
+            var removedAt = deletion.RemovedAt.ToUniversalTime().ToString("O");
+            var revision = deletion.Revision.ToString();
+            if (await context.DeletionHistory.Where(row => row.Fingerprint == deletion.Fingerprint)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.Title, deletion.Title)
+                        .SetProperty(row => row.RemovedAt, removedAt).SetProperty(row => row.Kind, (int)deletion.Kind)
+                        .SetProperty(row => row.Revision, revision), cancellationToken) == 0)
+            {
+                context.DeletionHistory.Add(new DeletionHistoryRow
+                {
+                    Fingerprint = deletion.Fingerprint, Title = deletion.Title, RemovedAt = removedAt,
+                    Kind = (int)deletion.Kind, Revision = revision,
+                });
+                await SaveChangesAsync(context, cancellationToken);
+            }
         }
         foreach (var id in ids)
         {
-            await using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = "DELETE FROM videos WHERE id=$id";
-            command.Parameters.AddWithValue("$id", id.ToString());
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            var key = id.ToString();
+            await context.Videos.Where(row => row.Id == key).ExecuteDeleteAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
     }
@@ -250,23 +262,21 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     /// path column, so a row that is otherwise unreadable still answers.</summary>
     public async Task<string?> GetRelativePathAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT relative_path FROM videos WHERE id = $id";
-        command.Parameters.AddWithValue("$id", id.ToString());
-        return await command.ExecuteScalarAsync(cancellationToken) is string path ? NormalizeRelativePath(path) : null;
+        await using var context = await OpenContextAsync(cancellationToken);
+        var key = id.ToString();
+        var path = await context.Videos.AsNoTracking().Where(row => row.Id == key && LibraryDbContext.SqliteStorageType(row.RelativePath) == "text")
+            .Select(row => row.RelativePath).FirstOrDefaultAsync(cancellationToken);
+        return path is null ? null : NormalizeRelativePath(path);
     }
 
     /// <summary>Every stored relative path, read without parsing the rest of the rows.</summary>
     public async Task<IReadOnlySet<string>> ListRelativePathsAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT relative_path FROM videos";
+        await using var context = await OpenContextAsync(cancellationToken);
         var paths = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            if (!reader.IsDBNull(0)) paths.Add(NormalizeRelativePath(reader.GetString(0)));
+        await foreach (var path in context.Videos.AsNoTracking().Select(row => row.RelativePath)
+            .AsAsyncEnumerable().WithCancellation(cancellationToken))
+            if (path is not null) paths.Add(NormalizeRelativePath(path));
         return paths;
     }
 
@@ -279,75 +289,97 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     public async Task<LibraryVideo?> FindBySourceFingerprintAsync(string fingerprint, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {VideoColumns} FROM videos WHERE source_fingerprint = $fingerprint LIMIT 1";
-        command.Parameters.AddWithValue("$fingerprint", fingerprint);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? ReadVideo(reader) : null;
+        await using var context = await OpenContextAsync(cancellationToken);
+        var row = await context.Videos.AsNoTracking().FirstOrDefaultAsync(row => row.SourceFingerprint == fingerprint, cancellationToken);
+        return row is null ? null : ReadVideo(row);
     }
 
     /// <summary>Clears <paramref name="fingerprint"/> from the video that holds it, so a new video of the same source can
     /// be registered with it. Does nothing when that video now holds another fingerprint or is gone.</summary>
     public async Task ReleaseSourceFingerprintAsync(Guid videoId, string fingerprint, CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE videos SET source_fingerprint = NULL WHERE id = $id AND source_fingerprint = $fingerprint";
-        command.Parameters.AddWithValue("$id", videoId.ToString()); command.Parameters.AddWithValue("$fingerprint", fingerprint);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var context = await OpenContextAsync(cancellationToken);
+        var id = videoId.ToString();
+        await context.Videos.Where(row => row.Id == id && row.SourceFingerprint == fingerprint)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.SourceFingerprint, (string?)null), cancellationToken);
     }
 
     public async Task<DeletionHistory?> FindDeletionAsync(string fingerprint, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT title,removed_at,kind,revision FROM deletion_history WHERE fingerprint=$fingerprint";
-        command.Parameters.AddWithValue("$fingerprint", fingerprint);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? new DeletionHistory(fingerprint, reader.GetString(0), ParseDate(reader.GetString(1)), (DeletionKind)reader.GetInt32(2)) { Revision = Guid.Parse(reader.GetString(3)) } : null;
+        await using var context = await OpenContextAsync(cancellationToken);
+        var row = await context.DeletionHistory.AsNoTracking().FirstOrDefaultAsync(row => row.Fingerprint == fingerprint, cancellationToken);
+        return row is null ? null : new DeletionHistory(fingerprint, row.Title, ParseDate(row.RemovedAt), (DeletionKind)row.Kind)
+        {
+            Revision = Guid.Parse(row.Revision),
+        };
     }
 
-    private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";
-
-    private async Task<List<LibraryVideo>> ReadVideosAsync(SqliteConnection connection, List<string> issues,
-        CancellationToken cancellationToken, SqliteTransaction? transaction = null)
+    private async Task<List<LibraryVideo>> ReadVideosAsync(LibraryDbContext context, List<string> issues,
+        CancellationToken cancellationToken)
     {
         var videos = new List<LibraryVideo>();
-        await ReadRowsAsync(connection, transaction, $"SELECT {VideoColumns} FROM videos", issues, "video",
-            reader => videos.Add(ReadVideo(reader)), cancellationToken);
+        await ReadRowsAsync(context.Videos.AsNoTracking(), issues, "video", row => row.Id,
+            row => videos.Add(ReadVideo(row)), cancellationToken);
         return videos;
     }
 
-    private static async Task ReadRowsAsync(SqliteConnection connection, SqliteTransaction? transaction, string sql, List<string> issues,
-        string kind, Action<SqliteDataReader> read, CancellationToken cancellationToken)
+    private static async Task ReadRowsAsync<T>(IQueryable<T> query, List<string> issues,
+        string kind, Expression<Func<T, string>> key, Action<T> read, CancellationToken cancellationToken)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        var getKey = key.Compile();
+        List<T> rows;
+        try { rows = await query.ToListAsync(cancellationToken); }
+        catch (Exception exception) when (IsUnreadableRow(exception))
         {
-            try { read(reader); }
-            catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or OverflowException)
+            // A corrupt SQLite storage value may fail in EF's materializer before our parser runs.
+            // Retry only this exceptional scan one key at a time so its other rows remain readable.
+            var keys = await query.Select(key).ToListAsync(cancellationToken);
+            foreach (var id in keys.Distinct(StringComparer.Ordinal))
             {
-                var row = reader.IsDBNull(0) ? "(null)" : reader.GetValue(0).ToString();
-                Trace.TraceWarning($"Skipped unreadable {kind} row {row}: {exception}");
-                issues.Add($"Skipped an unreadable {kind} entry ({row}): {exception.Message}");
+                try
+                {
+                    var predicate = Expression.Lambda<Func<T, bool>>(
+                        Expression.Equal(key.Body, Expression.Constant(id, typeof(string))), key.Parameters);
+                    foreach (var row in await query.Where(predicate).ToListAsync(cancellationToken))
+                        read(row);
+                }
+                catch (Exception rowException) when (IsUnreadableRow(rowException))
+                {
+                    ReportUnreadableRow(issues, kind, id, rowException);
+                }
+            }
+            return;
+        }
+        foreach (var row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try { read(row); }
+            catch (Exception exception) when (IsUnreadableRow(exception))
+            {
+                ReportUnreadableRow(issues, kind, getKey(row), exception);
             }
         }
     }
 
-    private LibraryVideo ReadVideo(SqliteDataReader reader)
+    private static bool IsUnreadableRow(Exception exception) =>
+        exception is FormatException or ArgumentException or InvalidCastException or OverflowException;
+
+    private static void ReportUnreadableRow(List<string> issues, string kind, string? key, Exception exception)
     {
-        var relativePath = NormalizeRelativePath(reader.GetString(1));
+        var row = key ?? "(null)";
+        Trace.TraceWarning($"Skipped unreadable {kind} row {row}: {exception}");
+        issues.Add($"Skipped an unreadable {kind} entry ({row}): {exception.Message}");
+    }
+
+    private LibraryVideo ReadVideo(VideoRow row)
+    {
+        var relativePath = NormalizeRelativePath(row.RelativePath);
         _ = GetVideoPath(relativePath);
-        return new LibraryVideo(Guid.Parse(reader.GetString(0)), relativePath, reader.GetString(2),
-            TimeSpan.FromTicks(reader.GetInt64(3)), ParseDate(reader.GetString(4)), ParseDate(reader.GetString(5)))
+        return new LibraryVideo(Guid.Parse(row.Id), relativePath, row.DisplayName,
+            TimeSpan.FromTicks(row.DurationTicks), ParseDate(row.ImportedAt), ParseDate(row.RecordedAt))
         {
-            SourceFingerprint = reader.IsDBNull(6) ? null : reader.GetString(6),
+            SourceFingerprint = row.SourceFingerprint,
         };
     }
 
@@ -369,24 +401,54 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
 
     private async Task AddBatchAsync(IReadOnlyList<LibraryVideo> videos, bool durable, CancellationToken cancellationToken)
     {
-        await using var connection = await OpenAsync(cancellationToken);
+        await using var context = await OpenContextAsync(cancellationToken);
+        var connection = (SqliteConnection)context.Database.GetDbConnection();
         // fullfsync makes SQLite flush the drive's own cache on macOS, where plain fsync does not.
         if (durable) await ExecuteAsync(connection, null, "PRAGMA synchronous=FULL; PRAGMA fullfsync=ON", cancellationToken);
-        await using var transaction = connection.BeginTransaction();
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         foreach (var video in videos)
         {
             _ = GetVideoPath(video.RelativePath);
-            await using var command = connection.CreateCommand(); command.Transaction = transaction;
-            command.CommandText = $"INSERT INTO videos ({VideoColumns}) VALUES ($id,$path,$name,$duration,$imported,$recorded,$fingerprint)";
-            command.Parameters.AddWithValue("$id", video.Id.ToString()); command.Parameters.AddWithValue("$path", NormalizeRelativePath(video.RelativePath));
-            command.Parameters.AddWithValue("$name", video.DisplayName); command.Parameters.AddWithValue("$duration", video.Duration.Ticks);
-            command.Parameters.AddWithValue("$imported", video.ImportedAt.ToUniversalTime().ToString("O"));
-            command.Parameters.AddWithValue("$recorded", video.RecordedAt.ToUniversalTime().ToString("O"));
-            command.Parameters.AddWithValue("$fingerprint", (object?)video.SourceFingerprint ?? DBNull.Value);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            context.Videos.Add(new VideoRow
+            {
+                Id = video.Id.ToString(), RelativePath = NormalizeRelativePath(video.RelativePath), DisplayName = video.DisplayName,
+                DurationTicks = video.Duration.Ticks, ImportedAt = video.ImportedAt.ToUniversalTime().ToString("O"),
+                RecordedAt = video.RecordedAt.ToUniversalTime().ToString("O"), SourceFingerprint = video.SourceFingerprint,
+            });
+            await SaveChangesAsync(context, cancellationToken);
+            // A repeated id must reach SQLite's constraint handling rather than EF's identity-map error.
+            context.ChangeTracker.Clear();
         }
         cancellationToken.ThrowIfCancellationRequested();
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static async Task SaveChangesAsync(LibraryDbContext context, CancellationToken cancellationToken)
+    {
+        try { await context.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException exception) when (exception.InnerException is SqliteException sqlite)
+        {
+            // Import callers classify SQLite's unique source-fingerprint constraint directly.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(sqlite).Throw();
+            throw;
+        }
+    }
+
+    /// <summary>Opens a context with the runtime connection policy; disposing it also disposes its connection.</summary>
+    internal async Task<LibraryDbContext> OpenContextAsync(CancellationToken cancellationToken)
+    {
+        var connection = await OpenAsync(cancellationToken);
+        try
+        {
+            var options = new DbContextOptionsBuilder<LibraryDbContext>()
+                .UseSqlite(connection, contextOwnsConnection: true).Options;
+            return new LibraryDbContext(options);
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     internal async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
