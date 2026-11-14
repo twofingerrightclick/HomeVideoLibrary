@@ -211,12 +211,26 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
     }
 
     /// <summary>Deletes video rows in one transaction; their album memberships and cache rows go with them (foreign-key
-    /// cascades). Ids without a row are ignored. Touches no file.</summary>
-    public async Task DeleteVideosAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    /// cascades). Ids without a row are ignored. Touches no file. A confirmed deletion is recorded in the same
+    /// transaction, even if its active row was already removed; callers supply history only after successful file removal.</summary>
+    public async Task DeleteVideosAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default, DeletionHistory? deletion = null)
     {
         if (ids.Count == 0) return;
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction();
+        if (deletion is not null)
+        {
+            await using var history = connection.CreateCommand(); history.Transaction = transaction;
+            history.CommandText = """
+                INSERT INTO deletion_history(fingerprint,title,removed_at,kind) VALUES($fingerprint,$title,$removed,$kind)
+                ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,removed_at=excluded.removed_at,kind=excluded.kind
+                """;
+            history.Parameters.AddWithValue("$fingerprint", deletion.Fingerprint);
+            history.Parameters.AddWithValue("$title", deletion.Title);
+            history.Parameters.AddWithValue("$removed", deletion.RemovedAt.ToUniversalTime().ToString("O"));
+            history.Parameters.AddWithValue("$kind", (int)deletion.Kind);
+            await history.ExecuteNonQueryAsync(cancellationToken);
+        }
         foreach (var id in ids)
         {
             await using var command = connection.CreateCommand(); command.Transaction = transaction;
@@ -281,6 +295,18 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         command.CommandText = "UPDATE videos SET source_fingerprint = NULL WHERE id = $id AND source_fingerprint = $fingerprint";
         command.Parameters.AddWithValue("$id", videoId.ToString()); command.Parameters.AddWithValue("$fingerprint", fingerprint);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<DeletionHistory?> FindDeletionAsync(string fingerprint, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT title,removed_at,kind FROM deletion_history WHERE fingerprint=$fingerprint";
+        command.Parameters.AddWithValue("$fingerprint", fingerprint);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new DeletionHistory(fingerprint, reader.GetString(0), ParseDate(reader.GetString(1)), (DeletionKind)reader.GetInt32(2)) : null;
     }
 
     private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";

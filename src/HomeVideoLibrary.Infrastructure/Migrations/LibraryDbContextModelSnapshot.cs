@@ -60,6 +60,31 @@ namespace HomeVideoLibrary.Infrastructure.Migrations
                     b.ToTable("album_videos", (string)null);
                 });
 
+            modelBuilder.Entity("HomeVideoLibrary.Infrastructure.DeletionHistoryRow", b =>
+                {
+                    b.Property<string>("Fingerprint")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("RemovedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("removed_at");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.HasKey("Fingerprint");
+
+                    b.ToTable("deletion_history", (string)null);
+                });
+
             modelBuilder.Entity("HomeVideoLibrary.Infrastructure.LibraryInfoRow", b =>
                 {
                     b.Property<int>("Id")

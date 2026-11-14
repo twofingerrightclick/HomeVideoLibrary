@@ -161,7 +161,7 @@ public sealed class HoverStripStoreTests : IDisposable
         var catalog = await CreateCatalogAsync(_root);
         // A keyframe every 0.2 s, so each 0.4 s slot lands on its own one.
         var video = (await new VideoImporter(catalog, _tools).ImportAsync(
-            await GenerateAsync("testsrc2.mkv", "testsrc2=size=640x360:rate=25", 8, keyframeEvery: 5))).Video;
+            await GenerateAsync("testsrc2.mkv", "testsrc2=size=640x360:rate=25", 8, keyframeEvery: 5))).Video!;
         var service = new MatroskaMetadataService(catalog, _tools);
         var model = new LibraryModel(catalog, service);
         var record = await model.UpsertFromFileAsync(video);

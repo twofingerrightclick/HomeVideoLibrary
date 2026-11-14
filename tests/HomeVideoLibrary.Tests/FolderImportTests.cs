@@ -24,6 +24,79 @@ public sealed class FolderImportTests : IDisposable
     }
 
     [Fact]
+    public Task HistoricalSkipDoesNotBlockOtherImportsAndOverrideIsOneShot() => UiThread.Run(async () =>
+    {
+        var folder = Sources("removed.mp4", "other.mp4");
+        var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
+        var model = new LibraryModel(catalog, _files);
+        var importer = new HistoryImporter();
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var vm = new ImportViewModel(() => model, _ => importer, new FakeInteraction(), queue, () => true, _ => { });
+        var jobs = vm.Enqueue([Path.Combine(folder, "removed.mp4"), Path.Combine(folder, "other.mp4")]);
+        await queue.WhenIdleAsync();
+        Assert.All(jobs, job => Assert.Equal(JobState.Succeeded, job.State));
+        var skipped = jobs[0];
+        Assert.StartsWith("Previously trashed · Removed ", skipped.StatusText);
+        Assert.False(skipped.CanOpen);
+        Assert.True(skipped.CanImportAnyway);
+        Assert.False(jobs[1].CanImportAnyway);
+        skipped.ImportAnywayCommand.Execute(null);
+        skipped.ImportAnywayCommand.Execute(null);
+        await queue.WhenIdleAsync();
+        Assert.False(skipped.CanImportAnyway);
+        Assert.Equal(3, importer.Attempts.Count);
+        Assert.Equal("v2:removed", importer.Attempts.Last().Allowed);
+        Assert.Equal(3, queue.Jobs.Count);
+    });
+
+    [Theory]
+    [InlineData("dismiss")]
+    [InlineData("clear")]
+    [InlineData("switch")]
+    [InlineData("busy")]
+    public Task OldActivityActionsCannotRequeueAfterDismissalOrIntoAnotherLibrary(string action) => UiThread.Run(async () =>
+    {
+        var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
+        LibraryModel? model = new(catalog, _files);
+        var importer = new HistoryImporter();
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var ready = true;
+        var status = "";
+        var vm = new ImportViewModel(() => model, _ => importer, new FakeInteraction(), queue, () => ready, value => status = value);
+        var skipped = Assert.Single(vm.Enqueue(["removed.mp4"]));
+        await skipped.Completion;
+        switch (action)
+        {
+            case "dismiss": skipped.DismissCommand.Execute(null); break;
+            case "clear": queue.ClearFinishedCommand.Execute(null); break;
+            case "switch": model = new LibraryModel(await CreateCatalogAsync(Path.Combine(_root, "other")), _files); break;
+            case "busy": ready = false; break;
+        }
+        skipped.ImportAnywayCommand.Execute(null);
+        await queue.WhenIdleAsync();
+        Assert.Single(importer.Attempts);
+        Assert.False(skipped.CanImportAnyway);
+        if (action is "switch" or "busy") Assert.Contains("original library", status);
+    });
+
+    private sealed class HistoryImporter : IVideoImporter
+    {
+        public List<(string Source, string? Allowed)> Attempts { get; } = [];
+        public Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null,
+            CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+        {
+            Attempts.Add((sourcePath, allowedDeletionFingerprint));
+            if (Path.GetFileName(sourcePath) == "removed.mp4" && allowedDeletionFingerprint is null)
+                return Task.FromResult(new ImportResult(ImportOutcome.PreviouslyRemoved, null, [])
+                {
+                    History = new DeletionHistory("v2:removed", "Removed", DateTimeOffset.UtcNow, DeletionKind.Trashed),
+                });
+            return Task.FromResult(new ImportResult(ImportOutcome.AlreadyInLibrary,
+                new LibraryVideo(Guid.NewGuid(), "Videos/placeholder.mkv", "Known", TimeSpan.FromSeconds(1), DateTimeOffset.UtcNow, DateTimeOffset.UtcNow), []));
+        }
+    }
+
+    [Fact]
     public Task DismissingScanNoticeDoesNotCancelImportAndNextScanShowsANewNotice() => UiThread.Run(async () =>
     {
         var folder = Sources("one.mp4", "notes.txt");
@@ -192,7 +265,7 @@ public sealed class FolderImportTests : IDisposable
         public int Attempts { get; private set; }
         public Func<Task>? BeforeImport { get; init; }
 
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
         {
             Attempts++;
             if (BeforeImport is not null) await BeforeImport();

@@ -130,9 +130,9 @@ public sealed class MediaRegressionCorpusTests : IDisposable
         var liveResult = await importer.ImportAsync(live);
 
         var start = await new MediaProcess().RunAsync(_tools.Ffprobe, ["-v", "error", "-show_entries", "format=start_time", "-of", "csv=p=0",
-            catalog.GetVideoPath(lateResult.Video.RelativePath)], TimeSpan.FromSeconds(30));
+            catalog.GetVideoPath(lateResult.Video!.RelativePath)], TimeSpan.FromSeconds(30));
         Assert.InRange(double.Parse(start.StandardOutput.Trim(), CultureInfo.InvariantCulture), 0, 0.1);
-        Assert.InRange(liveResult.Video.Duration.TotalSeconds, 2.9, 3.1);
+        Assert.InRange(liveResult.Video!.Duration.TotalSeconds, 2.9, 3.1);
         Assert.DoesNotContain(lateResult.Warnings.Concat(liveResult.Warnings), warning => warning.Contains("damaged", StringComparison.Ordinal));
     }
 

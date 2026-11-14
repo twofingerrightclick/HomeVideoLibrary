@@ -21,13 +21,13 @@ public sealed class ImportTests : IDisposable
         var importer = new VideoImporter(catalog, _tools);
 
         var first = await importer.ImportAsync(source);
-        var video = first.Video;
+        var video = first.Video!;
         var importedMkv = catalog.GetVideoPath(video.RelativePath);
         var third = await importer.ImportAsync(importedMkv);
 
         Assert.Equal(ImportOutcome.Imported, first.Outcome);
         Assert.Equal(ImportOutcome.Imported, third.Outcome);
-        Assert.NotEqual(video.RelativePath, third.Video.RelativePath);
+        Assert.NotEqual(video.RelativePath, third.Video!.RelativePath);
         Assert.Equal(originalHash, SHA256.HashData(await File.ReadAllBytesAsync(source)));
         Assert.True(File.Exists(importedMkv));
         Assert.InRange(video.Duration.TotalSeconds, 1.8, 2.2);
@@ -41,6 +41,34 @@ public sealed class ImportTests : IDisposable
             ["-v", "error", "-show_entries", "format=format_name", "-of", "json", importedMkv], TimeSpan.FromSeconds(30));
         Assert.Contains("matroska", probe.StandardOutput);
         Assert.Equal("Test family video", (await new MatroskaMetadataService(catalog, _tools).ReadTextAsync(importedMkv)).Metadata.Title);
+    }
+
+    [Fact]
+    public async Task RemovedSourcesAreSkippedUntilExplicitlyAllowedAndLiveDuplicatesStillWin()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+        var first = await importer.ImportAsync(source);
+        var video = Assert.IsType<LibraryVideo>(first.Video);
+        File.Delete(catalog.GetVideoPath(video.RelativePath));
+        var history = new DeletionHistory(video.SourceFingerprint!, "Family", DateTimeOffset.UtcNow, DeletionKind.PermanentlyDeleted);
+        await catalog.DeleteVideosAsync([video.Id], deletion: history);
+        var skipped = await importer.ImportAsync(source);
+        Assert.Equal(ImportOutcome.PreviouslyRemoved, skipped.Outcome);
+        Assert.Null(skipped.Video);
+        Assert.Equal(history, skipped.History);
+        Assert.Empty(await catalog.ListAsync());
+        Assert.Equal(ImportOutcome.PreviouslyRemoved, (await importer.ImportAsync(source, allowedDeletionFingerprint: "v2:other")).Outcome);
+
+        var restored = await importer.ImportAsync(source, allowedDeletionFingerprint: history.Fingerprint);
+        Assert.Equal(ImportOutcome.Imported, restored.Outcome);
+        var duplicate = await importer.ImportAsync(source, allowedDeletionFingerprint: history.Fingerprint);
+        Assert.Equal(ImportOutcome.AlreadyInLibrary, duplicate.Outcome);
+        Assert.Equal(restored.Video!.Id, duplicate.Video!.Id);
+        Assert.Equal(ImportOutcome.AlreadyInLibrary, (await importer.ImportAsync(source)).Outcome);
+        Assert.Single(await catalog.ListAsync());
+        Assert.Equal(history, await catalog.FindDeletionAsync(history.Fingerprint));
     }
 
     [Fact]
@@ -60,7 +88,7 @@ public sealed class ImportTests : IDisposable
 
         Assert.Equal(ImportOutcome.AlreadyInLibrary, second.Outcome);
         Assert.Equal(ImportOutcome.AlreadyInLibrary, third.Outcome);
-        Assert.Equal(first.Video.Id, second.Video.Id);
+        Assert.Equal(first.Video!.Id, second.Video!.Id);
         Assert.Single(await catalog.ListAsync());
         Assert.Single(Directory.GetFiles(catalog.Paths.VideosDirectory));
     }
@@ -77,7 +105,7 @@ public sealed class ImportTests : IDisposable
         try
         {
             var again = await importer.ImportAsync(source);
-            Assert.Equal((ImportOutcome.AlreadyInLibrary, first.Video.Id), (again.Outcome, again.Video.Id));
+            Assert.Equal((ImportOutcome.AlreadyInLibrary, first.Video!.Id), (again.Outcome, again.Video!.Id));
         }
         finally { File.SetUnixFileMode(catalog.Paths.VideosDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
     }
@@ -91,17 +119,17 @@ public sealed class ImportTests : IDisposable
         var first = await importer.ImportAsync(source);
         // What a crash between moving the file to the Trash and deleting its row leaves: a row whose file is missing.
         var trashed = Path.Combine(_root, "trashed.mkv");
-        File.Move(catalog.GetVideoPath(first.Video.RelativePath), trashed);
+        File.Move(catalog.GetVideoPath(first.Video!.RelativePath), trashed);
 
         var again = await importer.ImportAsync(source);
 
         Assert.Equal(ImportOutcome.Imported, again.Outcome);
-        Assert.NotEqual(first.Video.Id, again.Video.Id);
-        Assert.Equal(first.Video.SourceFingerprint, again.Video.SourceFingerprint);
+        Assert.NotEqual(first.Video!.Id, again.Video!.Id);
+        Assert.Equal(first.Video!.SourceFingerprint, again.Video!.SourceFingerprint);
         var rows = await catalog.ListAsync();
         Assert.Equal(2, rows.Count);
-        Assert.Null(rows.Single(video => video.Id == first.Video.Id).SourceFingerprint);
-        Assert.Equal(again.Video.Id, (await catalog.FindBySourceFingerprintAsync(again.Video.SourceFingerprint!))!.Id);
+        Assert.Null(rows.Single(video => video.Id == first.Video!.Id).SourceFingerprint);
+        Assert.Equal(again.Video!.Id, (await catalog.FindBySourceFingerprintAsync(again.Video!.SourceFingerprint!))!.Id);
         Assert.Equal(ImportOutcome.AlreadyInLibrary, (await importer.ImportAsync(source)).Outcome);
     }
 
@@ -149,10 +177,10 @@ public sealed class ImportTests : IDisposable
         var webmResult = await importer.ImportAsync(webm);
         var lateResult = await importer.ImportAsync(late);
 
-        var webmBytes = await File.ReadAllBytesAsync(catalog.GetVideoPath(webmResult.Video.RelativePath));
+        var webmBytes = await File.ReadAllBytesAsync(catalog.GetVideoPath(webmResult.Video!.RelativePath));
         Assert.Contains("matroska", System.Text.Encoding.ASCII.GetString(webmBytes, 0, 64), StringComparison.Ordinal);
         Assert.Contains(webmResult.Warnings, warning => warning.Contains("WebM", StringComparison.Ordinal));
-        var latePath = catalog.GetVideoPath(lateResult.Video.RelativePath);
+        var latePath = catalog.GetVideoPath(lateResult.Video!.RelativePath);
         var probe = await new MediaProcess().RunAsync(_tools.Ffprobe, ["-v", "error", "-show_entries", "format=start_time:chapter=start_time",
             "-of", "json", latePath], TimeSpan.FromSeconds(30));
         using var json = JsonDocument.Parse(probe.StandardOutput);
@@ -316,7 +344,7 @@ public sealed class ImportTests : IDisposable
 
         Assert.Contains(damagedResult.Warnings, warning => warning.Contains("damaged", StringComparison.Ordinal));
         Assert.Contains(liveResult.Warnings, warning => warning.Contains("no duration", StringComparison.Ordinal));
-        Assert.InRange(liveResult.Video.Duration.TotalSeconds, 2.9, 3.1);
+        Assert.InRange(liveResult.Video!.Duration.TotalSeconds, 2.9, 3.1);
     }
 
     [Fact]
@@ -363,16 +391,16 @@ public sealed class ImportTests : IDisposable
 
         var result = await new VideoImporter(catalog, _tools).ImportAsync(source);
 
-        var path = catalog.GetVideoPath(result.Video.RelativePath);
+        var path = catalog.GetVideoPath(result.Video!.RelativePath);
         var text = await new MatroskaMetadataService(catalog, _tools).ReadTextAsync(path);
         Assert.Equal("Birthday 1997", text.Metadata.Title);
         Assert.Equal(new DateTimeOffset(modified), text.Metadata.RecordedAt);
         Assert.NotEqual("", text.Metadata.RecordedAtText);
-        Assert.Equal(new DateTimeOffset(modified), result.Video.RecordedAt);
-        Assert.Equal(TimeSpan.Zero, result.Video.RecordedAt.Offset);
-        Assert.NotNull(result.Video.SourceFingerprint);
+        Assert.Equal(new DateTimeOffset(modified), result.Video!.RecordedAt);
+        Assert.Equal(TimeSpan.Zero, result.Video!.RecordedAt.Offset);
+        Assert.NotNull(result.Video!.SourceFingerprint);
         var tags = await ExtractTagsAsync(path);
-        Assert.Contains($"<String>{result.Video.SourceFingerprint}</String>", tags);
+        Assert.Contains($"<String>{result.Video!.SourceFingerprint}</String>", tags);
         Assert.Contains("HVL_SOURCE_FINGERPRINT", tags);
         Assert.Contains("<String>Birthday 1997.mp4</String>", tags);
     }
@@ -389,7 +417,7 @@ public sealed class ImportTests : IDisposable
 
         var imported = await new VideoImporter(catalog, _tools).ImportAsync(withSubtitles);
 
-        var path = catalog.GetVideoPath(imported.Video.RelativePath);
+        var path = catalog.GetVideoPath(imported.Video!.RelativePath);
         var probe = await new MediaProcess().RunAsync(_tools.Ffprobe,
             ["-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "json", path], TimeSpan.FromSeconds(30));
         Assert.Contains("subrip", probe.StandardOutput);
@@ -413,7 +441,7 @@ public sealed class ImportTests : IDisposable
 
         Assert.Equal(ImportOutcome.Imported, result.Outcome);
         Assert.Contains(result.Warnings, warning => warning.Contains("damaged", StringComparison.Ordinal));
-        Assert.InRange(result.Video.Duration.TotalSeconds, 5, 6.5);
+        Assert.InRange(result.Video!.Duration.TotalSeconds, 5, 6.5);
     }
 
     [Fact]
@@ -429,7 +457,7 @@ public sealed class ImportTests : IDisposable
         var result = await new VideoImporter(catalog, _tools).ImportAsync(withCover);
 
         var probe = await new MediaProcess().RunAsync(_tools.Ffprobe, ["-v", "error", "-select_streams", "v", "-show_entries", "stream=index",
-            "-of", "csv=p=0", catalog.GetVideoPath(result.Video.RelativePath)], TimeSpan.FromSeconds(30));
+            "-of", "csv=p=0", catalog.GetVideoPath(result.Video!.RelativePath)], TimeSpan.FromSeconds(30));
         Assert.Single(probe.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains(result.Warnings, warning => warning.Contains("Cover art", StringComparison.Ordinal));
     }

@@ -310,6 +310,7 @@
                <ProgressBar Grid.Row="2" Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Minimum="0" Maximum="100"
                 Height="3" MinHeight="3" Margin="0,6,0,0" IsVisible="{Binding IsRunning}"/>
                <StackPanel Grid.Column="1" Grid.RowSpan="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <c:PlasticButton Classes="toolbar" Content="IMPORT ANYWAY" Command="{Binding ImportAnywayCommand}" IsVisible="{Binding CanImportAnyway}"/>
                 <c:PlasticButton Classes="toolbar" Content="OPEN" Command="{Binding OpenCommand}" IsVisible="{Binding CanOpen}"
                  Click="CloseActivity"/>
                 <c:PlasticButton Classes="toolbar" Content="{Binding CancelLabel}"

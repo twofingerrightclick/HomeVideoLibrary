@@ -15,6 +15,8 @@ public readonly record struct JobProgress(string Stage, double? Fraction = null)
 /// <summary>How a job ended: a one-line summary and the videos it produced (offered as OPEN).</summary>
 public sealed record JobOutcome(string Summary, IReadOnlyList<Guid> Outputs)
 {
+    public Action? ImportAnyway { get; init; }
+
     public static JobOutcome Done(string summary) => new(summary, []);
 }
 
@@ -268,12 +270,21 @@ public sealed class JobViewModel : ViewModelBase
     private TimeSpan? _remaining;
     private JobOutcome? _outcome;
     private string? _error;
+    private bool _importAnywayUsed;
 
     internal JobViewModel(string title, JobLane lane, JobWork work, JobQueue queue)
     {
         Title = title; Lane = lane; _work = work; _queue = queue;
         CancelCommand = new RelayCommand(Cancel, () => IsQueued || IsRunning && !IsCancelling);
         OpenCommand = new AsyncCommand(_ => _queue.OpenAsync(this), () => CanOpen, context: "Open");
+        ImportAnywayCommand = new RelayCommand(() =>
+        {
+            if (!CanImportAnyway) return;
+            _importAnywayUsed = true;
+            OnPropertyChanged(nameof(CanImportAnyway));
+            ImportAnywayCommand!.RaiseCanExecuteChanged();
+            Outcome!.ImportAnyway!();
+        }, () => CanImportAnyway);
         DismissCommand = new RelayCommand(() => _queue.Dismiss(this), () => IsFinished);
     }
 
@@ -310,6 +321,8 @@ public sealed class JobViewModel : ViewModelBase
 
     public JobOutcome? Outcome => _outcome;
     public string? Error => _error;
+    public bool CanImportAnyway => IsFinished && !_importAnywayUsed && _queue.Jobs.Contains(this) && Outcome?.ImportAnyway is not null;
+    public RelayCommand ImportAnywayCommand { get; }
     public bool CanOpen => State == JobState.Succeeded && Outcome is { Outputs.Count: > 0 };
 
     /// <summary>A queued job is removed from its queue; a running one is asked to stop.</summary>
@@ -415,8 +428,9 @@ public sealed class JobViewModel : ViewModelBase
         _queuePosition = null;
         foreach (var name in new[] { nameof(State), nameof(IsQueued), nameof(IsRunning), nameof(IsFinished), nameof(HasFailed), nameof(IsCancelling),
                      nameof(QueuePosition), nameof(Stage), nameof(Fraction), nameof(Percent), nameof(IsIndeterminate), nameof(Remaining),
-                     nameof(Outcome), nameof(Error), nameof(CanOpen), nameof(CancelLabel), nameof(StatusText) })
+                     nameof(Outcome), nameof(Error), nameof(CanImportAnyway), nameof(CanOpen), nameof(CancelLabel), nameof(StatusText) })
             OnPropertyChanged(name);
+        ImportAnywayCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged(); OpenCommand.RaiseCanExecuteChanged(); DismissCommand.RaiseCanExecuteChanged();
         _queue.StateChanged(this);
     }

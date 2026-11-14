@@ -167,12 +167,12 @@ public sealed class LibraryModel
     /// cached metadata with them, and publishes them as removed. Touches no file, so a caller deleting the files does that
     /// first: a crash in between leaves rows whose files are missing, which the user can remove, rather than rows for
     /// files that were never deleted. Ids not in the library are ignored.</summary>
-    public Task RemoveVideosAsync(IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default)
+    public Task RemoveVideosAsync(IEnumerable<Guid> videoIds, CancellationToken cancellationToken = default, DeletionHistory? deletion = null)
     {
         var ids = videoIds.Distinct().ToArray();
         return MutateAsync(async snapshot =>
         {
-            await Catalog.DeleteVideosAsync(ids, cancellationToken);
+            await Catalog.DeleteVideosAsync(ids, cancellationToken, deletion);
             var removed = ids.Where(snapshot.Videos.ContainsKey).ToArray();
             if (removed.Length == 0) return (snapshot, (LibraryDelta?)null, true);
             var members = snapshot.AlbumMembers;

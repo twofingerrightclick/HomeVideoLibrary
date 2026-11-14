@@ -21,6 +21,14 @@ public sealed class LibraryDbContext(DbContextOptions<LibraryDbContext> options)
         library.Property(row => row.Id).HasColumnName("id").ValueGeneratedNever();
         library.Property(row => row.Name).HasColumnName("name");
 
+        var deletions = modelBuilder.Entity<DeletionHistoryRow>();
+        deletions.ToTable("deletion_history");
+        deletions.HasKey(row => row.Fingerprint);
+        deletions.Property(row => row.Fingerprint).HasColumnName("fingerprint");
+        deletions.Property(row => row.Title).HasColumnName("title");
+        deletions.Property(row => row.RemovedAt).HasColumnName("removed_at");
+        deletions.Property(row => row.Kind).HasColumnName("kind");
+
         var videos = modelBuilder.Entity<VideoRow>();
         videos.ToTable("videos");
         videos.HasKey(row => row.Id);
@@ -113,4 +121,12 @@ public sealed class LibraryDbContextFactory : IDesignTimeDbContextFactory<Librar
             throw new ArgumentException("Supply --database-path followed by an absolute scratch database path.");
         return new LibraryDbContext(LibraryDbContext.Options(Path.GetFullPath(args[1])));
     }
+}
+
+internal sealed class DeletionHistoryRow
+{
+    public string Fingerprint { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string RemovedAt { get; set; } = "";
+    public int Kind { get; set; }
 }

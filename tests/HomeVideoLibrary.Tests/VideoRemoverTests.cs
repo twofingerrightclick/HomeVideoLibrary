@@ -14,11 +14,49 @@ public sealed class VideoRemoverTests : IDisposable
     {
         var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
         var video = await AddVideoAsync(catalog, "birthday");
+        await using (var connection = await catalog.OpenAsync(default))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE videos SET source_fingerprint='v2:test'";
+            await command.ExecuteNonQueryAsync();
+        }
         _files.Set(catalog.GetVideoPath(video.RelativePath), VideoMetadata.Empty with { Title = "Birthday" });
         var model = new LibraryModel(catalog, _files);
         await model.LoadAsync();
         await model.ReconcileAsync();
         return (model, video, new FakeTrash(Path.Combine(_root, "Trash")));
+    }
+
+    [Fact]
+    public async Task PermanentDeletionIsDistinguishedAndOnlyKeepsTheLatestHistoryForASource()
+    {
+        var (model, video, trash) = await OpenAsync();
+        Assert.Equal(RemovalResult.Deleted, (await new VideoRemover(model, trash).DeletePermanentlyAsync(video.Id)).Result);
+        var first = Assert.IsType<DeletionHistory>(await model.Catalog.FindDeletionAsync("v2:test"));
+        Assert.Equal(DeletionKind.PermanentlyDeleted, first.Kind);
+        var (reopened, replacement, nextTrash) = await OpenAsync();
+        Assert.Equal(RemovalResult.Trashed, (await new VideoRemover(reopened, nextTrash).MoveToTrashAsync(replacement.Id)).Result);
+        var latest = Assert.IsType<DeletionHistory>(await reopened.Catalog.FindDeletionAsync("v2:test"));
+        Assert.Equal(DeletionKind.Trashed, latest.Kind);
+        Assert.True(latest.RemovedAt >= first.RemovedAt);
+        var separate = await CreateCatalogAsync(Path.Combine(_root, "separate"));
+        Assert.Null(await separate.FindDeletionAsync("v2:test"));
+    }
+
+    [Fact]
+    public async Task CatalogFailureRollsBackHistoryWithTheRowAndMissingCleanupDoesNotInventIt()
+    {
+        var (model, video, trash) = await OpenAsync();
+        await using (var connection = await model.Catalog.OpenAsync(default))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TRIGGER refuse_delete BEFORE DELETE ON videos BEGIN SELECT RAISE(ABORT, 'test failure'); END";
+            await command.ExecuteNonQueryAsync();
+        }
+        Assert.Equal(RemovalResult.Failed, (await new VideoRemover(model, trash).MoveToTrashAsync(video.Id)).Result);
+        Assert.False(File.Exists(model.GetVideoPath(model.Snapshot.Find(video.Id)!)));
+        Assert.True(await model.Catalog.ContainsVideoAsync(video.Id));
+        Assert.Null(await model.Catalog.FindDeletionAsync("v2:test"));
     }
 
     [Fact]
@@ -34,6 +72,12 @@ public sealed class VideoRemoverTests : IDisposable
         var result = await new VideoRemover(model, trash, holders).MoveToTrashAsync(video.Id);
 
         Assert.Equal(new VideoRemoval(video.Id, "Birthday", RemovalResult.Trashed), result);
+        var reopened = new LibraryCatalog(model.Catalog.Paths);
+        await reopened.InitializeAsync();
+        var history = Assert.IsType<DeletionHistory>(await reopened.FindDeletionAsync("v2:test"));
+        Assert.Equal("Birthday", history.Title);
+        Assert.Equal(DeletionKind.Trashed, history.Kind);
+        Assert.InRange(history.RemovedAt, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow);
         Assert.Equal([path], trash.Moved);
         Assert.False(File.Exists(path));
         Assert.Null(model.Snapshot.Find(video.Id));
@@ -63,6 +107,7 @@ public sealed class VideoRemoverTests : IDisposable
 
         var result = await new VideoRemover(model, trash).MoveToTrashAsync(video.Id);
 
+        Assert.Null(await model.Catalog.FindDeletionAsync("v2:test"));
         Assert.Equal(RemovalResult.Unavailable, result.Result);
         Assert.False(result.IsRemoved);
         Assert.NotNull(model.Snapshot.Find(video.Id));
@@ -110,9 +155,11 @@ public sealed class VideoRemoverTests : IDisposable
         await model.StatPassAsync();
         Assert.True(model.Snapshot.Find(video.Id)!.IsMissing);
         Assert.Equal(RemovalResult.Missing, (await remover.MoveToTrashAsync(video.Id)).Result);
+        Assert.Null(await model.Catalog.FindDeletionAsync("v2:test"));
 
         var removed = Assert.Single(await remover.RemoveMissingAsync([video.Id]));
         Assert.Equal(RemovalResult.RemovedFromLibrary, removed.Result);
+        Assert.Null(await model.Catalog.FindDeletionAsync("v2:test"));
         Assert.Empty(model.Snapshot.Videos);
         Assert.Empty(await model.Catalog.ListAsync());
     }

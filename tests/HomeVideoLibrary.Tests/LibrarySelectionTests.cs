@@ -417,7 +417,7 @@ public sealed class LibrarySelectionTests : IDisposable
 
     private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter
     {
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
         {
             started.TrySetResult();
             await Task.Delay(Timeout.Infinite, cancellationToken);
@@ -427,7 +427,7 @@ public sealed class LibrarySelectionTests : IDisposable
 
     private sealed class FakeImporter(LibraryCatalog catalog, FakeMatroska files) : IVideoImporter
     {
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
         {
             var name = Path.GetFileNameWithoutExtension(sourcePath);
             if (name == "broken") throw new InvalidDataException("bad header");

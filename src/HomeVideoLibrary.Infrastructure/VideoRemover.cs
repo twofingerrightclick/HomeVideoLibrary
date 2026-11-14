@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using HomeVideoLibrary.Core;
 
 namespace HomeVideoLibrary.Infrastructure;
 
@@ -152,7 +153,13 @@ public sealed class VideoRemover
         }
         if (result is not (RemovalResult.Trashed or RemovalResult.Deleted)) return new VideoRemoval(videoId, record.Label, result);
         // The file has moved; the row must follow even if the job is being cancelled.
-        try { await _model.RemoveVideosAsync([videoId], CancellationToken.None); }
+        try
+        {
+            var history = string.IsNullOrWhiteSpace(record.SourceFingerprint) ? null : new DeletionHistory(
+                record.SourceFingerprint, record.Label, _time.GetUtcNow(),
+                result == RemovalResult.Trashed ? DeletionKind.Trashed : DeletionKind.PermanentlyDeleted);
+            await _model.RemoveVideosAsync([videoId], CancellationToken.None, history);
+        }
         catch (Exception exception)
         {
             Trace.TraceError($"Video {videoId} left its file behind in the catalog: {exception}");

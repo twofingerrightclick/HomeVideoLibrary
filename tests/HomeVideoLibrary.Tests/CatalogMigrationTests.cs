@@ -59,9 +59,10 @@ public sealed class CatalogMigrationTests : IDisposable
         Assert.Equal(network ? "delete" : "wal", await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
         await using var context = new LibraryDbContext(LibraryDbContext.Options(paths.DatabasePath));
         var migrations = context.Database.GetMigrations().ToArray();
-        Assert.Equal(2, migrations.Length);
+        Assert.Equal(3, migrations.Length);
         Assert.EndsWith("_InitialCreate", migrations[0]);
         Assert.EndsWith("_AddLibraryName", migrations[1]);
+        Assert.EndsWith("_AddDeletionHistory", migrations[2]);
         Assert.Equal(migrations, await context.Database.GetAppliedMigrationsAsync());
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
@@ -82,7 +83,7 @@ public sealed class CatalogMigrationTests : IDisposable
         Directory.CreateDirectory(_root);
         await ExecuteAsync(paths, "PRAGMA application_id=0");
         await new LibraryCatalog(paths).InitializeAsync();
-        Assert.Equal(2L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(3L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
     }
 
     [Theory]
@@ -97,7 +98,7 @@ public sealed class CatalogMigrationTests : IDisposable
         var catalog = new LibraryCatalog(paths, _ => true);
         await catalog.InitializeAsync();
         await catalog.InitializeAsync();
-        Assert.Equal(2L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(3L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
         Assert.Equal("delete", await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
     }
 
@@ -114,7 +115,7 @@ public sealed class CatalogMigrationTests : IDisposable
         });
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateLock.InitializeAsync(cancellation.Token));
         Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
-        Assert.Equal(2L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(3L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
     }
 
     // The volume callback runs after read-only preflight, so a separate connection can deterministically model

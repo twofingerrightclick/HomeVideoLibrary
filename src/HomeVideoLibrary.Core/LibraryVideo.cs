@@ -17,11 +17,19 @@ public sealed record IndexProgress(int Completed, int Total, string VideoName, s
 /// show an indeterminate bar rather than resetting to 0.</param>
 public sealed record ImportProgress(string Stage, double? Fraction = null);
 
-public enum ImportOutcome { Imported, AlreadyInLibrary }
+public enum ImportOutcome { Imported, AlreadyInLibrary, PreviouslyRemoved }
 
-public sealed record ImportResult(ImportOutcome Outcome, LibraryVideo Video, IReadOnlyList<string> Warnings);
+public sealed record ImportResult(ImportOutcome Outcome, LibraryVideo? Video, IReadOnlyList<string> Warnings)
+{
+    public DeletionHistory? History { get; init; }
+}
+
+public enum DeletionKind { Trashed, PermanentlyDeleted }
+
+public sealed record DeletionHistory(string Fingerprint, string Title, DateTimeOffset RemovedAt, DeletionKind Kind);
 
 public interface IVideoImporter
 {
-    Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default);
+    /// <summary>Imports normally; the optional fingerprint bypasses only that source's deletion history, never live duplicates.</summary>
+    Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null);
 }
