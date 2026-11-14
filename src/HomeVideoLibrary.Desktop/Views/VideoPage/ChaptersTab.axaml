@@ -6,12 +6,12 @@
              x:Class="HomeVideoLibrary.Desktop.Views.VideoPage.ChaptersTab"
              x:DataType="vp:VideoPageViewModel" DetachedFromVisualTree="OnDetached">
   <UserControl.Styles>
-    <!-- Row keys show on hover, keyboard focus and expansion only, so titles keep the row's width. -->
-    <Style Selector="c|ChapterListItem StackPanel.rowActions">
-      <Setter Property="Opacity" Value="0"/>
+    <!-- Hover controls overlay the title without moving it. Keyboard users can reveal them too. -->
+    <Style Selector="c|ChapterListItem /template/ Panel#PART_Start, c|ChapterListItem /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="IsVisible" Value="False"/>
     </Style>
-    <Style Selector="c|ChapterListItem:pointerover StackPanel.rowActions, c|ChapterListItem:focus-within StackPanel.rowActions, c|ChapterListItem:expanded StackPanel.rowActions">
-      <Setter Property="Opacity" Value="1"/>
+    <Style Selector="c|ChapterListItem:pointerover /template/ ContentPresenter#PART_ContentPresenter, c|ChapterListItem:focus-within /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="IsVisible" Value="True"/>
     </Style>
   </UserControl.Styles>
   <StackPanel Spacing="10">
@@ -41,20 +41,26 @@
                              IsCurrent="{Binding IsCurrent}"
                              IsEditing="{Binding IsEditing, Mode=TwoWay}"
                              DraftTitle="{Binding DraftTitle, Mode=TwoWay}"
-                             ActivateCommand="{Binding SeekCommand}"
+                             ActivateCommand="{Binding ToggleExpandedCommand}"
                              EditCommand="{Binding EditCommand}"
-                             SeekCommand="{Binding SeekCommand}"
                              CommitTitleCommand="{Binding CommitTitleCommand}"
                              IsExpanded="{Binding IsExpanded}"
                              ExpandedContent="{Binding Editor}"
                              ExpandedContentTemplate="{x:Static local:ChapterDetailsView.ViewTemplate}"
-                             ToolTip.Tip="Click to jump here; use Edit to change the chapter or moment">
-            <StackPanel Orientation="Horizontal" Spacing="12" Classes="rowActions">
-              <c:PlasticButton Classes="toolbar icon" MinWidth="38" Icon="{StaticResource Vcr.Icon.Edit}" Command="{Binding EditCommand}"
-                               ToolTip.Tip="Edit (F2)"/>
-              <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Close}" Command="{Binding DeleteCommand}"
-                               ToolTip.Tip="Remove chapter or moment (Delete)"/>
-            </StackPanel>
+                             ToolTip.Tip="Click to expand or collapse details">
+            <c:PlasticButton Classes="toolbar icon" Icon="{StaticResource Vcr.Icon.Play}"
+                             Command="{Binding SeekCommand}" AutomationProperties.Name="Play from chapter or moment"
+                             ToolTip.Tip="Play from here">
+              <c:PlasticButton.Template>
+                <ControlTemplate>
+                  <Grid Background="Transparent" Width="30" Height="30">
+                    <PathIcon Data="{StaticResource Vcr.Icon.Play}" Width="14" Height="14"/>
+                    <Border Name="PART_FocusRing" IsVisible="False" BorderThickness="2"
+                            BorderBrush="{DynamicResource Vcr.Brush.Focus}" CornerRadius="3"/>
+                  </Grid>
+                </ControlTemplate>
+              </c:PlasticButton.Template>
+            </c:PlasticButton>
           </c:ChapterListItem>
         </DataTemplate>
         <DataTemplate DataType="vp:PlaceholderRowViewModel">

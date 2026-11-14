@@ -70,5 +70,8 @@
                     AddTagCommand="{Binding Tags.AddTagCommand}"
                     RemoveTagCommand="{Binding Tags.RemoveTagCommand}"
                     SuggestionProvider="{Binding Tags.Suggest}"/>
+    <c:PlasticButton Classes="toolbar icon" HorizontalAlignment="Right" Margin="0,6,0,0"
+                     Icon="{StaticResource Vcr.Icon.Trash}" Command="{Binding DeleteCommand}"
+                     AutomationProperties.Name="Delete chapter or moment" ToolTip.Tip="Delete chapter or moment"/>
   </StackPanel>
 </UserControl>

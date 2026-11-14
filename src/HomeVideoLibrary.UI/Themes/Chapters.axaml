@@ -23,10 +23,11 @@
                                 IsVisible="{TemplateBinding IsExpanded}"
                                 Content="{TemplateBinding ExpandedContent}"
                                 ContentTemplate="{TemplateBinding ExpandedContentTemplate}"/>
-              <Grid ColumnDefinitions="16,Auto,*,Auto" MinHeight="{TemplateBinding MinHeight}">
+              <Grid ColumnDefinitions="16,*" MinHeight="{TemplateBinding MinHeight}">
                 <PathIcon Name="PART_TypeIcon" Width="12" Height="14" Data="{StaticResource Vcr.Icon.Chapter}" Foreground="{DynamicResource Vcr.Brush.Yellow}" VerticalAlignment="Center"/>
-                <!-- Transparent, so a click anywhere on the time seeks. -->
-                <Panel Name="PART_Start" Grid.Column="1" MinWidth="62" Margin="9,0,4,0" VerticalAlignment="Center"
+                <!-- Hover controls share the title cell and draw over it without changing its layout. -->
+                <Panel Name="PART_Start" Grid.Column="1" MinWidth="62" Margin="4,0" VerticalAlignment="Center"
+                       HorizontalAlignment="Left" ZIndex="1"
                        Background="Transparent" Cursor="Hand">
                   <TextBlock Text="{TemplateBinding StartGhostText}"
                              FontFamily="{DynamicResource Vcr.Font.Segment}"
@@ -39,7 +40,7 @@
                              Foreground="{DynamicResource Vcr.Brush.Yellow}"
                              HorizontalAlignment="Right"/>
                 </Panel>
-                <Panel Grid.Column="2" Margin="8,0" VerticalAlignment="Center">
+                <Panel Grid.Column="1" Margin="8,0" VerticalAlignment="Center">
                   <Panel Name="PART_TitleRow">
                     <TextBlock Name="PART_TitleText"
                                Text="{TemplateBinding Title}"
@@ -57,7 +58,9 @@
                   <ContentControl Name="PART_Editor" Margin="-9,0,0,0" IsVisible="False"/>
                 </Panel>
                 <ContentPresenter Name="PART_ContentPresenter"
-                                  Grid.Column="3"
+                                  Grid.Column="1"
+                                  HorizontalAlignment="Right" ZIndex="1"
+                                  Background="Transparent"
                                   Margin="0,0,4,0"
                                   Content="{TemplateBinding Content}"
                                   ContentTemplate="{TemplateBinding ContentTemplate}"

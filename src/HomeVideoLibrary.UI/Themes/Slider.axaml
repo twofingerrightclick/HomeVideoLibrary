@@ -56,8 +56,8 @@
   <!-- Molded edges only; the cast shadow is the thumb's Effect so slider states can change it. -->
   <BoxShadows x:Key="Vcr.Shadow.Fader">0 1 0 0 #38FFFFFF inset, 0 -1 0 0 #73000000 inset, 0 1 0 0 #08090A</BoxShadows>
 
-  <!-- Groove segment either side of the cap: invisible on the decrease side so the dark slot shows,
-       a thin lit line on the increase side. Both stay hit-testable so clicking the groove seeks. -->
+  <!-- Groove segment either side of the cap: a thin lit line on the decrease side shows the level,
+       while the increase side leaves the dark slot visible. Both stay hit-testable so clicking the groove seeks. -->
   <ControlTheme x:Key="Vcr.Theme.FaderGroove" TargetType="RepeatButton">
     <Setter Property="Focusable" Value="False"/>
     <Setter Property="Background" Value="Transparent"/>
@@ -67,7 +67,7 @@
         <Border Background="{TemplateBinding Background}">
           <Border Name="PART_Line"
                   Height="2"
-                  Margin="0,0,3,0"
+                  Margin="3,0,0,0"
                   CornerRadius="1"
                   VerticalAlignment="Center"
                   Background="{TemplateBinding Foreground}"/>
@@ -83,7 +83,7 @@
     <Style Selector="^.vertical /template/ Border#PART_Line">
       <Setter Property="Height" Value="NaN"/>
       <Setter Property="Width" Value="2"/>
-      <Setter Property="Margin" Value="0,3,0,0"/>
+      <Setter Property="Margin" Value="0,0,0,3"/>
       <Setter Property="VerticalAlignment" Value="Stretch"/>
       <Setter Property="HorizontalAlignment" Value="Center"/>
     </Style>
@@ -184,10 +184,10 @@
                  Value="{TemplateBinding Value}"
                  IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
             <Track.DecreaseButton>
-              <RepeatButton Name="PART_DecreaseButton" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+              <RepeatButton Name="PART_DecreaseButton" Classes="lit" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
             </Track.DecreaseButton>
             <Track.IncreaseButton>
-              <RepeatButton Name="PART_IncreaseButton" Classes="lit" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+              <RepeatButton Name="PART_IncreaseButton" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
             </Track.IncreaseButton>
             <Thumb Name="PART_Thumb" Theme="{StaticResource Vcr.Theme.FaderCap}"/>
           </Track>
@@ -219,10 +219,10 @@
                    Value="{TemplateBinding Value}"
                    IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
               <Track.DecreaseButton>
-                <RepeatButton Name="PART_DecreaseButton" Classes="vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+                <RepeatButton Name="PART_DecreaseButton" Classes="lit vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
               </Track.DecreaseButton>
               <Track.IncreaseButton>
-                <RepeatButton Name="PART_IncreaseButton" Classes="lit vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
+                <RepeatButton Name="PART_IncreaseButton" Classes="vertical" Theme="{StaticResource Vcr.Theme.FaderGroove}"/>
               </Track.IncreaseButton>
               <Thumb Name="PART_Thumb" Classes="vertical" Theme="{StaticResource Vcr.Theme.FaderCap}"/>
             </Track>
@@ -254,7 +254,7 @@
         <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
         <Setter Property="Effect" Value="drop-shadow(0 1 2 #80000000)"/>
       </Style>
-      <Style Selector="^ /template/ RepeatButton#PART_IncreaseButton">
+      <Style Selector="^ /template/ RepeatButton#PART_DecreaseButton">
         <Setter Property="Foreground" Value="{DynamicResource Vcr.Brush.Legend.Disabled}"/>
       </Style>
     </Style>

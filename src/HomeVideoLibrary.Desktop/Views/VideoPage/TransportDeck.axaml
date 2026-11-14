@@ -30,37 +30,6 @@
                 HoverTime="{Binding Preview.HoverTime, Mode=OneWayToSource}"
                 HoverPreview="{Binding Preview.Image}"/>
     <WrapPanel ItemSpacing="14" LineSpacing="8" VerticalAlignment="Bottom">
-      <c:LegendFrame Legend="SPEED">
-        <c:PlasticButton x:Name="SpeedButton" Classes="toolbar" Width="54"
-                         Content="{Binding Player.Speed, StringFormat='{}{0:0.##}×'}"
-                         ToolTip.Tip="Playback speed" AutomationProperties.Name="Playback speed">
-          <c:PlasticButton.Flyout>
-            <Flyout Placement="TopEdgeAlignedLeft" ShowMode="Standard" Opened="SpeedMenuOpened" Closed="SpeedMenuClosed">
-              <StackPanel Width="248" Spacing="12">
-                <c:SectionHeader Title="PLAYBACK SPEED"/>
-                <Slider x:Name="SpeedSlider" Classes="volume" Minimum="0.25" Maximum="2"
-                        SmallChange="0.05" LargeChange="0.25"
-                        Value="{Binding Player.Speed, Mode=TwoWay}" AutomationProperties.Name="Playback speed"/>
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBlock Classes="meta" Text="0.25×"/>
-                  <TextBlock Grid.Column="1" Classes="meta" Text="2×"/>
-                </Grid>
-                <ItemsControl ItemsSource="{x:Static vp:PlayerViewModel.SpeedPresets}">
-                  <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6"/></ItemsPanelTemplate>
-                  </ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="x:Double">
-                      <c:PlasticButton Classes="toolbar" Width="57" Content="{Binding StringFormat='{}{0:0.##}×'}"
-                                       Click="ChooseSpeed"/>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </StackPanel>
-            </Flyout>
-          </c:PlasticButton.Flyout>
-        </c:PlasticButton>
-      </c:LegendFrame>
       <c:LegendFrame Legend="TRACK SEARCH">
         <StackPanel Orientation="Horizontal" Spacing="4">
           <c:PlasticButton Classes="transport" Icon="{StaticResource Vcr.Icon.Previous}" Command="{Binding Details.Chapters.PreviousChapterCommand}" ToolTip.Tip="Previous chapter ( [ )"/>
@@ -80,8 +49,39 @@
                          CommandParameter="{x:Static vp:PlayerViewModel.LongStep}" ToolTip.Tip="Forward 10 seconds (L)"/>
       </c:LegendFrame>
       <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
-        <c:LcdCounter Value="{Binding Player.Position}" Hours="Always" Caption="TIME"/>
-        <c:LcdCounter Classes="small" Value="{Binding Player.Duration}" Hours="Always" Caption="TOTAL" VerticalAlignment="Bottom"/>
+        <c:LcdCounter Value="{Binding Player.Position}" Hours="Always" Caption="TIME" VerticalAlignment="Bottom"/>
+        <StackPanel Spacing="4" VerticalAlignment="Bottom">
+          <c:PlasticButton x:Name="SpeedButton" Classes="toolbar" Height="24" MinHeight="24" HorizontalAlignment="Stretch"
+                           Content="{Binding Player.Speed, StringFormat='{}{0:0.##}×'}"
+                           ToolTip.Tip="Playback speed" AutomationProperties.Name="Playback speed">
+            <c:PlasticButton.Flyout>
+              <Flyout Placement="TopEdgeAlignedLeft" ShowMode="Standard" Opened="SpeedMenuOpened" Closed="SpeedMenuClosed">
+                <StackPanel Width="248" Spacing="12">
+                  <c:SectionHeader Title="PLAYBACK SPEED"/>
+                  <Slider x:Name="SpeedSlider" Classes="volume" Minimum="0.25" Maximum="2"
+                          SmallChange="0.05" LargeChange="0.25"
+                          Value="{Binding Player.Speed, Mode=TwoWay}" AutomationProperties.Name="Playback speed"/>
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Classes="meta" Text="0.25×"/>
+                    <TextBlock Grid.Column="1" Classes="meta" Text="2×"/>
+                  </Grid>
+                  <ItemsControl ItemsSource="{x:Static vp:PlayerViewModel.SpeedPresets}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate><WrapPanel ItemSpacing="6" LineSpacing="6"/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="x:Double">
+                        <c:PlasticButton Classes="toolbar" Width="57" Content="{Binding StringFormat='{}{0:0.##}×'}"
+                                         Click="ChooseSpeed"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Flyout>
+            </c:PlasticButton.Flyout>
+          </c:PlasticButton>
+          <c:LcdCounter Classes="small" Value="{Binding Player.Duration}" Hours="Always" Caption="TOTAL" VerticalAlignment="Bottom"/>
+        </StackPanel>
       </StackPanel>
       <c:LegendFrame Legend="MARK">
         <StackPanel Spacing="6">
@@ -95,10 +95,11 @@
         </StackPanel>
       </c:LegendFrame>
       <c:LegendFrame Legend="VOL">
-        <StackPanel Orientation="Horizontal" Spacing="8">
+        <StackPanel Spacing="4" Width="110">
           <Slider Classes="volume" Width="110" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1"
                   Value="{Binding Player.Volume, Mode=TwoWay}" VerticalAlignment="Center" AutomationProperties.Name="Volume"/>
-          <c:LatchButton Classes="red icon" Icon="{StaticResource Vcr.Icon.Mute}" IsChecked="{Binding Player.IsMuted, Mode=TwoWay}" ToolTip.Tip="Mute (0)"/>
+          <c:LatchButton Classes="red toolbar" Height="24" MinHeight="24" HorizontalAlignment="Stretch"
+                         Icon="{StaticResource Vcr.Icon.Mute}" Content="MUTE" IsChecked="{Binding Player.IsMuted, Mode=TwoWay}" ToolTip.Tip="Mute (0)"/>
         </StackPanel>
       </c:LegendFrame>
       <c:LegendFrame Legend="SCREEN">

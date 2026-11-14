@@ -61,7 +61,8 @@ public sealed class VideoPageViewTests
         Dispatcher.UIThread.RunJobs();
         var editor = Assert.Single(host.GetVisualDescendants().OfType<ChapterDetailsView>());
         var actions = editor.GetVisualDescendants().OfType<PlasticButton>().Where(button => button.IsEffectivelyVisible).ToArray();
-        var setTime = Assert.Single(actions);
+        Assert.Equal(2, actions.Length);
+        var setTime = Assert.Single(actions, button => Equals(button.Content, "SET TIME"));
         Assert.Equal("SET TIME", setTime.Content);
         Assert.DoesNotContain(editor.GetVisualDescendants().OfType<TextBlock>(), text =>
             text.IsEffectivelyVisible && text.Text is "START" or "END");
@@ -256,7 +257,7 @@ public sealed class VideoPageViewTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public void ClickingTitleOrTimeSeeksWithoutEditingOrChangingPlayback(bool moment, bool playing)
+    public void RowTogglesDetailsAndOnlyPlaySeeks(bool moment, bool playing)
     {
         var (window, host) = Window();
         var entry = new VideoChapter(1, TimeSpan.FromSeconds(15), "A memory", "", [])
@@ -267,34 +268,45 @@ public sealed class VideoPageViewTests
         if (page.Player.IsPlaying != playing) page.Player.PlayPauseCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
         var item = Row(host, 0);
-        PointerPressedEventArgs? lastPointer = null;
-        item.PointerPressed += (_, args) => lastPointer = args;
-        var title = item.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Name == "PART_TitleText");
-        var point = title.TranslatePoint(new Point(4, title.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(point, MouseButton.Left);
-        window.MouseUp(point, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal(TimeSpan.FromSeconds(15), page.Player.Position);
-        Assert.Equal(playing, page.Player.IsPlaying);
-        Assert.Null(page.Details.Chapters.ExpandedChapter);
-        // Repeated clicks must not open the inline title editor either.
-        item.RaiseEvent(new TappedEventArgs(Gestures.DoubleTappedEvent, lastPointer!) { Source = title });
-        Assert.False(item.IsEditing);
         var time = item.GetVisualDescendants().OfType<Control>().Single(control => control.Name == ChapterListItem.StartPartName);
-        page.Player.Seek(TimeSpan.FromSeconds(2));
+        var play = Assert.IsType<PlasticButton>(item.Content);
+        window.MouseMove(new Point(1, 1));
         Dispatcher.UIThread.RunJobs();
-        point = time.TranslatePoint(new Point(4, time.Bounds.Height / 2), window)!.Value;
+        Assert.False(time.IsVisible);
+        Assert.False(item.GetVisualDescendants().OfType<Control>().Single(control => control.Name == "PART_ContentPresenter").IsVisible);
+        var title = item.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Name == "PART_TitleText");
+        var titleBounds = title.Bounds;
+        var titlePosition = title.TranslatePoint(new Point(), window);
+        var point = title.TranslatePoint(new Point(4, title.Bounds.Height / 2), window)!.Value;
+        window.MouseMove(point);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(time.IsVisible);
+        Assert.True(play.IsEffectivelyVisible);
+        Assert.Equal(titleBounds, title.Bounds);
+        Assert.Equal(titlePosition, title.TranslatePoint(new Point(), window));
+        point = title.TranslatePoint(new Point(4, title.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(TimeSpan.Zero, page.Player.Position);
+        Assert.Equal(playing, page.Player.IsPlaying);
+        Assert.True(item.IsExpanded);
+        Assert.Single(item.GetVisualDescendants().OfType<ChapterDetailsView>());
+        // Another header click collapses details without seeking.
+        point = title.TranslatePoint(new Point(title.Bounds.Width / 2, title.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(item.IsExpanded);
+        Assert.Equal(TimeSpan.Zero, page.Player.Position);
+        point = play.TranslatePoint(new Point(play.Bounds.Width / 2, play.Bounds.Height / 2), window)!.Value;
+        window.MouseMove(point);
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(TimeSpan.FromSeconds(15), page.Player.Position);
         Assert.Equal(playing, page.Player.IsPlaying);
-        Assert.Null(page.Details.Chapters.ExpandedChapter);
-        Edit(window, item);
-        Assert.Same(page.Details.Chapters.Chapters.Single(), page.Details.Chapters.ExpandedChapter);
-        Assert.Equal(playing, page.Player.IsPlaying);
-        Assert.DoesNotContain(item.GetVisualDescendants().OfType<PlasticButton>(), button =>
-            Equals(ToolTip.GetTip(button), "Play from here"));
+        Assert.False(item.IsExpanded);
     }
 
     [AvaloniaTheory]
@@ -560,12 +572,8 @@ public sealed class VideoPageViewTests
 
     private static void Edit(Window window, ChapterListItem row)
     {
-        var button = row.GetVisualDescendants().OfType<PlasticButton>().Single(button =>
-            Equals(ToolTip.GetTip(button), "Edit (F2)"));
-        var point = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseMove(point);
-        window.MouseDown(point, MouseButton.Left);
-        window.MouseUp(point, MouseButton.Left);
+        row.Focus();
+        window.KeyPressQwerty(PhysicalKey.F2, RawInputModifiers.None);
         Dispatcher.UIThread.RunJobs();
     }
 

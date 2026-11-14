@@ -24,6 +24,7 @@ public sealed class ChapterRowViewModel : ViewModelBase
         _title = chapter.Title;
         _description = chapter.Description;
         Tags = new TagListViewModel(chapter.Tags, suggest, panel.ChapterEdited);
+        ToggleExpandedCommand = new RelayCommand(() => panel.ExpandedChapter = IsExpanded ? null : this, () => panel.CanEdit);
         CollapseCommand = new RelayCommand(() => { if (IsExpanded) panel.ExpandedChapter = null; });
         SeekCommand = new RelayCommand(() => panel.Seek(this));
         CommitTitleCommand = new RelayCommand<string>(title => panel.Rename(this, title));
@@ -133,6 +134,8 @@ public sealed class ChapterRowViewModel : ViewModelBase
     public TagListViewModel Tags { get; }
 
     /// <summary>Expands this row, or collapses it when it is the expanded one (the row's click).</summary>
+    public RelayCommand ToggleExpandedCommand { get; }
+    /// <summary>Collapses this row.</summary>
     public RelayCommand CollapseCommand { get; }
     /// <summary>Plays from this chapter's start.</summary>
     public RelayCommand SeekCommand { get; }
@@ -188,6 +191,7 @@ public sealed class ChapterRowViewModel : ViewModelBase
     internal void UpdateCommands()
     {
         OnPropertyChanged(nameof(CanEdit));
+        ToggleExpandedCommand.RaiseCanExecuteChanged();
         EditCommand.RaiseCanExecuteChanged();
         DeleteCommand.RaiseCanExecuteChanged();
         MoveToPlayheadCommand.RaiseCanExecuteChanged();
