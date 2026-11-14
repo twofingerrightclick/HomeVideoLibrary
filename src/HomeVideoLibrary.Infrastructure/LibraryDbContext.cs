@@ -15,6 +15,12 @@ public sealed class LibraryDbContext(DbContextOptions<LibraryDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var library = modelBuilder.Entity<LibraryInfoRow>();
+        library.ToTable("library_info");
+        library.HasKey(row => row.Id);
+        library.Property(row => row.Id).HasColumnName("id").ValueGeneratedNever();
+        library.Property(row => row.Name).HasColumnName("name");
+
         var videos = modelBuilder.Entity<VideoRow>();
         videos.ToTable("videos");
         videos.HasKey(row => row.Id);
@@ -59,6 +65,12 @@ public sealed class LibraryDbContext(DbContextOptions<LibraryDbContext> options)
 }
 
 // Keep text IDs and timestamps identical to the existing SQL storage; no Guid/DateTime conversion conventions.
+internal sealed class LibraryInfoRow
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+
 internal sealed class VideoRow
 {
     public string Id { get; set; } = "";

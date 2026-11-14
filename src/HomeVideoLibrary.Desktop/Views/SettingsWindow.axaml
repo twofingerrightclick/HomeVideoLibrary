@@ -38,6 +38,8 @@
     <c:SectionHeader Title="BUTTON SOUNDS"/>
     <ToggleSwitch IsChecked="{Binding SoundEffects, Mode=TwoWay}" OnContent="Click when keys are pressed" OffContent="Silent"/>
    </StackPanel>
+   <c:PlasticButton Classes="toolbar" Content="ABOUT HOME VIDEO LIBRARY…"
+                    HorizontalAlignment="Left" Click="ShowAbout"/>
   </StackPanel>
  </c:VcrDialog>
 </Window>

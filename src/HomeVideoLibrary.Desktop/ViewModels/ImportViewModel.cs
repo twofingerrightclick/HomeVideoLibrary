@@ -14,6 +14,7 @@ public sealed class ImportViewModel : ViewModelBase
     private readonly Func<bool> _canStart;
     private readonly Action<string> _status;
     private readonly FolderVideoDiscovery _discovery;
+    private bool _folderScanDismissed;
     private string _folderScanSummary = "";
     private string _folderScanDetails = "";
 
@@ -26,16 +27,22 @@ public sealed class ImportViewModel : ViewModelBase
         _discovery = discovery ?? new FolderVideoDiscovery();
         ImportCommand = new AsyncCommand(_ => PickAndImportAsync(), () => CanImport, context: "Import");
         ImportFolderCommand = new AsyncCommand(_ => PickFolderAndImportAsync(), () => CanImport, context: "Import folder");
+        DismissFolderScanCommand = new RelayCommand(() =>
+        {
+            _folderScanDismissed = true;
+            OnPropertyChanged(nameof(HasFolderScan));
+        });
         _jobs.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(JobQueue.ActiveCount)) OnPropertyChanged(nameof(IsImporting)); };
     }
 
     /// <summary>Asks for files, then queues them.</summary>
     public AsyncCommand ImportCommand { get; }
     public AsyncCommand ImportFolderCommand { get; }
+    public RelayCommand DismissFolderScanCommand { get; }
 
     public string FolderScanSummary { get => _folderScanSummary; private set { SetProperty(ref _folderScanSummary, value); OnPropertyChanged(nameof(HasFolderScan)); } }
     public string FolderScanDetails { get => _folderScanDetails; private set { SetProperty(ref _folderScanDetails, value); OnPropertyChanged(nameof(HasFolderScanDetails)); } }
-    public bool HasFolderScan => FolderScanSummary.Length > 0;
+    public bool HasFolderScan => !_folderScanDismissed && FolderScanSummary.Length > 0;
     public bool HasFolderScanDetails => FolderScanDetails.Length > 0;
 
     public bool CanImport => _model() is not null && _canStart();
@@ -67,6 +74,7 @@ public sealed class ImportViewModel : ViewModelBase
     public JobViewModel? EnqueueFolder(string folder)
     {
         if (_model() is not { } model || !CanImport) return null;
+        _folderScanDismissed = false;
         FolderScanSummary = $"Scanning {folder} and its subfolders… See Activity to cancel.";
         FolderScanDetails = "";
         FolderScanResult? result = null;

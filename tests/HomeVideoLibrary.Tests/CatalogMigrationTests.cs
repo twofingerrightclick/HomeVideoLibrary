@@ -12,10 +12,44 @@ public sealed class CatalogMigrationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "hvl-migration-" + Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public async Task LibraryNameSurvivesReopenAndRejectsInvalidNames()
+    {
+        var catalog = await CreateCatalogAsync(_root);
+        Assert.Equal(LibraryCatalog.DefaultName, await catalog.ReadNameAsync());
+        await catalog.SaveNameAsync("  Family's memories 🎞  ");
+        var reopened = new LibraryCatalog(catalog.Paths);
+        await reopened.InitializeAsync();
+        Assert.Equal("Family's memories 🎞", await reopened.ReadNameAsync());
+        await Assert.ThrowsAsync<ArgumentException>(() => reopened.SaveNameAsync(" "));
+        await Assert.ThrowsAsync<ArgumentException>(() => reopened.SaveNameAsync(new string('x', 121)));
+        Assert.Equal("Family's memories 🎞", await reopened.ReadNameAsync());
+    }
+
+    [Fact]
+    public async Task AddingLibraryNameUpgradesExistingCatalogWithoutLosingVideos()
+    {
+        Directory.CreateDirectory(_root);
+        var paths = new LibraryPaths(_root);
+        await using (var context = new LibraryDbContext(LibraryDbContext.Options(paths.DatabasePath)))
+        {
+            var migrator = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(context);
+            await migrator.MigrateAsync(context.Database.GetMigrations().First());
+        }
+        var catalog = new LibraryCatalog(paths);
+        Directory.CreateDirectory(paths.VideosDirectory);
+        var video = await AddVideoAsync(catalog, "Family");
+        await catalog.InitializeAsync();
+        Assert.Equal(video.Id, Assert.Single(await catalog.ListAsync()).Id);
+        Assert.Equal(LibraryCatalog.DefaultName, await catalog.ReadNameAsync());
+        await catalog.SaveNameAsync("Family archive");
+        Assert.Equal("Family archive", await catalog.ReadNameAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task FreshAndRepeatedInitializationUseOneMigrationAndVolumeJournal(bool network)
+    public async Task FreshAndRepeatedInitializationApplyAllMigrationsAndVolumeJournal(bool network)
     {
         var paths = new LibraryPaths(_root);
         var catalog = new LibraryCatalog(paths, _ => network);
@@ -24,9 +58,11 @@ public sealed class CatalogMigrationTests : IDisposable
         await catalog.InitializeAsync();
         Assert.Equal(network ? "delete" : "wal", await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
         await using var context = new LibraryDbContext(LibraryDbContext.Options(paths.DatabasePath));
-        var migration = Assert.Single(context.Database.GetMigrations());
-        Assert.EndsWith("_InitialCreate", migration);
-        Assert.Equal(migration, Assert.Single(await context.Database.GetAppliedMigrationsAsync()));
+        var migrations = context.Database.GetMigrations().ToArray();
+        Assert.Equal(2, migrations.Length);
+        Assert.EndsWith("_InitialCreate", migrations[0]);
+        Assert.EndsWith("_AddLibraryName", migrations[1]);
+        Assert.Equal(migrations, await context.Database.GetAppliedMigrationsAsync());
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Empty(await context.Database.GetPendingMigrationsAsync());
         Assert.Empty(Directory.GetFiles(paths.CacheDirectory, "backup-*"));
@@ -46,7 +82,7 @@ public sealed class CatalogMigrationTests : IDisposable
         Directory.CreateDirectory(_root);
         await ExecuteAsync(paths, "PRAGMA application_id=0");
         await new LibraryCatalog(paths).InitializeAsync();
-        Assert.Equal(1L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(2L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
     }
 
     [Theory]
@@ -61,7 +97,7 @@ public sealed class CatalogMigrationTests : IDisposable
         var catalog = new LibraryCatalog(paths, _ => true);
         await catalog.InitializeAsync();
         await catalog.InitializeAsync();
-        Assert.Equal(1L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(2L, await ScalarAsync(paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
         Assert.Equal("delete", await ScalarAsync(paths.DatabasePath, "PRAGMA journal_mode"));
     }
 
@@ -78,7 +114,7 @@ public sealed class CatalogMigrationTests : IDisposable
         });
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateLock.InitializeAsync(cancellation.Token));
         Assert.Equal("late-lock-owner", await ScalarAsync(catalog.Paths.DatabasePath, "SELECT Timestamp FROM __EFMigrationsLock"));
-        Assert.Equal(1L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
+        Assert.Equal(2L, await ScalarAsync(catalog.Paths.DatabasePath, "SELECT COUNT(*) FROM __EFMigrationsHistory"));
     }
 
     // The volume callback runs after read-only preflight, so a separate connection can deterministically model

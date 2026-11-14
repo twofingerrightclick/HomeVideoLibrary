@@ -114,6 +114,16 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string Title => "Home Video Library";
 
     /// <summary>The open library's model; null until a library is open.</summary>
+    private string _libraryName = LibraryCatalog.DefaultName;
+    public string LibraryName { get => _libraryName; private set => SetProperty(ref _libraryName, value); }
+
+    public async Task RenameLibraryAsync(string name)
+    {
+        var model = _model ?? throw new InvalidOperationException("Open a library first.");
+        await model.Catalog.SaveNameAsync(name);
+        if (ReferenceEquals(model, _model)) LibraryName = name.Trim();
+    }
+
     public LibraryModel? Model => _model;
     public TagIndex Tags => _model?.Snapshot.Tags ?? TagIndex.Empty;
 
@@ -480,6 +490,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         LibraryModel model;
         LibraryServices services;
         LibraryLoadResult load;
+        string libraryName;
         IReadOnlyList<string> unavailable;
         int recoverySnapshots;
         var publications = PublishRecovery.None;
@@ -493,6 +504,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
             var catalog = new LibraryCatalog(paths);
             await Task.Run(() => catalog.InitializeAsync());
+            libraryName = await catalog.ReadNameAsync();
             var tools = FindUnavailableToolsAsync();
             // Recovery may move committed videos out of scratch, so scratch is swept only after it succeeded.
             var recovered = false;
@@ -533,6 +545,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             throw;
         }
         _lock = owner; _model = model; _services = services; _previews = new PreviewCache(paths, services.Files);
+        LibraryName = libraryName;
         _backfill = services.Identity is { } identity ? new IdentityBackfill(model, identity) : null;
         if (unavailable.Count == 0)
         {

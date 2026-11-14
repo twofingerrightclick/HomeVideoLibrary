@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using HomeVideoLibrary.Core;
@@ -17,7 +18,7 @@ public sealed record SearchHit(VideoRecord Video, VideoChapterRecord? Chapter = 
 
 /// <summary>In-memory search over a <see cref="LibrarySnapshot"/>.</summary>
 /// <remarks>Query syntax: words match case- and diacritic-insensitively as word prefixes across the display name, title,
-/// description, tags and chapter text, and all words must match. <c>"a phrase"</c> matches as a substring, and
+/// description, tags, displayed recording year and chapter text, and all words must match. <c>"a phrase"</c> matches as a substring, and
 /// <c>tag:name</c> or <c>tag:"two words"</c> requires a tag (video or chapter) matching by <see cref="TagRules.MatchesPrefix"/>,
 /// the rule tag suggestions use. Phrases never span two fields. When no video matches every word as a prefix, words are
 /// retried as substrings. A query without any searchable text filters nothing. Results are newest first.</remarks>
@@ -105,7 +106,8 @@ public static partial class LibrarySearch
     {
         public Document(VideoRecord record)
         {
-            Video = new Text([record.DisplayName, record.Title, record.Description, .. record.Tags], record.Tags);
+            Video = new Text([record.DisplayName, record.Title, record.Description,
+                record.RecordedAt.ToLocalTime().Year.ToString(CultureInfo.InvariantCulture), .. record.Tags], record.Tags);
             Chapters = record.Chapters.Select(chapter => new ChapterText(chapter)).ToArray();
         }
 

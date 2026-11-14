@@ -67,6 +67,36 @@ public sealed class AlbumsAndSearchTests(ITestOutputHelper output) : IDisposable
     }
 
     [Fact]
+    public void RecordingYearCombinesWithTextTagsAndAlbumFilters()
+    {
+        var chapter = new VideoChapterRecord(1, TimeSpan.Zero, TimeSpan.FromSeconds(5), "Birthday cake", "", []);
+        var family = Record("family", recordedAt: new DateTimeOffset(1998, 6, 1, 12, 0, 0, TimeSpan.Zero),
+            tags: ["family"], chapters: [chapter]);
+        var trip = Record("trip", recordedAt: new DateTimeOffset(1998, 8, 1, 12, 0, 0, TimeSpan.Zero));
+        var otherYear = Record("birthday", recordedAt: new DateTimeOffset(2001, 6, 1, 12, 0, 0, TimeSpan.Zero));
+        var album = Guid.NewGuid();
+        var snapshot = Snapshot([family, trip, otherYear], (album, [family.Id]));
+
+        Assert.Equal([trip.Id, family.Id], LibrarySearch.Run(snapshot, "1998").Select(hit => hit.Video.Id));
+        Assert.Equal(family.Id, Assert.Single(LibrarySearch.Run(snapshot, "1998 tag:family")).Video.Id);
+        Assert.Equal(chapter, Assert.Single(LibrarySearch.Run(snapshot, "1998 birthday")).Chapter);
+        Assert.Equal(family.Id, Assert.Single(LibrarySearch.Run(snapshot, "1998", AlbumFilter.Members(album))).Video.Id);
+        Assert.Empty(LibrarySearch.Run(snapshot, "1997"));
+        Assert.Empty(LibrarySearch.Run(snapshot, "tag:1998"));
+    }
+
+    [Fact]
+    public void YearUsesTheDisplayedDateAndUpdatesWithTheRecord()
+    {
+        var original = Record("tape", recordedAt: new DateTimeOffset(1990, 6, 1, 12, 0, 0, TimeSpan.Zero));
+        Assert.Single(LibrarySearch.Run(Snapshot([original]), "1990"));
+        var updated = original with { EmbeddedRecordedAt = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.FromHours(14)) };
+        var displayedYear = updated.RecordedAt.ToLocalTime().Year.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Single(LibrarySearch.Run(Snapshot([updated]), displayedYear));
+        Assert.Empty(LibrarySearch.Run(Snapshot([updated]), "1990"));
+    }
+
+    [Fact]
     public void SubstringsAreOnlyAFallbackWhenNoVideoMatchesByPrefix()
     {
         var party = Record("party", title: "Garden party");

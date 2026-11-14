@@ -84,7 +84,7 @@ Select videos, then choose **NEW ALBUM** (Cmd/Ctrl+N) in the selection bar to cr
 
 Open an album and choose **ADD VIDEOS…** to switch the shelf to the videos not already in it. Select some and choose **ADD n**, then **DONE**. **REMOVE FROM ALBUM** removes membership only.
 
-The drawer's search box (Cmd/Ctrl+F; Esc clears it) searches titles, descriptions, video tags, and chapter titles, descriptions and tags, in memory over the library model, within the current album when one is shown. Words match case- and diacritic-insensitively as word prefixes and all must match; if nothing matches, the words are retried as substrings. `"a phrase"` matches as a substring and `tag:name` or `tag:"two words"` requires a video or chapter tag. Results are newest first. A tape whose chapter matched shows a "▸ 12:34 · title" line that opens the video at that chapter.
+The drawer's search box (Cmd/Ctrl+F; Esc clears it) searches titles, descriptions, video tags, the recording year shown on the shelf, and chapter titles, descriptions and tags, in memory over the library model, within the current album when one is shown. Words match case- and diacritic-insensitively as word prefixes and all must match; if nothing matches, the words are retried as substrings. `"a phrase"` matches as a substring and `tag:name` or `tag:"two words"` requires a video or chapter tag. Type `1998` to find that recording year, or combine it with other terms such as `1998 birthday` or `1998 tag:family`. Results are newest first. A tape whose chapter matched shows a "▸ 12:34 · title" line that opens the video at that chapter.
 
 ## Deleting videos
 

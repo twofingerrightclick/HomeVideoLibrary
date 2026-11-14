@@ -60,6 +60,22 @@ namespace HomeVideoLibrary.Infrastructure.Migrations
                     b.ToTable("album_videos", (string)null);
                 });
 
+            modelBuilder.Entity("HomeVideoLibrary.Infrastructure.LibraryInfoRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("library_info", (string)null);
+                });
+
             modelBuilder.Entity("HomeVideoLibrary.Infrastructure.VideoCacheRow", b =>
                 {
                     b.Property<string>("VideoId")

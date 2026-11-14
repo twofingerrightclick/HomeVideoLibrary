@@ -22,6 +22,29 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
 {
     public LibraryPaths Paths { get; } = paths;
 
+    public const string DefaultName = "HOME VIDEO LIBRARY";
+
+    public async Task<string> ReadNameAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM library_info WHERE id = 1";
+        return await command.ExecuteScalarAsync(cancellationToken) as string ?? DefaultName;
+    }
+
+    public async Task SaveNameAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        name = name.Trim();
+        if (name.Length > 120 || name.Any(char.IsControl))
+            throw new ArgumentException("Use a library name of up to 120 characters on one line.", nameof(name));
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO library_info (id, name) VALUES (1, $name) ON CONFLICT(id) DO UPDATE SET name = excluded.name";
+        command.Parameters.AddWithValue("$name", name);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Creates the catalog using EF migrations. Pre-release catalogs without valid EF history must be
     /// opened with their original application; they are never upgraded, repaired or discarded here.</summary>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)

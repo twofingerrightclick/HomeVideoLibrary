@@ -24,6 +24,35 @@ public sealed class FolderImportTests : IDisposable
     }
 
     [Fact]
+    public Task DismissingScanNoticeDoesNotCancelImportAndNextScanShowsANewNotice() => UiThread.Run(async () =>
+    {
+        var folder = Sources("one.mp4", "notes.txt");
+        var catalog = await CreateCatalogAsync(Path.Combine(_root, "library"));
+        var model = new LibraryModel(catalog, _files);
+        var importer = new RememberingImporter(catalog, _files);
+        var queue = new JobQueue(_ => Task.CompletedTask);
+        var vm = new ImportViewModel(() => model, _ => importer, new FakeInteraction(), queue, () => true, _ => { });
+
+        var scan = vm.EnqueueFolder(folder)!;
+        Assert.True(vm.HasFolderScan);
+        vm.DismissFolderScanCommand.Execute(null);
+        Assert.False(vm.HasFolderScan);
+        await scan.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        await queue.WhenIdleAsync();
+        Assert.Single(model.Snapshot.Videos);
+        Assert.False(vm.HasFolderScan);
+        Assert.Contains("1 skipped", vm.FolderScanSummary);
+
+        var next = vm.EnqueueFolder(folder)!;
+        Assert.True(vm.HasFolderScan);
+        await next.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        await queue.WhenIdleAsync();
+        Assert.True(vm.HasFolderScan);
+        vm.DismissFolderScanCommand.Execute(null);
+        Assert.False(vm.HasFolderScan);
+    });
+
+    [Fact]
     public Task RecursiveFolderUsesIndividualJobsContinuesAfterFailureAndSkipsKnownSourcesOnRepeat() => UiThread.Run(async () =>
     {
         var folder = Sources("one.mp4", "nested/two.mov", "broken.avi", "notes.txt");
