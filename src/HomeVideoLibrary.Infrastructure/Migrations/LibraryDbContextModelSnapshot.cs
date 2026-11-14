@@ -70,6 +70,11 @@ namespace HomeVideoLibrary.Infrastructure.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("kind");
 
+                    b.Property<string>("Revision")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revision");
+
                     b.Property<string>("RemovedAt")
                         .IsRequired()
                         .HasColumnType("TEXT")

@@ -17,7 +17,8 @@ namespace HomeVideoLibrary.Infrastructure.Migrations
                     fingerprint = table.Column<string>(type: "TEXT", nullable: false),
                     title = table.Column<string>(type: "TEXT", nullable: false),
                     removed_at = table.Column<string>(type: "TEXT", nullable: false),
-                    kind = table.Column<int>(type: "INTEGER", nullable: false)
+                    kind = table.Column<int>(type: "INTEGER", nullable: false),
+                    revision = table.Column<string>(type: "TEXT", nullable: false)
                 },
                 constraints: table =>
                 {

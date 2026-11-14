@@ -28,6 +28,7 @@ public sealed class LibraryDbContext(DbContextOptions<LibraryDbContext> options)
         deletions.Property(row => row.Title).HasColumnName("title");
         deletions.Property(row => row.RemovedAt).HasColumnName("removed_at");
         deletions.Property(row => row.Kind).HasColumnName("kind");
+        deletions.Property(row => row.Revision).HasColumnName("revision");
 
         var videos = modelBuilder.Entity<VideoRow>();
         videos.ToTable("videos");
@@ -129,4 +130,5 @@ internal sealed class DeletionHistoryRow
     public string Title { get; set; } = "";
     public string RemovedAt { get; set; } = "";
     public int Kind { get; set; }
+    public string Revision { get; set; } = "";
 }

@@ -222,13 +222,14 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         {
             await using var history = connection.CreateCommand(); history.Transaction = transaction;
             history.CommandText = """
-                INSERT INTO deletion_history(fingerprint,title,removed_at,kind) VALUES($fingerprint,$title,$removed,$kind)
-                ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,removed_at=excluded.removed_at,kind=excluded.kind
+                INSERT INTO deletion_history(fingerprint,title,removed_at,kind,revision) VALUES($fingerprint,$title,$removed,$kind,$revision)
+                ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,removed_at=excluded.removed_at,kind=excluded.kind,revision=excluded.revision
                 """;
             history.Parameters.AddWithValue("$fingerprint", deletion.Fingerprint);
             history.Parameters.AddWithValue("$title", deletion.Title);
             history.Parameters.AddWithValue("$removed", deletion.RemovedAt.ToUniversalTime().ToString("O"));
             history.Parameters.AddWithValue("$kind", (int)deletion.Kind);
+            history.Parameters.AddWithValue("$revision", deletion.Revision.ToString());
             await history.ExecuteNonQueryAsync(cancellationToken);
         }
         foreach (var id in ids)
@@ -302,11 +303,11 @@ public sealed class LibraryCatalog(LibraryPaths paths, Func<string, bool>? isNet
         ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT title,removed_at,kind FROM deletion_history WHERE fingerprint=$fingerprint";
+        command.CommandText = "SELECT title,removed_at,kind,revision FROM deletion_history WHERE fingerprint=$fingerprint";
         command.Parameters.AddWithValue("$fingerprint", fingerprint);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new DeletionHistory(fingerprint, reader.GetString(0), ParseDate(reader.GetString(1)), (DeletionKind)reader.GetInt32(2)) : null;
+            ? new DeletionHistory(fingerprint, reader.GetString(0), ParseDate(reader.GetString(1)), (DeletionKind)reader.GetInt32(2)) { Revision = Guid.Parse(reader.GetString(3)) } : null;
     }
 
     private const string VideoColumns = "id,relative_path,display_name,duration_ticks,imported_at,recorded_at,source_fingerprint";

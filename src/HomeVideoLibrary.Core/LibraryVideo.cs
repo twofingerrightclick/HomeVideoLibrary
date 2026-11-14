@@ -26,10 +26,13 @@ public sealed record ImportResult(ImportOutcome Outcome, LibraryVideo? Video, IR
 
 public enum DeletionKind { Trashed, PermanentlyDeleted }
 
-public sealed record DeletionHistory(string Fingerprint, string Title, DateTimeOffset RemovedAt, DeletionKind Kind);
+public sealed record DeletionHistory(string Fingerprint, string Title, DateTimeOffset RemovedAt, DeletionKind Kind)
+{
+    public Guid Revision { get; init; } = Guid.NewGuid();
+}
 
 public interface IVideoImporter
 {
-    /// <summary>Imports normally; the optional fingerprint bypasses only that source's deletion history, never live duplicates.</summary>
-    Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null);
+    /// <summary>Imports normally; the optional history authorizes only that exact removal, never a later removal or live duplicates.</summary>
+    Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null);
 }

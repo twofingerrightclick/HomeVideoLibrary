@@ -32,6 +32,8 @@ public sealed class FolderImportTests : IDisposable
         var importer = new HistoryImporter();
         var queue = new JobQueue(_ => Task.CompletedTask);
         var vm = new ImportViewModel(() => model, _ => importer, new FakeInteraction(), queue, () => true, _ => { });
+        var batches = new List<JobBatch>();
+        queue.Drained += batches.Add;
         var jobs = vm.Enqueue([Path.Combine(folder, "removed.mp4"), Path.Combine(folder, "other.mp4")]);
         await queue.WhenIdleAsync();
         Assert.All(jobs, job => Assert.Equal(JobState.Succeeded, job.State));
@@ -40,6 +42,9 @@ public sealed class FolderImportTests : IDisposable
         Assert.False(skipped.CanOpen);
         Assert.True(skipped.CanImportAnyway);
         Assert.False(jobs[1].CanImportAnyway);
+        Assert.Equal(0, batches.Sum(batch => batch.Succeeded));
+        Assert.Equal(2, batches.Sum(batch => batch.Skipped));
+        Assert.Equal(0, batches.Sum(batch => batch.Failed));
         skipped.ImportAnywayCommand.Execute(null);
         skipped.ImportAnywayCommand.Execute(null);
         await queue.WhenIdleAsync();
@@ -83,10 +88,10 @@ public sealed class FolderImportTests : IDisposable
     {
         public List<(string Source, string? Allowed)> Attempts { get; } = [];
         public Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null,
-            CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+            CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null)
         {
-            Attempts.Add((sourcePath, allowedDeletionFingerprint));
-            if (Path.GetFileName(sourcePath) == "removed.mp4" && allowedDeletionFingerprint is null)
+            Attempts.Add((sourcePath, allowedDeletion?.Fingerprint));
+            if (Path.GetFileName(sourcePath) == "removed.mp4" && allowedDeletion is null)
                 return Task.FromResult(new ImportResult(ImportOutcome.PreviouslyRemoved, null, [])
                 {
                     History = new DeletionHistory("v2:removed", "Removed", DateTimeOffset.UtcNow, DeletionKind.Trashed),
@@ -265,7 +270,7 @@ public sealed class FolderImportTests : IDisposable
         public int Attempts { get; private set; }
         public Func<Task>? BeforeImport { get; init; }
 
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null)
         {
             Attempts++;
             if (BeforeImport is not null) await BeforeImport();

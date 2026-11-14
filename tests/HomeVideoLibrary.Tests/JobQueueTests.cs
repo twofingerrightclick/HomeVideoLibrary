@@ -350,11 +350,12 @@ public sealed class JobQueueTests
         queue.Enqueue("b", JobLane.Import, (_, _) => throw new IOException("disk"));
         queue.Enqueue("c", JobLane.Import, (_, _) => gate.Task).Cancel();
         queue.Enqueue("d", JobLane.Import, (_, _) => gate.Task);
+        queue.Enqueue("skipped", JobLane.Import, (_, _) => Task.FromResult(JobOutcome.Done("Skipped") with { IsSkipped = true }));
 
         gate.SetResult(JobOutcome.Done("ok"));
         await queue.WhenIdleAsync();
         await UiThread.Settle();
-        Assert.Equal([new JobBatch(JobLane.Import, Succeeded: 2, Failed: 1, Cancelled: 1)], batches);
+        Assert.Equal([new JobBatch(JobLane.Import, Succeeded: 2, Failed: 1, Cancelled: 1, Skipped: 1)], batches);
     });
 
     [Fact]

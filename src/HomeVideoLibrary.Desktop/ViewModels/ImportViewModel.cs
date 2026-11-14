@@ -128,16 +128,17 @@ public sealed class ImportViewModel : ViewModelBase
     }
 
     private async Task<JobOutcome> ImportOneAsync(LibraryModel model, IVideoImporter importer, string source,
-        IProgress<JobProgress> progress, CancellationToken cancellationToken, string? folderLibraryRoot = null, string? allowedDeletionFingerprint = null)
+        IProgress<JobProgress> progress, CancellationToken cancellationToken, string? folderLibraryRoot = null, DeletionHistory? allowedDeletion = null)
     {
         if (folderLibraryRoot is not null && !FolderVideoDiscovery.CanImport(source, folderLibraryRoot))
-            return JobOutcome.Done("Skipped: source is now a link or inside the active library.");
-        var result = await importer.ImportAsync(source, new JobProgressAdapter(progress), cancellationToken, allowedDeletionFingerprint);
+            return JobOutcome.Done("Skipped: source is now a link or inside the active library.") with { IsSkipped = true };
+        var result = await importer.ImportAsync(source, new JobProgressAdapter(progress), cancellationToken, allowedDeletion);
         if (result.History is { } history)
         {
             var description = history.Kind == DeletionKind.Trashed ? "Previously trashed" : "Previously permanently deleted";
             return JobOutcome.Done($"{description} · Removed {history.RemovedAt.ToLocalTime():d}") with
             {
+                IsSkipped = true,
                 ImportAnyway = () =>
                 {
                     if (!ReferenceEquals(model, _model()) || !CanImport)
@@ -147,14 +148,14 @@ public sealed class ImportViewModel : ViewModelBase
                     }
                     _jobs.Enqueue($"Import {Path.GetFileName(source)}", JobLane.Import,
                         (nextProgress, token) => ImportOneAsync(model, _createImporter(model.Catalog), source,
-                            nextProgress, token, folderLibraryRoot, history.Fingerprint));
+                            nextProgress, token, folderLibraryRoot, history));
                 },
             };
         }
         var video = result.Video ?? throw new InvalidDataException("The import did not return a video.");
         var warnings = string.Concat(result.Warnings.Select(warning => " " + warning));
         if (result.Outcome == ImportOutcome.AlreadyInLibrary)
-            return new JobOutcome("Already in the library." + warnings, [video.Id]);
+            return new JobOutcome("Already in the library." + warnings, [video.Id]) { IsSkipped = true };
         // The video is committed; publish it even if the job is being cancelled.
         var record = await model.UpsertFromFileAsync(video, CancellationToken.None);
         return new JobOutcome((record.State == VideoRecordState.Ok ? "Imported." : $"Imported; details could not be read yet ({record.Error}).")

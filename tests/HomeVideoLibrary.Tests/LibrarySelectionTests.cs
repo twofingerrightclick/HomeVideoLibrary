@@ -298,6 +298,20 @@ public sealed class LibrarySelectionTests : IDisposable
         Assert.Null(vm.Page);
     }
 
+    [Theory]
+    [InlineData(false, "Imported 0 · 2 skipped")]
+    [InlineData(true, "Imported 1 · 2 skipped")]
+    public Task HistoryAndDuplicateSkipsAreNotAnnouncedAsImported(bool includeNew, string expected) => UiThread.Run(async () =>
+    {
+        _importer = catalog => new FakeImporter(catalog, _files);
+        var (vm, _) = await OpenAsync("existing");
+        vm.Import.Enqueue(includeNew ? ["removed.mov", "duplicate.mov", "new.mov"] : ["removed.mov", "duplicate.mov"]);
+        await vm.Jobs.WhenIdleAsync();
+        await UiThread.Settle();
+        Assert.Equal(expected, vm.Toast);
+        Assert.False(vm.Jobs.HasFailures);
+    });
+
     [Fact]
     public Task ImportsNotifyOnceWhenTheLaneDrainsAndFailuresAtOnce() => UiThread.Run(async () =>
     {
@@ -417,7 +431,7 @@ public sealed class LibrarySelectionTests : IDisposable
 
     private sealed class BlockingImporter(TaskCompletionSource started) : IVideoImporter
     {
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null)
         {
             started.TrySetResult();
             await Task.Delay(Timeout.Infinite, cancellationToken);
@@ -427,10 +441,14 @@ public sealed class LibrarySelectionTests : IDisposable
 
     private sealed class FakeImporter(LibraryCatalog catalog, FakeMatroska files) : IVideoImporter
     {
-        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+        public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null)
         {
             var name = Path.GetFileNameWithoutExtension(sourcePath);
             if (name == "broken") throw new InvalidDataException("bad header");
+            if (name == "removed") return new ImportResult(ImportOutcome.PreviouslyRemoved, null, [])
+            {
+                History = new DeletionHistory("v2:removed", "Removed", DateTimeOffset.UtcNow, DeletionKind.Trashed),
+            };
             progress?.Report(new ImportProgress("Copying", 0.5));
             progress?.Report(new ImportProgress("Verifying"));
             var existing = (await catalog.ListAsync(cancellationToken)).FirstOrDefault();

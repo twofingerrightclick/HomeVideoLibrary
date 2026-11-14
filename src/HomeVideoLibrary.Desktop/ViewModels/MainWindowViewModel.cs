@@ -680,9 +680,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     /// runs trash and metadata jobs, so its batches are counted as finished jobs, not renders.</summary>
     private void LaneDrained(JobBatch batch)
     {
-        if (batch.Succeeded + batch.Failed == 0) return;
+        if (batch.Succeeded + batch.Failed + batch.Skipped == 0) return;
         var done = (batch.Lane == JobLane.Import ? "Imported " : "Finished ") + batch.Succeeded;
-        ShowToast(batch.Failed == 0 ? done : $"{done} · {batch.Failed} failed");
+        ShowToast(done + (batch.Skipped > 0 ? $" · {batch.Skipped} skipped" : "") +
+            (batch.Failed > 0 ? $" · {batch.Failed} failed" : ""));
         if (batch.Succeeded > 0) Play(ClickSoundKind.Chime);
     }
 

@@ -13,6 +13,29 @@ public sealed class ImportTests : IDisposable
     private readonly MediaTools _tools = MediaTools.Discover();
 
     [Fact]
+    public async Task AnOldOverrideCannotAuthorizeASecondDeletionOfTheSameSource()
+    {
+        var source = await CreateSourceAsync();
+        var catalog = await CreateCatalogAsync();
+        var importer = new VideoImporter(catalog, _tools);
+        var video = Assert.IsType<LibraryVideo>((await importer.ImportAsync(source)).Video);
+        var first = new DeletionHistory(video.SourceFingerprint!, "Family", DateTimeOffset.UtcNow, DeletionKind.Trashed);
+        File.Delete(catalog.GetVideoPath(video.RelativePath));
+        await catalog.DeleteVideosAsync([video.Id], deletion: first);
+        var oldPrompt = Assert.IsType<DeletionHistory>((await importer.ImportAsync(source)).History);
+        var restored = Assert.IsType<LibraryVideo>((await importer.ImportAsync(source, allowedDeletion: oldPrompt)).Video);
+        // Even equal clock timestamps must identify distinct removal events.
+        var second = first with { Revision = Guid.NewGuid() };
+        File.Delete(catalog.GetVideoPath(restored.RelativePath));
+        await catalog.DeleteVideosAsync([restored.Id], deletion: second);
+        var staleOverride = await importer.ImportAsync(source, allowedDeletion: oldPrompt);
+        Assert.Equal(ImportOutcome.PreviouslyRemoved, staleOverride.Outcome);
+        Assert.Equal(second, staleOverride.History);
+        Assert.Empty(await catalog.ListAsync());
+        Assert.Equal(ImportOutcome.Imported, (await importer.ImportAsync(source, allowedDeletion: staleOverride.History)).Outcome);
+    }
+
+    [Fact]
     public async Task ImportsRealMp4WithoutChangingOriginalAndReopensCatalog()
     {
         var source = await CreateSourceAsync();
@@ -59,11 +82,11 @@ public sealed class ImportTests : IDisposable
         Assert.Null(skipped.Video);
         Assert.Equal(history, skipped.History);
         Assert.Empty(await catalog.ListAsync());
-        Assert.Equal(ImportOutcome.PreviouslyRemoved, (await importer.ImportAsync(source, allowedDeletionFingerprint: "v2:other")).Outcome);
+        Assert.Equal(ImportOutcome.PreviouslyRemoved, (await importer.ImportAsync(source, allowedDeletion: history with { Fingerprint = "v2:other" })).Outcome);
 
-        var restored = await importer.ImportAsync(source, allowedDeletionFingerprint: history.Fingerprint);
+        var restored = await importer.ImportAsync(source, allowedDeletion: history);
         Assert.Equal(ImportOutcome.Imported, restored.Outcome);
-        var duplicate = await importer.ImportAsync(source, allowedDeletionFingerprint: history.Fingerprint);
+        var duplicate = await importer.ImportAsync(source, allowedDeletion: history);
         Assert.Equal(ImportOutcome.AlreadyInLibrary, duplicate.Outcome);
         Assert.Equal(restored.Video!.Id, duplicate.Video!.Id);
         Assert.Equal(ImportOutcome.AlreadyInLibrary, (await importer.ImportAsync(source)).Outcome);

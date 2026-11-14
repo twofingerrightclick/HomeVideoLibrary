@@ -53,7 +53,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
     private readonly IMatroskaFileEditor _editor = editor ?? new MatroskaMetadataService(catalog, tools);
 
     public async Task<ImportResult> ImportAsync(string sourcePath, IProgress<ImportProgress>? progress = null,
-        CancellationToken cancellationToken = default, string? allowedDeletionFingerprint = null)
+        CancellationToken cancellationToken = default, DeletionHistory? allowedDeletion = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         sourcePath = Path.GetFullPath(sourcePath);
@@ -69,8 +69,7 @@ public sealed class VideoImporter(LibraryCatalog catalog, MediaTools tools, Medi
         if (match is not null && LibraryFiles.Probe(catalog.GetVideoPath(match.RelativePath)) != FilePresence.Absent)
             return new ImportResult(ImportOutcome.AlreadyInLibrary, match, []);
 
-        if (fingerprint != allowedDeletionFingerprint &&
-            await catalog.FindDeletionAsync(fingerprint, cancellationToken) is { } history)
+        if (await catalog.FindDeletionAsync(fingerprint, cancellationToken) is { } history && history != allowedDeletion)
             return new ImportResult(ImportOutcome.PreviouslyRemoved, null, []) { History = history };
 
         var source = await ProbeAsync(sourcePath, cancellationToken);

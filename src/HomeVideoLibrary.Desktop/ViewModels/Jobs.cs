@@ -16,17 +16,19 @@ public readonly record struct JobProgress(string Stage, double? Fraction = null)
 public sealed record JobOutcome(string Summary, IReadOnlyList<Guid> Outputs)
 {
     public Action? ImportAnyway { get; init; }
+    public bool IsSkipped { get; init; }
 
     public static JobOutcome Done(string summary) => new(summary, []);
 }
 
 /// <summary>What a lane finished between two idle moments, reported once when it drains.</summary>
-public readonly record struct JobBatch(JobLane Lane, int Succeeded = 0, int Failed = 0, int Cancelled = 0)
+public readonly record struct JobBatch(JobLane Lane, int Succeeded = 0, int Failed = 0, int Cancelled = 0, int Skipped = 0)
 {
-    public bool IsEmpty => Succeeded + Failed + Cancelled == 0;
+    public bool IsEmpty => Succeeded + Failed + Cancelled + Skipped == 0;
 
-    internal JobBatch Add(JobState state) => state switch
+    internal JobBatch Add(JobState state, bool skipped) => state switch
     {
+        JobState.Succeeded when skipped => this with { Skipped = Skipped + 1 },
         JobState.Succeeded => this with { Succeeded = Succeeded + 1 },
         JobState.Failed => this with { Failed = Failed + 1 },
         _ => this with { Cancelled = Cancelled + 1 },
@@ -170,7 +172,7 @@ public sealed class JobQueue : ViewModelBase
 
     private void Announce(JobViewModel job)
     {
-        if (!job.IsBackground) _lanes[job.Lane].Count(job.State);
+        if (!job.IsBackground) _lanes[job.Lane].Count(job.State, job.Outcome?.IsSkipped == true);
         else if (job.State == JobState.Succeeded) Dismiss(job);
         Raise(Finished, job, "Job finished");
     }
@@ -240,7 +242,7 @@ public sealed class JobQueue : ViewModelBase
             foreach (var job in Waiting.Where(job => job.IsQueued)) job.QueuePosition = ++position;
         }
 
-        public void Count(JobState state) => _batch = _batch.Add(state);
+        public void Count(JobState state, bool skipped) => _batch = _batch.Add(state, skipped);
 
         public JobBatch TakeBatch()
         {
